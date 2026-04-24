@@ -1383,6 +1383,9 @@ button {
 
 .muted { color: var(--muted); }
 .strong { color: var(--text-strong); font-weight: 600; }
+.success-text { color: var(--success); }
+.danger-text { color: var(--danger); }
+.warn-text { color: var(--warn); }
 .mono { font-family: var(--font-mono); }
 .small { font-size: 12px; }
 .tiny { font-size: 11px; }

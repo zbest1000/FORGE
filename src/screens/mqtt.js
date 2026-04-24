@@ -1,31 +1,51 @@
-import { el, mount, card, badge, toast } from "../core/ui.js";
-import { state, update, audit } from "../core/store.js";
+// MQTT Topic Browser & Mapping v2 — spec §11.10.
+//
+// Features:
+//   * Topic tree from seeded data sources + any added mappings
+//   * Payload inspector (live simulated payloads per topic)
+//   * Mapping rules panel with add/edit/delete and simulation
+//   * Publish test with QoS, retain flag
+//   * Namespace policy checker (naming convention validation)
+
+import { el, mount, card, badge, toast, input, select, formRow, modal, textarea } from "../core/ui.js";
+import { state, update } from "../core/store.js";
+import { audit } from "../core/audit.js";
 import { can } from "../core/permissions.js";
+import { ingest } from "../core/events.js";
 
 export function renderMQTT() {
   const root = document.getElementById("screenContainer");
   const d = state.data;
   const sources = (d.dataSources || []).filter(ds => ds.kind === "topic");
+  const selectedKey = "mqtt.selected";
+  const selected = sessionStorage.getItem(selectedKey) || sources[0]?.endpoint || null;
 
   const tree = buildTree(sources.map(s => s.endpoint));
 
   mount(root, [
     el("div", { class: "three-col" }, [
-      card("Topic tree", renderTree(tree)),
-      card("Payload inspector", payload()),
-      card("Mapping rules", el("div", { class: "stack" }, [
-        ...sources.map(ds => el("div", { class: "activity-row" }, [
-          badge(`QoS ${Math.floor(Math.random()*2)}`, "info"),
-          el("span", { class: "mono small" }, [ds.endpoint]),
-          el("span", { class: "tiny muted" }, [ds.assetId ? "→ " + ds.assetId : "unmapped"]),
-        ])),
-        el("button", { class: "btn sm primary", disabled: !can("integration.write"), onClick: () => addRule() }, ["+ Mapping rule"]),
-      ])),
+      card("Topic tree", renderTree(tree, "", selected, (topic) => {
+        sessionStorage.setItem(selectedKey, topic);
+        renderMQTT();
+      })),
+      card("Payload inspector", payloadInspector(selected, sources), {
+        actions: [
+          el("button", { class: "btn sm", onClick: () => publishTest(selected) }, ["Publish test"]),
+        ],
+      }),
+      card("Mapping rules", mappingRules(sources), {
+        actions: [el("button", { class: "btn sm primary", disabled: !can("integration.write"), onClick: addRule }, ["+ Rule"])],
+      }),
     ]),
-    el("div", { style: { marginTop: "16px" } }, [
+    el("div", { class: "two-col", style: { marginTop: "16px" } }, [
+      card("Namespace policy checker", namespaceChecker(sources), {
+        subtitle: "Expect segments: site/area/line/cell/equipment/signal",
+      }),
       card("AI — Taxonomy suggestions", el("div", { class: "stack" }, [
-        el("div", { class: "small" }, ["Namespace 'line/a1/alarm/*' is consistent; consider standardizing 'line/a1/feeder/*' topics to include asset ID suffix."]),
-        el("div", { class: "tiny muted" }, ["Citations: DS-1, DS-2"]),
+        el("div", { class: "small" }, [
+          "Topics with >5 segments considered valid ISA-95 paths; `#` wildcards flagged for namespace review.",
+        ]),
+        el("div", { class: "tiny muted" }, ["Citations: ", sources.slice(0, 3).map(s => s.id).join(", ")]),
       ])),
     ]),
   ]);
@@ -44,55 +64,180 @@ function buildTree(paths) {
   return root;
 }
 
-function renderTree(node, prefix = "") {
+function renderTree(node, prefix, selected, onSelect) {
   const wrap = el("div", { class: "stack", style: { gap: "2px" } });
   Object.keys(node).forEach(k => {
-    const children = node[k];
-    const hasChildren = Object.keys(children).length;
-    wrap.append(
-      el("div", { class: "tree-item" }, [
-        el("span", { class: "tree-dot" }),
-        el("span", { class: "tree-label mono small" }, [prefix ? `${prefix}/${k}` : k]),
-        hasChildren ? el("span", { class: "tree-count" }, [String(Object.keys(children).length)]) : null,
-      ])
-    );
+    const child = node[k];
+    const hasChildren = Object.keys(child).length;
+    const full = prefix ? `${prefix}/${k}` : k;
+    wrap.append(el("div", {
+      class: `tree-item ${full === selected ? "active" : ""}`,
+      onClick: () => onSelect(full),
+    }, [
+      el("span", { class: "tree-dot" }),
+      el("span", { class: "tree-label mono small" }, [k]),
+      hasChildren ? el("span", { class: "tree-count" }, [String(Object.keys(child).length)]) : null,
+    ]));
     if (hasChildren) {
-      wrap.append(el("div", { style: { paddingLeft: "16px" } }, [renderTree(children, prefix ? `${prefix}/${k}` : k)]));
+      wrap.append(el("div", { style: { paddingLeft: "16px" } }, [renderTree(child, full, selected, onSelect)]));
     }
   });
   return wrap;
 }
 
-function payload() {
-  return el("pre", { class: "mono tiny", style: { background: "var(--panel)", padding: "12px", borderRadius: "6px", overflow: "auto" } }, [
-`{
-  "topic": "line/a1/alarm/high-temp",
-  "qos": 1,
-  "retain": false,
-  "ts": "${new Date().toISOString()}",
-  "payload": {
-    "asset": "HX-01",
-    "value": 112.3,
-    "unit": "degC",
-    "threshold": 105
-  }
-}`
+function payloadInspector(topic, sources) {
+  const ds = sources.find(s => s.endpoint === topic);
+  const qos = ds?.qos ?? 1;
+  const retain = ds?.retain ?? false;
+  const body = {
+    topic,
+    qos,
+    retain,
+    ts: new Date().toISOString(),
+    payload: simulatePayload(topic),
+  };
+  return el("pre", { class: "mono tiny", style: {
+    background: "var(--panel)", padding: "12px", borderRadius: "6px", overflow: "auto", maxHeight: "320px",
+  }}, [JSON.stringify(body, null, 2)]);
+}
+
+function simulatePayload(topic) {
+  if (!topic) return null;
+  if (/alarm|high-temp|trip/i.test(topic)) return { active: true, threshold: 105, value: 112.3, unit: "degC" };
+  if (/temp/i.test(topic)) return { value: 72 + Math.random() * 10, unit: "degC" };
+  if (/current/i.test(topic)) return { value: 40 + Math.random() * 20, unit: "A" };
+  if (/press/i.test(topic)) return { value: 10 + Math.random() * 2, unit: "bar" };
+  return { value: Math.random() };
+}
+
+function mappingRules(sources) {
+  return el("div", { class: "stack" }, [
+    ...sources.map(ds => el("div", { class: "activity-row" }, [
+      badge(`QoS ${ds.qos ?? 1}`, "info"),
+      el("span", { class: "mono small", style: { flex: 1 } }, [ds.endpoint]),
+      el("span", { class: "tiny muted" }, [ds.assetId ? "→ " + ds.assetId : "unmapped"]),
+      el("button", { class: "btn sm", disabled: !can("integration.write"), onClick: () => editRule(ds) }, ["Edit"]),
+      el("button", { class: "btn sm danger", disabled: !can("integration.write"), onClick: () => deleteRule(ds) }, ["×"]),
+    ])),
   ]);
 }
 
 function addRule() {
-  const topic = window.prompt("Topic pattern (e.g. line/a1/#):");
-  if (!topic) return;
-  const assetId = window.prompt("Bind to asset ID (e.g. AS-1), leave empty to skip:") || null;
-  update(s => {
-    s.data.dataSources.push({
-      id: "DS-" + Math.floor(Math.random()*9000+1000),
-      integrationId: "INT-MQTT",
-      endpoint: topic,
-      assetId,
-      kind: "topic",
-    });
+  const topic = input({ placeholder: "e.g. line/a1/#" });
+  const assetIds = state.data.assets.map(a => ({ value: a.id, label: a.name }));
+  const assetPick = select([{ value: "", label: "(no asset)" }, ...assetIds]);
+  const qosPick = select([0, 1, 2], { value: 1 });
+  const retainPick = select(["false", "true"]);
+  modal({
+    title: "Add mapping rule",
+    body: el("div", { class: "stack" }, [
+      formRow("Topic pattern", topic),
+      formRow("Bind to asset", assetPick),
+      formRow("QoS", qosPick),
+      formRow("Retained", retainPick),
+    ]),
+    actions: [
+      { label: "Cancel" },
+      { label: "Add", variant: "primary", onClick: () => {
+        const t = topic.value.trim();
+        if (!t) { toast("Topic required", "warn"); return false; }
+        update(s => {
+          s.data.dataSources.push({
+            id: "DS-" + Math.floor(Math.random()*9000+1000),
+            integrationId: "INT-MQTT",
+            endpoint: t,
+            assetId: assetPick.value || null,
+            kind: "topic",
+            qos: Number(qosPick.value),
+            retain: retainPick.value === "true",
+          });
+        });
+        audit("mqtt.mapping.create", t, { assetId: assetPick.value, qos: qosPick.value });
+        toast("Mapping added", "success");
+      }},
+    ],
   });
-  audit("mqtt.mapping.create", topic, { assetId });
-  toast("Mapping rule added", "success");
+}
+
+function editRule(ds) {
+  const assetIds = state.data.assets.map(a => ({ value: a.id, label: a.name }));
+  const assetPick = select([{ value: "", label: "(no asset)" }, ...assetIds], { value: ds.assetId || "" });
+  const qosPick = select([0, 1, 2], { value: String(ds.qos ?? 1) });
+  const retainPick = select(["false", "true"], { value: String(ds.retain || false) });
+  modal({
+    title: `Edit ${ds.endpoint}`,
+    body: el("div", { class: "stack" }, [
+      formRow("Bind to asset", assetPick),
+      formRow("QoS", qosPick),
+      formRow("Retained", retainPick),
+    ]),
+    actions: [
+      { label: "Cancel" },
+      { label: "Save", variant: "primary", onClick: () => {
+        update(s => {
+          const x = s.data.dataSources.find(y => y.id === ds.id);
+          if (!x) return;
+          x.assetId = assetPick.value || null;
+          x.qos = Number(qosPick.value);
+          x.retain = retainPick.value === "true";
+        });
+        audit("mqtt.mapping.update", ds.endpoint, { assetId: assetPick.value });
+      }},
+    ],
+  });
+}
+
+function deleteRule(ds) {
+  if (!window.confirm(`Delete mapping for ${ds.endpoint}?`)) return;
+  update(s => { s.data.dataSources = s.data.dataSources.filter(y => y.id !== ds.id); });
+  audit("mqtt.mapping.delete", ds.endpoint);
+}
+
+function publishTest(topic) {
+  if (!topic) { toast("Select a topic first", "warn"); return; }
+  if (!can("integration.write")) { toast("Publish requires Integration Admin", "warn"); return; }
+  const payload = textarea({ value: JSON.stringify(simulatePayload(topic), null, 2) });
+  const qos = select([0, 1, 2], { value: "1" });
+  const sev = select(["info", "SEV-3", "SEV-2", "SEV-1"], { value: /alarm/i.test(topic) ? "SEV-2" : "info" });
+  modal({
+    title: `Publish to ${topic}`,
+    body: el("div", { class: "stack" }, [
+      formRow("Payload (JSON)", payload),
+      formRow("QoS", qos),
+      formRow("Severity", sev),
+    ]),
+    actions: [
+      { label: "Cancel" },
+      { label: "Publish", variant: "primary", onClick: () => {
+        let body = {};
+        try { body = JSON.parse(payload.value); } catch (e) { toast("Invalid JSON", "danger"); return false; }
+        const ds = (state.data.dataSources || []).find(x => x.endpoint === topic);
+        const env = ingest({
+          event_type: /alarm/i.test(topic) ? "alarm" : "telemetry",
+          severity: sev.value,
+          asset_ref: ds?.assetId || null,
+          payload: body,
+          dedupe_key: `mqtt:${topic}:${Date.now()}`,
+        }, { source: topic, source_type: "mqtt" });
+        audit("mqtt.publish", topic, { qos: qos.value, sev: sev.value, event: env?.event_id });
+        toast("Published (event routed)", "success");
+      }},
+    ],
+  });
+}
+
+function namespaceChecker(sources) {
+  const issues = [];
+  for (const ds of sources) {
+    const parts = ds.endpoint.split("/").filter(Boolean);
+    if (parts.some(p => p === "#" || p === "+")) issues.push({ ds, reason: "wildcard in name" });
+    if (parts.length < 3) issues.push({ ds, reason: "too shallow (<3 segments)" });
+    if (!ds.assetId) issues.push({ ds, reason: "unmapped (no asset)" });
+  }
+  if (!issues.length) return el("div", { class: "small success-text" }, ["All topics conform to the policy."]);
+  return el("div", { class: "stack" }, issues.map(i => el("div", { class: "activity-row" }, [
+    badge("issue", "warn"),
+    el("span", { class: "mono small" }, [i.ds.endpoint]),
+    el("span", { class: "tiny muted" }, [i.reason]),
+  ])));
 }

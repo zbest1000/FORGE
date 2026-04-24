@@ -52,6 +52,68 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ## 2026-04-24 — Core foundations (07d8afd)
 
+## 2026-04-24 — Drawing viewer v2, Doc viewer v2, Approvals v2 (173f9d0)
+
+**What**
+Rewrote three signature screens to match the spec §7 / §8 / §11.14 feature
+lists in detail.
+
+Drawing viewer:
+- 2D transform matrix on an SVG group (translate/scale composed around a
+  center) producing zoom-at-cursor, drag-pan, reset/fit, and keeping markup
+  coordinates normalized so they remain valid across transforms.
+- Markup palette with 7 annotation kinds rendered as distinct SVG shapes.
+- Compare mode renders a tinted overlay of a second sheet, opacity live-bound
+  to a slider.
+- Layer toggles separate the sheet, dimensions, and annotations groups.
+- IFC mode: object tree + metadata inspector over a stub BIM graph (no
+  geometry renderer — flagged as ◐ in SPEC_COMPLIANCE).
+- Export SVG via `XMLSerializer` + Blob download.
+
+Document viewer:
+- Multi-page "paper" with a page strip, Alt-click to drop regional comment
+  pins anchored to normalized (page, x, y), threaded replies,
+  one-click convert-to-issue.
+- Rich metadata panel with all spec §7.9 fields.
+- Transmittals (subject, recipients, message) with send flow and listing.
+- Impact analysis card driven by `core/revisions.impactOfRevision`.
+
+Approvals:
+- SLA chip with live countdown (`< 4h` red, `< 24h` amber) + auto-expiry
+  pass before render.
+- Delegation modal writes a chain-of-custody entry and changes approver.
+- Batch approve / reject with chain-of-custody on each item.
+- Every decision signs a canonical JSON payload with `HMAC-SHA256` from
+  `core/crypto`; verifiable later via the audit pack export.
+- Approving a Revision cascades through `core/revisions.transition` so the
+  revision lifecycle (IFR → Approved → IFC) and auto-supersede happen
+  coherently.
+
+**Why**
+Spec §7 #1–9, §8 complete tool set, §11.14 (SLA, delegation, batch, signed).
+The prior versions were thin placeholders.
+
+**Tech decisions**
+- SVG + 2D transform rather than a canvas/PDF engine. Rationale: keeps the
+  prototype dependency-free; normalized coordinates survive zoom and make
+  cross-device pin sharing trivial.
+- Alt-click to create comment pins (rather than a separate tool mode) so
+  reading mode is not interrupted.
+- Signed approvals with HMAC-SHA256 + canonical JSON so signatures are
+  reproducible and verifiable from an exported audit pack.
+
+**Files**
+- `src/screens/drawingViewer.js` (rewrite)
+- `src/screens/docViewer.js` (rewrite)
+- `src/screens/approvals.js` (rewrite)
+
+**Verification**
+- `node --check` on all three passes.
+- Existing ledger + crypto smoke test still green.
+- Approvals signature: a signed decision payload verifies with
+  `verifyHMAC` against the same canonical JSON.
+
+
 **What**
 Landed the cross-cutting building blocks that the screen-level spec work
 depends on. Added 8 new core modules; wired them into `app.js` bootstrap.
