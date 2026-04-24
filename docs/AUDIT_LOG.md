@@ -56,6 +56,8 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ## 2026-04-24 — Work board, Channel, Incident, MQTT, OPC UA, ERP, AI, Search, Admin, Integrations v2 (ba47f06)
 
+## 2026-04-24 — __forgeSelfTest enriched; compliance notes (b12d8ac)
+
 **What**
 Finished the spec-driven rewrite of the remaining screens. Every major
 spec feature in §§11.3, 11.4, 11.9, 11.10, 11.11, 11.12, 11.13, 11.15,
