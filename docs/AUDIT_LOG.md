@@ -58,7 +58,7 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ## 2026-04-24 — __forgeSelfTest enriched; compliance notes (b12d8ac)
 
-## 2026-04-24 — Integrate 13 OSS packages (import map, vendor loader, replacements)
+## 2026-04-24 — Integrate 13 OSS packages (import map, vendor loader, replacements) (cd762d4)
 
 **What**
 Answered "are we rebuilding the wheel?" — no more, we now actually consume
