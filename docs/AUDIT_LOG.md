@@ -60,7 +60,7 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ## 2026-04-24 — Integrate 13 OSS packages (import map, vendor loader, replacements) (cd762d4)
 
-## 2026-04-24 — FORGE server (Fastify + SQLite + JWT)
+## 2026-04-24 — FORGE server (Fastify + SQLite + JWT) (cf75400)
 
 **What**
 Added the server half of the product. The browser app can now be served
