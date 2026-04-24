@@ -101,20 +101,32 @@ export function remove(collection, id) {
   if (idx >= 0) list.splice(idx, 1);
 }
 
-// Audit log
+// Audit log — delegates to the hash-chained ledger in `core/audit.js`.
+// Kept as a thin wrapper so existing screens keep calling `audit(...)`
+// without caring about the Web Crypto queue.
 export function audit(action, subject, detail = {}) {
+  // Lazy require so this module stays framework-free for tests.
+  const mod = _auditMod || (_auditMod = globalThis.__forgeAudit || null);
+  if (mod && typeof mod.audit === "function") return mod.audit(action, subject, detail);
+  // Fallback (during bootstrap before audit.js has registered).
   const entry = {
     id: `AUD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     ts: new Date().toISOString(),
     actor: state.ui.role,
     action,
-    subject,
-    detail,
+    subject: String(subject || ""),
+    detail: detail || {},
+    prevHash: null,
+    hash: null,
   };
   state.data.auditEvents = state.data.auditEvents || [];
   state.data.auditEvents.unshift(entry);
   return entry;
 }
+
+let _auditMod = null;
+/** Called by `core/audit.js` once loaded so `store.audit` can delegate. */
+export function registerAuditImpl(mod) { _auditMod = mod; globalThis.__forgeAudit = mod; }
 
 // ID generator
 let _seq = Date.now() % 100000;

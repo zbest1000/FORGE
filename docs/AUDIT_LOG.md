@@ -17,7 +17,7 @@ Starting state (already on this branch):
   `149a74f` (FORGE MVP) and `5ece325` (UNS + i3X 1.0-Beta).
 - Prototype is a static client app. `python3 -m http.server 8080` runs it.
 
-## 2026-04-24 — Spec gap analysis + docs scaffolding
+## 2026-04-24 — Spec gap analysis + docs scaffolding (2ddd2ac)
 
 **What**
 Re-read PRODUCT_SPEC.md end-to-end. Produced a full compliance matrix
@@ -50,14 +50,79 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ---
 
-<!--
-Subsequent entries follow this template:
+## 2026-04-24 — Core foundations: crypto, tamper-evident audit, §4 normalization, subscriptions, revisions, events, search, hotkeys
 
-## YYYY-MM-DD — <short title> (<commit-hash>)
+**What**
+Landed the cross-cutting building blocks that the screen-level spec work
+depends on. Added 8 new core modules; wired them into `app.js` bootstrap.
 
-**What** — one paragraph.
-**Why** — which spec clauses are addressed.
-**Tech decision** — chosen approach + alternatives considered.
-**Files** — list.
-**Verification** — how it was tested.
+- `core/crypto.js` — Web Crypto SHA-256 hashing and HMAC-SHA256 signing with
+  canonical-JSON serialization so hashes are deterministic.
+- `core/audit.js` — Append-only, hash-chained audit ledger. Entries are
+  chained via `prevHash`; `verifyLedger()` walks the chain and reports
+  tampering. `exportAuditPack()` produces a self-contained JSON pack with
+  an HMAC-SHA256 signature. Serialized hashing keeps the chain deterministic
+  under burst writes.
+- `core/idb.js` — Thin IndexedDB wrapper for long-term append-only stores
+  (auditLog, events, dlq, search). Fails gracefully if IDB is unavailable.
+- `core/normalize.js` — One-time pass that backfills the §4 base fields
+  (`org_id`, `workspace_id`, `created_by`, `created_at`, `updated_at`,
+  `status`, `labels[]`, `acl`, `audit_ref`) on every entity in the seed.
+  Also seeds `files`, `threads`, `savedSearches`, `subscriptions`,
+  `transmittals`, `eventLog`, `deadLetters`, `aiLog`, `retentionPolicies`.
+- `core/subscriptions.js` — Object follow/watch model with `fanout()` that
+  pushes notifications to subscribers. Used by revisions, events, channels.
+- `core/revisions.js` — Formal state machine (Draft → IFR → Approved → IFC →
+  Superseded/Archived) with auto-supersede on IFC promotion and an
+  `impactOfRevision()` helper feeding the AI impact analyzer.
+- `core/events.js` — Canonical event envelope (exact fields from spec §9.2),
+  ingest pipeline with idempotency (`dedupe_key`), routing engine with five
+  default rules (high-sev alarm → incident, alarm → channel, ERP → work
+  item, OPC UA state → asset timeline, any → fanout), DLQ + replay.
+- `core/search.js` — BM25 inverted index over 10 collections, substring
+  fallback, ACL-filtered results, facet counts (kind, status, discipline,
+  project, teamSpace), saved searches.
+- `core/hotkeys.js` — Single-key C/G/A/? shortcuts per spec §12.4.
+
+**Why**
+Spec §4 base fields, §13.2 tamper-evident audit, §9.2–9.4 canonical event
+pipeline, §6.1 subscriptions, §6.3/§10 revision lifecycle, §12.4 hotkeys,
+§15 search. Every downstream screen relies on these.
+
+**Tech decisions**
+- SHA-256 hash chain over canonical JSON: deterministic, zero-dep, real
+  tamper evidence. Alternative (Merkle tree) considered but overkill for
+  linear audit.
+- HMAC-SHA256 signatures with a demo tenant key exposed via `getSigningKey()`
+  — that function is the single seam where a real KMS would plug in.
+- BM25 (k1=1.5, b=0.75) + substring fallback for "semantic-ish" per
+  spec §15 hybrid retrieval. Alternative (TF-IDF) considered; BM25 is the
+  industry default.
+- Serialized hashing through a chained Promise so the ledger stays
+  deterministic even under burst writes (`audit()` can be called N times
+  synchronously and `verifyLedger()` still passes).
+
+**Files**
+- `src/core/crypto.js`, `src/core/audit.js`, `src/core/idb.js`,
+  `src/core/normalize.js`, `src/core/subscriptions.js`,
+  `src/core/revisions.js`, `src/core/events.js`, `src/core/search.js`,
+  `src/core/hotkeys.js`
+- `src/core/store.js` — delegated `audit()` to new ledger
+- `app.js` — boot sequence: normalize → initAuditLedger → initI3X →
+  buildIndex → installHotkeys; subscribe `scheduleRebuild()` for search.
+
+**Verification**
+- `node --check` passes on every new and modified file.
+- Runtime test (Node):
+  - `verifyLedger() → { ok: true, legacyCount: 3, strictCount: 5 }` after 5
+    appended audits.
+  - Tampering an entry flips `verifyLedger().ok` to `false` with
+    `reason: "hash mismatch"`; reverting the tamper restores `ok: true`.
+  - Event pipeline: `ingest()` normalizes a raw alarm into the canonical
+    envelope, idempotency dedupe returns `null` on repeat, rule engine
+    creates a matching incident.
+  - BM25 query for "valve" returns 4 hits across revisions, work items, and
+    drawings.
+  - `exportAuditPack()` → 8 entries, `verifyAuditPack()` → `true`
+    (HMAC-SHA256).
 -->

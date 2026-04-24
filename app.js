@@ -1,10 +1,15 @@
 // FORGE — bootstrap. Wires seed → store → router → shell → screens.
 
 import { buildSeed } from "./src/data/seed.js";
-import { state, initState, subscribe } from "./src/core/store.js";
+import { state, initState, subscribe, registerAuditImpl } from "./src/core/store.js";
 import { defineRoute, startRouter, rerenderCurrent } from "./src/core/router.js";
 import { openPalette } from "./src/core/palette.js";
 import { initI3X } from "./src/core/i3x/client.js";
+import { normalizeSeed } from "./src/core/normalize.js";
+import * as auditMod from "./src/core/audit.js";
+import { initAuditLedger } from "./src/core/audit.js";
+import { buildIndex, scheduleRebuild } from "./src/core/search.js";
+import { installHotkeys } from "./src/core/hotkeys.js";
 
 import { renderRail } from "./src/shell/rail.js";
 import { renderLeftPanel } from "./src/shell/leftPanel.js";
@@ -99,17 +104,22 @@ function attachHotkeys() {
 }
 
 function boot() {
-  const seed = buildSeed();
+  const seed = normalizeSeed(buildSeed());
   initState(seed);
+  registerAuditImpl(auditMod);
+  initAuditLedger();
   initI3X(state.data);
+  buildIndex();
   applyTheme();
   setupRoutes();
   attachHotkeys();
+  installHotkeys();
 
   subscribe(() => {
     applyTheme();
     renderShell();
     rerenderCurrent();
+    scheduleRebuild();
   });
 
   // Re-render the UNS browser at a slow cadence so VQT values refresh live.
