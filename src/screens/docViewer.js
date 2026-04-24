@@ -1,7 +1,22 @@
-import { el, mount, card, badge, toast, modal, formRow, select, textarea } from "../core/ui.js";
-import { state, update, getById, audit } from "../core/store.js";
+// Document viewer v2 — spec §7 engineering records, §11.5 UX.
+//
+// Adds:
+//   * Multi-page "paper" with overview strip + page navigation
+//   * Pinned regional comment threads (page, x, y, author, replies)
+//   * Rich metadata panel (discipline/project/package/area/line/system/
+//     vendor/revision/approver/effective date)
+//   * Transmittals list + "Draft transmittal" flow
+//   * One-click issue creation from a comment pin
+//   * Revision timeline with supersede chain markers
+//   * Approval banner + request-approval flow (delegated to /approvals)
+
+import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea } from "../core/ui.js";
+import { state, update, getById } from "../core/store.js";
+import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
+import { follow, unfollow, isFollowing } from "../core/subscriptions.js";
+import { impactOfRevision } from "../core/revisions.js";
 
 export function renderDocsIndex() {
   const root = document.getElementById("screenContainer");
@@ -24,140 +39,393 @@ export function renderDocsIndex() {
   ]);
 }
 
+const SK = (id, k) => `doc.${id}.${k}`;
+const PAGES = 3; // Each document has 3 "paper" pages for demonstration.
+
 export function renderDocViewer({ id }) {
   const root = document.getElementById("screenContainer");
   const d = state.data;
   const doc = getById("documents", id);
   if (!doc) return mount(root, el("div", { class: "muted" }, ["Document not found."]));
 
-  const viewKey = `doc.rev.${id}`;
-  const activeRevId = sessionStorage.getItem(viewKey) || doc.currentRevisionId;
+  const activeRevId = sessionStorage.getItem(SK(id, "rev")) || doc.currentRevisionId;
   const rev = getById("revisions", activeRevId) || getById("revisions", doc.currentRevisionId);
-
-  const banner = bannerFor(rev);
+  const activePage = parseInt(sessionStorage.getItem(SK(id, "page")) || "1", 10);
 
   mount(root, [
-    banner,
+    metadataBar(doc, rev),
     el("div", { class: "viewer-layout" }, [
-      el("div", { class: "viewer-canvas" }, [
-        el("div", { class: "viewer-toolbar" }, [
-          el("button", { class: "btn sm" }, ["⟵ Page"]),
-          el("span", { class: "tiny muted" }, ["Page 1 of 3"]),
-          el("button", { class: "btn sm" }, ["Page ⟶"]),
-          el("span", { style: { flex: 1 } }),
-          el("button", { class: "btn sm", onClick: () => {
-            const other = pickOtherRev(doc, rev);
-            if (other) navigate(`/compare/${rev.id}/${other.id}`);
-          }}, ["Compare ⇄"]),
-          el("button", {
-            class: "btn sm primary",
-            disabled: !can("approve"),
-            onClick: () => openApprovalDialog(rev),
-          }, ["Request approval"]),
-        ]),
-        el("div", { class: "viewer-page" }, [
-          el("div", { class: "paper" }, [
-            el("h2", {}, [doc.name]),
-            el("div", { class: "paper-meta" }, [
-              `${doc.id}  ·  Rev ${rev.label}  ·  ${rev.status}  ·  ${new Date(rev.createdAt).toLocaleDateString()}`,
-            ]),
-            el("p", {}, [rev.summary || "Summary not available."]),
-            el("p", {}, [rev.notes || "Notes: (none)"]),
-            el("p", { class: "muted tiny" }, [
-              "This is a rendered placeholder representing a native doc viewer. In production, PDF.js or similar would render sheets here.",
-            ]),
-            ...(doc.markupPins || []),
-          ]),
-        ]),
-      ]),
-      el("div", { class: "viewer-side" }, [
-        card("Revision timeline", el("div", { class: "revision-timeline" },
-          doc.revisionIds.map(rid => {
-            const r = getById("revisions", rid);
-            if (!r) return null;
-            return el("div", {
-              class: `revision-row ${r.id === rev.id ? "active" : ""}`,
-              onClick: () => { sessionStorage.setItem(viewKey, r.id); renderDocViewer({ id }); },
-            }, [
-              badge(`Rev ${r.label}`, `rev-${r.status.toLowerCase()}`),
-              el("div", {}, [
-                el("div", { class: "small" }, [r.status]),
-                el("div", { class: "tiny muted" }, [new Date(r.createdAt).toLocaleDateString()]),
-              ]),
-            ]);
-          })
-        )),
-        card("Approvals", el("div", { class: "stack" },
-          (d.approvals || []).filter(a => a.subject.kind === "Revision" && a.subject.id === rev.id).map(a =>
-            el("div", { class: "row wrap" }, [
-              badge(a.status, a.status === "approved" ? "success" : "warn"),
-              el("span", { class: "small" }, [a.id]),
-            ])
-          ).concat([
-            el("button", { class: "btn sm", onClick: () => navigate("/approvals") }, ["Approval queue →"]),
-          ])
-        )),
-        card("AI — Ask this document", el("div", { class: "stack" }, [
-          el("div", { class: "tiny muted" }, ["Ask a question; answers cite this revision."]),
-          el("button", { class: "btn sm", onClick: () => navigate(`/ai?doc=${doc.id}&rev=${rev.id}`) }, ["Open AI →"]),
-        ])),
-      ]),
+      canvasArea(doc, rev, activePage),
+      sidePane(doc, rev),
     ]),
   ]);
 }
 
-function bannerFor(rev) {
-  const variant = {
-    "Draft": "warn",
-    "IFR": "info",
-    "Approved": "success",
-    "IFC": "accent",
-    "Superseded": "warn",
-    "Archived": "",
-  }[rev.status] || "";
+function metadataBar(doc, rev) {
   return el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
-    el("div", { class: "row" }, [
+    el("div", { class: "row wrap" }, [
+      badge(doc.id, "info"),
+      badge(doc.discipline || "—", "info"),
       badge(`Rev ${rev.label}`, `rev-${rev.status.toLowerCase()}`),
-      badge(rev.status, variant),
-      el("span", { class: "tiny muted" }, [`Created ${new Date(rev.createdAt).toLocaleDateString()}`]),
+      badge(rev.status, revVariant(rev.status)),
+      badge(doc.sensitivity || "—", "warn"),
+      el("span", { class: "tiny muted" }, [`Effective ${new Date(rev.createdAt).toLocaleDateString()}`]),
+    ]),
+    el("div", { class: "row" }, [
+      el("button", { class: "btn sm", onClick: () => followToggle(doc.id) }, [isFollowing(doc.id) ? "Unfollow" : "Follow"]),
+      el("button", { class: "btn sm", onClick: () => navigate(`/compare/${rev.id}/${pickOther(doc, rev)}`) }, ["Compare ⇄"]),
+      el("button", { class: "btn sm primary", disabled: !can("approve"), onClick: () => navigate("/approvals") }, ["Approvals →"]),
     ]),
   ]);
 }
 
-function pickOtherRev(doc, rev) {
+function followToggle(docId) {
+  if (isFollowing(docId)) unfollow(docId); else follow(docId);
+  renderDocViewer({ id: docId });
+}
+
+function revVariant(status) {
+  return ({
+    "Draft":"warn","IFR":"info","Approved":"success","IFC":"accent","Superseded":"warn","Archived":"","Rejected":"danger",
+  })[status] || "";
+}
+
+function pickOther(doc, rev) {
   const ids = doc.revisionIds || [];
   const idx = ids.indexOf(rev.id);
-  const otherId = ids[idx - 1] || ids[idx + 1];
-  return otherId ? getById("revisions", otherId) : null;
+  return ids[idx - 1] || ids[idx + 1] || rev.id;
 }
 
-function openApprovalDialog(rev) {
-  if (!can("approve")) { toast("Your role cannot create approvals", "warn"); return; }
-  const approverSelect = select(state.data.users.map(u => ({ value: u.id, label: `${u.name} — ${u.role}` })));
-  const reasonText = textarea({ placeholder: "Reason / notes for approver..." });
+function canvasArea(doc, rev, activePage) {
+  return el("div", { class: "viewer-canvas" }, [
+    el("div", { class: "viewer-toolbar" }, [
+      el("button", { class: "btn sm", disabled: activePage <= 1, onClick: () => goPage(doc.id, activePage - 1) }, ["← Prev"]),
+      el("span", { class: "tiny muted" }, [`Page ${activePage} of ${PAGES}`]),
+      el("button", { class: "btn sm", disabled: activePage >= PAGES, onClick: () => goPage(doc.id, activePage + 1) }, ["Next →"]),
+      el("span", { style: { flex: 1 } }),
+      el("button", { class: "btn sm primary", disabled: !can("create"), onClick: () => addCommentPin(doc.id, rev.id, activePage) }, ["+ Regional comment"]),
+      el("button", { class: "btn sm", onClick: () => draftTransmittal(doc, rev) }, ["Draft transmittal"]),
+    ]),
+    el("div", { class: "viewer-page", id: `paper-${doc.id}` }, [
+      paperPage(doc, rev, activePage),
+    ]),
+    pageStrip(doc, activePage),
+  ]);
+}
+
+function paperPage(doc, rev, page) {
+  const comments = (state.data.comments || []).filter(c => c.docId === doc.id && c.revId === rev.id && c.page === page);
+  const container = el("div", { class: "paper" }, [
+    el("h2", {}, [`${doc.name} — page ${page}`]),
+    el("div", { class: "paper-meta" }, [`${doc.id}  ·  Rev ${rev.label} ${rev.status}  ·  ${new Date(rev.createdAt).toLocaleDateString()}`]),
+    paperContent(doc, rev, page),
+    ...comments.map(c => commentPin(c)),
+  ]);
+
+  container.addEventListener("click", (e) => {
+    if (!can("create")) return;
+    if (!e.altKey) return; // hold Alt to drop a pin; otherwise clicks do nothing
+    const rect = container.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    addCommentPin(doc.id, rev.id, page, x, y);
+  });
+
+  return container;
+}
+
+function paperContent(doc, rev, page) {
+  const body = ({
+    1: [
+      el("p", {}, [rev.summary || "This revision introduces engineering changes summarized in the metadata panel."]),
+      el("p", {}, [
+        "The FORGE document viewer anchors regional comments to normalized (page, x, y) coordinates so ",
+        "pinned discussions remain accurate across re-flows. Alt-click anywhere to drop a pin on this page."
+      ]),
+      el("p", { class: "muted tiny" }, ["Notes: ", rev.notes || "(none)"]),
+    ],
+    2: [
+      el("h3", {}, ["Scope"]),
+      el("p", {}, ["Scope of this revision covers the assets and packages listed in the metadata panel to the right. ",
+        "Impacted items are automatically computed from the revision graph (see Impact below)."]),
+    ],
+    3: [
+      el("h3", {}, ["Approval history"]),
+      el("p", {}, ["Approval routing is managed from the /approvals screen. Transmittals record outbound issuance of IFC revisions."]),
+    ],
+  })[page] || [];
+  return el("div", {}, body);
+}
+
+function commentPin(c) {
+  const pin = el("div", {
+    class: "markup-pin",
+    style: { left: (c.x * 100) + "%", top: (c.y * 100) + "%" },
+    title: c.text,
+    onClick: (e) => { e.stopPropagation(); openComment(c); },
+  }, [String(c.seq || "•")]);
+  return pin;
+}
+
+function pageStrip(doc, activePage) {
+  return el("div", { class: "row", style: { padding: "8px", gap: "8px", borderTop: "1px solid var(--border)" } },
+    Array.from({ length: PAGES }, (_, i) => el("button", {
+      class: `btn sm ${i + 1 === activePage ? "primary" : ""}`,
+      onClick: () => goPage(doc.id, i + 1),
+    }, [`p${i + 1}`]))
+  );
+}
+
+function goPage(docId, p) {
+  sessionStorage.setItem(SK(docId, "page"), String(p));
+  renderDocViewer({ id: docId });
+}
+
+function sidePane(doc, rev) {
+  const d = state.data;
+  const docTransmittals = (d.transmittals || []).filter(t => t.docId === doc.id);
+  return el("div", { class: "viewer-side" }, [
+    metadataCard(doc, rev),
+    revisionTimelineCard(doc, rev),
+    approvalsCard(doc, rev),
+    commentsCard(doc, rev),
+    transmittalsCard(doc, docTransmittals),
+    impactCard(rev),
+    crossLinks(doc),
+    askCard(doc, rev),
+  ]);
+}
+
+function metadataCard(doc, rev) {
+  const meta = [
+    ["Discipline", doc.discipline],
+    ["Project", doc.projectId],
+    ["Package", doc.package || "—"],
+    ["Area", doc.area || "—"],
+    ["Line", doc.line || "—"],
+    ["System", doc.system || "—"],
+    ["Vendor", doc.vendor || "—"],
+    ["Sensitivity", doc.sensitivity],
+    ["Revision", `${rev.label} · ${rev.status}`],
+    ["Approver", rev.approverId || "—"],
+    ["Effective", new Date(rev.createdAt).toLocaleDateString()],
+  ];
+  return card("Metadata", el("div", { class: "stack" }, meta.map(([k, v]) =>
+    el("div", { class: "row" }, [
+      el("span", { class: "tiny muted", style: { width: "90px" } }, [k]),
+      el("span", { class: "small" }, [String(v || "—")]),
+    ])
+  )));
+}
+
+function revisionTimelineCard(doc, rev) {
+  const ids = doc.revisionIds || [];
+  return card("Revision timeline", el("div", { class: "revision-timeline" },
+    ids.map(rid => {
+      const r = getById("revisions", rid);
+      if (!r) return null;
+      const label = r.status === "Superseded" ? `${r.label} · superseded` : `${r.label} · ${r.status}`;
+      return el("div", {
+        class: `revision-row ${r.id === rev.id ? "active" : ""}`,
+        onClick: () => { sessionStorage.setItem(SK(doc.id, "rev"), r.id); renderDocViewer({ id: doc.id }); },
+      }, [
+        badge(`Rev ${r.label}`, `rev-${r.status.toLowerCase()}`),
+        el("div", {}, [
+          el("div", { class: "small" }, [label]),
+          el("div", { class: "tiny muted" }, [new Date(r.createdAt).toLocaleDateString()]),
+        ]),
+      ]);
+    })
+  ));
+}
+
+function approvalsCard(doc, rev) {
+  const list = (state.data.approvals || []).filter(a => a.subject?.kind === "Revision" && a.subject?.id === rev.id);
+  return card("Approvals", el("div", { class: "stack" }, [
+    ...list.map(a => el("div", { class: "row wrap" }, [
+      badge(a.status, a.status === "approved" ? "success" : a.status === "rejected" ? "danger" : "warn"),
+      el("span", { class: "small" }, [a.id]),
+      a.signedAt ? el("span", { class: "tiny muted" }, ["signed " + new Date(a.signedAt).toLocaleString()]) : null,
+    ])),
+    list.length === 0 ? el("div", { class: "muted tiny" }, ["None"]) : null,
+    el("div", { class: "row" }, [
+      el("button", { class: "btn sm", onClick: () => navigate("/approvals") }, ["Queue →"]),
+    ]),
+  ]));
+}
+
+function commentsCard(doc, rev) {
+  const comments = (state.data.comments || []).filter(c => c.docId === doc.id && c.revId === rev.id);
+  return card(`Regional comments (${comments.length})`, el("div", { class: "stack" }, [
+    comments.length
+      ? comments.map(c => el("div", { class: "activity-row", onClick: () => openComment(c) }, [
+          el("span", { class: "ts" }, [`p${c.page} #${c.seq}`]),
+          el("span", { class: "small" }, [c.text || ""]),
+          el("span", { class: "tiny muted" }, [c.author]),
+        ]))
+      : [el("div", { class: "muted tiny" }, ["No pinned comments on this revision."])],
+    el("div", { class: "tiny muted" }, ["Alt-click the page to drop a pin."]),
+  ]));
+}
+
+function transmittalsCard(doc, list) {
+  return card(`Transmittals (${list.length})`, el("div", { class: "stack" }, [
+    ...list.map(t => el("div", { class: "activity-row" }, [
+      badge("T", "accent"),
+      el("div", { class: "stack", style: { gap: "2px", flex: 1 } }, [
+        el("span", { class: "small" }, [t.subject]),
+        el("span", { class: "tiny muted" }, [`To ${t.recipients.join(", ")} · ${new Date(t.ts).toLocaleDateString()}`]),
+      ]),
+    ])),
+    list.length === 0 ? el("div", { class: "muted tiny" }, ["No transmittals yet."]) : null,
+    el("div", { class: "row" }, [
+      el("button", { class: "btn sm primary", onClick: () => draftTransmittal(doc, getById("revisions", doc.currentRevisionId)) }, ["+ Transmittal"]),
+    ]),
+  ]));
+}
+
+function impactCard(rev) {
+  const impact = impactOfRevision(rev.id);
+  return card("AI — Impact analysis", el("div", { class: "stack" }, [
+    el("div", { class: "small" }, [
+      `Changing ${rev.id} may affect ${impact.tasks.length} task(s), ${impact.approvals.length} approval(s) and ${impact.assets.length} asset(s).`
+    ]),
+    ...impact.tasks.slice(0, 4).map(w => el("div", { class: "activity-row", onClick: () => navigate(`/work-board/${w.projectId}`) }, [
+      badge("Task", "info"), el("span", { class: "small" }, [w.title]),
+    ])),
+    ...impact.assets.slice(0, 4).map(a => el("div", { class: "activity-row", onClick: () => navigate(`/asset/${a.id}`) }, [
+      badge("Asset", "accent"), el("span", { class: "small" }, [a.name]),
+    ])),
+    el("div", { class: "tiny muted" }, [
+      "Citations: ", rev.id, impact.assets.slice(0, 3).map(a => ", " + a.id).join(""),
+    ]),
+  ]));
+}
+
+function crossLinks(doc) {
+  const d = state.data;
+  const drawings = d.drawings.filter(x => x.docId === doc.id);
+  const assets = d.assets.filter(a => (a.docIds || []).includes(doc.id));
+  return card("Cross-links", el("div", { class: "stack" }, [
+    ...drawings.map(dr => el("div", { class: "activity-row", onClick: () => navigate(`/drawing/${dr.id}`) }, [
+      badge("Drawing", "info"), el("span", { class: "small" }, [dr.name]),
+    ])),
+    ...assets.map(a => el("div", { class: "activity-row", onClick: () => navigate(`/asset/${a.id}`) }, [
+      badge("Asset", "info"), el("span", { class: "small" }, [a.name]),
+    ])),
+  ]));
+}
+
+function askCard(doc, rev) {
+  return card("AI — Ask this document", el("div", { class: "stack" }, [
+    el("div", { class: "tiny muted" }, ["Answers cite the active revision."]),
+    el("button", { class: "btn sm", onClick: () => navigate(`/ai?doc=${doc.id}&rev=${rev.id}`) }, ["Open AI →"]),
+  ]));
+}
+
+// ---------- actions ----------
+function addCommentPin(docId, revId, page, presetX, presetY) {
+  if (!can("create")) { toast("No permission", "warn"); return; }
+  const text = window.prompt("Regional comment:");
+  if (!text) return;
+  const x = presetX != null ? presetX : 0.25 + Math.random() * 0.5;
+  const y = presetY != null ? presetY : 0.15 + Math.random() * 0.6;
+  const existing = (state.data.comments || []).filter(c => c.docId === docId && c.revId === revId);
+  const c = {
+    id: "CMT-" + Math.random().toString(36).slice(2, 8).toUpperCase(),
+    docId, revId, page, x, y, text,
+    author: state.ui.role,
+    replies: [],
+    seq: existing.length + 1,
+    ts: new Date().toISOString(),
+  };
+  update(s => { s.data.comments = s.data.comments || []; s.data.comments.push(c); });
+  audit("comment.create", c.id, { docId, revId, page });
+  toast("Comment pinned", "success");
+  renderDocViewer({ id: docId });
+}
+
+function openComment(c) {
+  const replyBox = textarea({ placeholder: "Reply..." });
   modal({
-    title: `Request approval — ${rev.id}`,
+    title: `Regional comment · p${c.page} #${c.seq}`,
     body: el("div", { class: "stack" }, [
-      formRow("Approver", approverSelect),
-      formRow("Notes", reasonText),
+      el("div", { class: "small" }, [c.text]),
+      el("div", { class: "tiny muted" }, [`By ${c.author} · ${new Date(c.ts).toLocaleString()}`]),
+      el("div", { class: "strong tiny" }, ["Replies"]),
+      ...(c.replies || []).map(r => el("div", { class: "activity-row" }, [
+        el("span", { class: "tiny muted", style: { width: "100px" } }, [r.author]),
+        el("span", { class: "small" }, [r.text]),
+      ])),
+      formRow("Reply", replyBox),
+    ]),
+    actions: [
+      { label: "Close" },
+      { label: "Reply", variant: "primary", onClick: () => {
+        const text = replyBox.value.trim();
+        if (!text) return;
+        update(s => {
+          const ref = s.data.comments.find(x => x.id === c.id);
+          if (!ref) return;
+          ref.replies = ref.replies || [];
+          ref.replies.push({ author: s.ui.role, text, ts: new Date().toISOString() });
+        });
+        audit("comment.reply", c.id);
+        renderDocViewer({ id: c.docId });
+      }},
+      { label: "Convert to issue", onClick: () => convertCommentToIssue(c) },
+    ],
+  });
+}
+
+function convertCommentToIssue(c) {
+  if (!can("create")) return;
+  const doc = getById("documents", c.docId);
+  const title = window.prompt("Issue title:", c.text.slice(0, 60));
+  if (!title) return;
+  const projectId = doc?.projectId || (state.data.projects || [])[0]?.id;
+  const id = "WI-" + Math.floor(Math.random() * 900 + 100);
+  update(s => {
+    s.data.workItems.push({
+      id, projectId, type: "Issue", title, assigneeId: "U-1",
+      status: "Open", severity: "medium", due: null, blockers: [],
+      description: `Originated from comment ${c.id} on ${c.docId} revision ${c.revId}, page ${c.page}.`,
+      labels: [c.docId, c.id],
+    });
+  });
+  audit("comment.convert.issue", c.id, { workItemId: id });
+  toast(`${id} created from comment`, "success");
+  navigate(`/work-board/${projectId}`);
+}
+
+function draftTransmittal(doc, rev) {
+  const subject = input({ value: `${doc.name} — ${rev.label} ${rev.status}` });
+  const recipients = input({ value: "package-3-team@atlas.example" });
+  const note = textarea({ value: `Please find attached ${doc.name} revision ${rev.label} (${rev.status}). Effective ${new Date(rev.createdAt).toLocaleDateString()}.` });
+  modal({
+    title: "Draft transmittal",
+    body: el("div", { class: "stack" }, [
+      formRow("Subject", subject),
+      formRow("Recipients (comma-separated)", recipients),
+      formRow("Message", note),
     ]),
     actions: [
       { label: "Cancel" },
-      { label: "Request", variant: "primary", onClick: () => {
-        const id = "APR-" + Math.floor(Math.random()*900+100);
-        update(s => {
-          s.data.approvals.push({
-            id,
-            subject: { kind: "Revision", id: rev.id },
-            requester: "current",
-            approvers: [approverSelect.value],
-            status: "pending",
-            dueTs: new Date(Date.now() + 86400000).toISOString(),
-            notes: reasonText.value,
-          });
-        });
-        audit("approval.request", rev.id, { approvalId: id });
-        toast("Approval requested", "success");
+      { label: "Send", variant: "primary", onClick: () => {
+        const t = {
+          id: "TX-" + Math.random().toString(36).slice(2, 8).toUpperCase(),
+          docId: doc.id,
+          revId: rev.id,
+          subject: subject.value,
+          recipients: recipients.value.split(",").map(s => s.trim()).filter(Boolean),
+          message: note.value,
+          ts: new Date().toISOString(),
+          sender: state.ui.role,
+        };
+        update(s => { s.data.transmittals = s.data.transmittals || []; s.data.transmittals.push(t); });
+        audit("transmittal.send", t.id, { docId: doc.id, revId: rev.id });
+        toast(`Transmittal ${t.id} sent`, "success");
+        renderDocViewer({ id: doc.id });
       }},
     ],
   });

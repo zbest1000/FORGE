@@ -50,7 +50,7 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ---
 
-## 2026-04-24 — Core foundations: crypto, tamper-evident audit, §4 normalization, subscriptions, revisions, events, search, hotkeys
+## 2026-04-24 — Core foundations (07d8afd)
 
 **What**
 Landed the cross-cutting building blocks that the screen-level spec work
