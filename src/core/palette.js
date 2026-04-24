@@ -5,6 +5,22 @@ import { state } from "./store.js";
 import { navigate } from "./router.js";
 import { SCREEN_ROUTES } from "./screens-registry.js";
 import { getServer } from "./i3x/client.js";
+import { vendor } from "./vendor.js";
+
+let _fuseInstance = null;
+let _fuseEntries = [];
+async function ensureFuse(entries) {
+  if (_fuseInstance && _fuseEntries === entries) return _fuseInstance;
+  try {
+    const Fuse = await vendor.fuse();
+    _fuseInstance = new Fuse(entries, {
+      keys: ["label", "kind", "meta"],
+      threshold: 0.35, includeScore: true, ignoreLocation: true,
+    });
+    _fuseEntries = entries;
+    return _fuseInstance;
+  } catch { return null; }
+}
 
 let open = false;
 
@@ -21,12 +37,20 @@ export function openPalette() {
 
   let activeIdx = 0;
   const allEntries = collectEntries();
+  // Fuzzy matching upgrade: swap to Fuse.js once loaded.
+  ensureFuse(allEntries).then(f => { if (f) matched = render(input.value); });
 
   function render(query) {
-    const q = (query || "").trim().toLowerCase();
-    const matched = q
-      ? allEntries.filter(e => (e.label + " " + (e.kind || "") + " " + (e.meta || "")).toLowerCase().includes(q))
-      : allEntries.slice(0, 30);
+    const q = (query || "").trim();
+    let matched;
+    if (!q) {
+      matched = allEntries.slice(0, 30);
+    } else if (_fuseInstance) {
+      matched = _fuseInstance.search(q).map(r => r.item);
+    } else {
+      const lower = q.toLowerCase();
+      matched = allEntries.filter(e => (e.label + " " + (e.kind || "") + " " + (e.meta || "")).toLowerCase().includes(lower));
+    }
 
     clear(results);
     matched.slice(0, 60).forEach((entry, i) => {

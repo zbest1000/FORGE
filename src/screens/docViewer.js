@@ -17,6 +17,7 @@ import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { follow, unfollow, isFollowing } from "../core/subscriptions.js";
 import { impactOfRevision } from "../core/revisions.js";
+import { openPdf, renderPage } from "../core/pdf.js";
 
 export function renderDocsIndex() {
   const root = document.getElementById("screenContainer");
@@ -105,6 +106,7 @@ function canvasArea(doc, rev, activePage) {
       el("span", { style: { flex: 1 } }),
       el("button", { class: "btn sm primary", disabled: !can("create"), onClick: () => addCommentPin(doc.id, rev.id, activePage) }, ["+ Regional comment"]),
       el("button", { class: "btn sm", onClick: () => draftTransmittal(doc, rev) }, ["Draft transmittal"]),
+      el("button", { class: "btn sm", onClick: () => attachPdf(doc, rev) }, [rev.pdfUrl ? "Change PDF" : "Attach PDF"]),
     ]),
     el("div", { class: "viewer-page", id: `paper-${doc.id}` }, [
       paperPage(doc, rev, activePage),
@@ -121,6 +123,22 @@ function paperPage(doc, rev, page) {
     paperContent(doc, rev, page),
     ...comments.map(c => commentPin(c)),
   ]);
+
+  // If the revision has a pdfUrl, render it with PDF.js (Mozilla, Apache 2.0).
+  // This replaces the synthetic paper with the real document when available.
+  if (rev.pdfUrl) {
+    const pdfHost = document.createElement("div");
+    pdfHost.className = "pdf-host";
+    pdfHost.style.minHeight = "420px";
+    pdfHost.textContent = "Loading PDF…";
+    (async () => {
+      const pdf = await openPdf(rev.pdfUrl);
+      if (!pdf) { pdfHost.textContent = "PDF.js unavailable — showing placeholder."; return; }
+      await renderPage(pdf, Math.min(page, pdf.numPages), pdfHost);
+    })();
+    container.replaceChildren(pdfHost);
+    for (const c of comments) container.append(commentPin(c));
+  }
 
   container.addEventListener("click", (e) => {
     if (!can("create")) return;
@@ -396,6 +414,15 @@ function convertCommentToIssue(c) {
   audit("comment.convert.issue", c.id, { workItemId: id });
   toast(`${id} created from comment`, "success");
   navigate(`/work-board/${projectId}`);
+}
+
+function attachPdf(doc, rev) {
+  const url = window.prompt("PDF URL (must be CORS-enabled):", rev.pdfUrl || "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf");
+  if (!url) return;
+  update(s => { const r = s.data.revisions.find(x => x.id === rev.id); if (r) r.pdfUrl = url; });
+  audit("revision.pdf.attach", rev.id, { url });
+  toast("PDF attached — re-rendering with PDF.js", "success");
+  renderDocViewer({ id: doc.id });
 }
 
 function draftTransmittal(doc, rev) {

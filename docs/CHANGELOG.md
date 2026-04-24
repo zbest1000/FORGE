@@ -8,8 +8,27 @@ engineering log behind each change.
 Work in progress on branch `cursor/forge-mvp-build-f2a3`.
 
 ### Added
+- **Third-party OSS integration**: import map + dynamic loader in
+  `src/core/vendor.js` pulling PDF.js, MiniSearch, Dexie, marked, DOMPurify,
+  Mermaid, svg-pan-zoom, µPlot, MQTT.js, web-ifc, Fuse.js, date-fns, and
+  RapiDoc from `esm.sh`. See `docs/THIRD_PARTY.md`.
+- **PDF.js** rendering in doc viewer (Attach-PDF action).
+- **web-ifc** lazy loading on drawing IFC tab.
+- **MQTT.js** real broker client on the MQTT screen.
+- **Mermaid** dependency graph on work board.
+- **svg-pan-zoom** for the drawing viewer.
+- **µPlot** sparklines on asset detail / UNS.
+- **RapiDoc** pane embedded in the i3X explorer.
+- **Fuse.js** fuzzy match in the command palette.
 - `docs/ARCHITECTURE.md`, `docs/SPEC_COMPLIANCE.md`, `docs/AUDIT_LOG.md`
   covering every spec clause and every change.
+
+### Changed
+- `core/search.js`: MiniSearch is now the primary search engine; the
+  previous hand-rolled BM25 is kept as fallback.
+- `core/idb.js`: Dexie is now the primary IDB client; bare IDB is fallback.
+- Channel messages render through `marked` + `DOMPurify` before being
+  decorated with object-chip links.
 
 ## 0.2.0 — UNS + i3X 1.0-Beta compatibility
 

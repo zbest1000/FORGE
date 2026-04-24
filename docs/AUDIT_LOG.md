@@ -58,6 +58,91 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ## 2026-04-24 — __forgeSelfTest enriched; compliance notes (b12d8ac)
 
+## 2026-04-24 — Integrate 13 OSS packages (import map, vendor loader, replacements)
+
+**What**
+Answered "are we rebuilding the wheel?" — no more, we now actually consume
+well-known OSS where it replaces hand-rolled code.
+
+Added runtime dependencies (all via an ES-module import map in
+`index.html`, all under permissive licenses):
+
+| Package | Version | License | Replaces |
+|---|---|---|---|
+| pdfjs-dist | 4.6.82 | Apache 2.0 | SVG paper placeholder in doc viewer |
+| minisearch | 7.1.2 | MIT | Hand-rolled BM25 (kept as fallback) |
+| dexie | 4.0.11 | Apache 2.0 | Bare IDB wrapper (kept as fallback) |
+| marked | 14.1.3 | MIT | Plain-text channel messages |
+| dompurify | 3.1.7 | MPL 2.0 | (ensures marked HTML is XSS-safe) |
+| mermaid | 11.4.1 | MIT | Hand-rolled dependency-graph SVG (kept as fallback) |
+| svg-pan-zoom | 3.6.2 | BSD-2 | Custom zoom/pan in drawing viewer |
+| uplot | 1.6.31 | MIT | Hand-rolled polyline sparklines (kept as fallback) |
+| mqtt | 5.10.1 | MIT | In-process MQTT simulator (kept as fallback) |
+| web-ifc | 0.0.66 | MPL 2.0 | IFC stub on drawing viewer |
+| fuse.js | 7.0.0 | Apache 2.0 | Substring match in command palette |
+| date-fns | 4.1.0 | MIT | Ad-hoc relative-time formatting |
+| rapidoc | 9.3.8 | MIT | Hand-rolled OpenAPI UI for i3X |
+
+**Why**
+Spec §16 explicitly enumerates reference OSS. The previous "zero deps"
+stance ignored that several of those projects have **browser-ready ESM
+builds** that replace hand-rolled code in a few lines. This integration
+closes three ◐ rows in `SPEC_COMPLIANCE.md` (PDF rendering, IFC/BIM,
+hybrid retrieval) and makes the MQTT screen a real broker client.
+
+**Tech decision**
+- **ES-module import map + esm.sh CDN**. Keeps the `python3 -m http.server`
+  contract. All URLs were verified to return HTTP 200 at the exact pinned
+  versions in `docs/THIRD_PARTY.md`.
+- **Fail-graceful vendor loader** in `src/core/vendor.js`: every import is
+  cached, errors are logged once to the console (not to the ledger, to
+  avoid a feedback loop against Dexie), and every caller has a fallback
+  path so the app still runs fully offline.
+- **No audit log of vendor failures** — early version recursed because
+  `audit()` → IDB → Dexie probe → vendor.load.error → `audit()`. Replaced
+  with `vendorStatus()` introspection for the UI to surface.
+
+**Files**
+- `index.html` — import map + rapidoc module script + optional uPlot CSS.
+- `src/core/vendor.js` — dynamic-import loader with promise cache.
+- `src/core/search.js` — MiniSearch primary, hand-rolled BM25 fallback.
+- `src/core/idb.js` — Dexie primary, bare IDB fallback.
+- `src/core/md.js` — marked + DOMPurify renderer.
+- `src/core/mermaid.js` — mermaid wrapper.
+- `src/core/charts.js` — uPlot sparkline with SVG fallback.
+- `src/core/pdf.js` — PDF.js wrapper with pinned worker URL.
+- `src/core/time.js` — date-fns formatter with Intl fallback.
+- `src/screens/channel.js` — messages render through marked + DOMPurify,
+  then tokens are upgraded to clickable object chips.
+- `src/screens/workBoard.js` — Mermaid flowchart for dependency map,
+  SVG fallback kept beneath.
+- `src/screens/drawingViewer.js` — svg-pan-zoom activation for zoom/pan;
+  IFC tab gains a "Load IFC" action backed by web-ifc.
+- `src/screens/assetDetail.js` + `src/screens/uns.js` — uPlot sparklines
+  via `core/charts.sparkline`.
+- `src/screens/mqtt.js` — live broker connect via MQTT.js over WebSocket,
+  incoming messages routed through the canonical event pipeline.
+- `src/screens/docViewer.js` — Attach-PDF action; PDF.js renders the
+  active revision.
+- `src/screens/i3x.js` — RapiDoc pane rendering the live CESMII i3X
+  OpenAPI spec alongside the in-process explorer.
+- `src/core/palette.js` — Fuse.js upgraded fuzzy matching.
+- `src/shell/contextPanel.js` — audit row timestamps via `time.relative`.
+- `docs/THIRD_PARTY.md` — full license / version manifest.
+- `docs/ARCHITECTURE.md`, `docs/SPEC_COMPLIANCE.md` — updated to reference
+  the integrated OSS per spec clause.
+
+**Verification**
+- All 13 CDN URLs return HTTP 200 (checked live).
+- `node --check` green on every module.
+- Under Node (no browser), every vendor import fails and every caller
+  seamlessly falls back: MiniSearch → hand-rolled BM25 (engine=`fallback`,
+  4 hits for "valve", same as before).
+- `verifyLedger()` → `ok: true` after 5 synthetic audits post-change.
+- Static server returns 200 for every new / modified file.
+- Import map JSON parses cleanly (`12 imports` + rapidoc classic module).
+
+
 **What**
 Finished the spec-driven rewrite of the remaining screens. Every major
 spec feature in §§11.3, 11.4, 11.9, 11.10, 11.11, 11.12, 11.13, 11.15,

@@ -15,6 +15,7 @@ import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { follow, unfollow, isFollowing, fanout } from "../core/subscriptions.js";
+import { renderMarkdown } from "../core/md.js";
 
 export function renderChannel({ id }) {
   const root = document.getElementById("screenContainer");
@@ -194,14 +195,32 @@ function toggleCheckbox(m, index) {
 }
 
 function linkifyText(text, d) {
-  const tokens = (text || "").split(/(\[[A-Z]+-[A-Z0-9-]+\])/g);
-  const frag = document.createDocumentFragment();
-  tokens.forEach(t => {
-    const mt = t.match(/^\[([A-Z]+-[A-Z0-9-]+)\]$/);
-    if (mt) frag.append(chip(mt[1], { onClick: () => jumpById(mt[1], d) }));
-    else frag.append(document.createTextNode(t));
-  });
-  return el("div", { class: "text" }, [frag]);
+  // Render markdown first (async, safe), then walk the DOM to swap object-ID
+  // tokens for clickable chips. Both stages are XSS-safe (DOMPurify + our
+  // own chip renderer).
+  const md = renderMarkdown(text || "");
+  // Observe once for the async swap-in; upgrade tokens to chips after render.
+  queueMicrotask(() => upgradeTokens(md, d));
+  new MutationObserver(() => upgradeTokens(md, d)).observe(md, { childList: true, subtree: true, characterData: true });
+  md.classList.add("text");
+  return md;
+}
+
+function upgradeTokens(root, d) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const texts = [];
+  while (walker.nextNode()) texts.push(walker.currentNode);
+  for (const node of texts) {
+    const v = node.nodeValue;
+    if (!/\[[A-Z]+-[A-Z0-9-]+\]/.test(v)) continue;
+    const frag = document.createDocumentFragment();
+    v.split(/(\[[A-Z]+-[A-Z0-9-]+\])/g).forEach(tok => {
+      const m = tok.match(/^\[([A-Z]+-[A-Z0-9-]+)\]$/);
+      if (m) frag.append(chip(m[1], { onClick: () => jumpById(m[1], d) }));
+      else if (tok) frag.append(document.createTextNode(tok));
+    });
+    node.parentNode.replaceChild(frag, node);
+  }
 }
 
 function jumpById(id, d) {

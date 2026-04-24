@@ -109,6 +109,8 @@ function boot() {
   registerAuditImpl(auditMod);
   initAuditLedger();
   initI3X(state.data);
+  // Kick off index build; MiniSearch loads async, hand-rolled fallback is
+  // used in the meantime for the first `query()` call.
   buildIndex();
   applyTheme();
   setupRoutes();

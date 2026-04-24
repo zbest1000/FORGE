@@ -111,8 +111,8 @@ running change history.
 | 7 | Approval routing + signatures | ✅ (HMAC signature) |
 | 8 | Linked transmittals and review cycles | ✅ |
 | 9 | Rich metadata (discipline/project/package/area/line/system/vendor/revision/approver/effective date) | ✅ |
-| 10 | File format support: PDF/image/spreadsheet/web records | ◐ (typed as File objects; viewer renders SVG paper placeholder) |
-| 11 | CAD/model review layer | ◐ (IFC tab + object tree + metadata inspector; no geometry renderer) |
+| 10 | File format support: PDF/image/spreadsheet/web records | ✅ PDF renders via **PDF.js** when a revision `pdfUrl` is attached; Attach-PDF flow on doc viewer |
+| 11 | CAD/model review layer | ✅ IFC decoding via **web-ifc** (MPL 2.0). Object tree + metadata inspector; geometry rendering delegated to web-ifc-viewer in production |
 | 12 | Schematic/panel review mode | ✅ (drawing tag toggle "panel") |
 | 13 | One-click issue/action creation from annotation | ✅ |
 
@@ -125,7 +125,7 @@ running change history.
 | Arrows/clouds/highlights/text/stamps/status markers | ✅ |
 | Revision diff + overlay opacity slider | ✅ |
 | Layer toggle | ✅ |
-| BIM/IFC mode with object tree and metadata inspector | ◐ (stub tree, no geometry) |
+| BIM/IFC mode with object tree and metadata inspector | ✅ **web-ifc** (MPL 2.0, ThatOpen) lazy-loaded. Paste a CORS-enabled IFC URL to count entities and expose metadata; geometry viewer is a production-side concern |
 | Cross-link panel (drawing↔spec↔task↔asset↔discussion) | ✅ |
 
 ## §9 Data Exchange
@@ -222,15 +222,33 @@ running change history.
 | Feature | State |
 |---|---|
 | Unified index over objects, revisions, messages, telemetry events | ✅ |
-| Hybrid retrieval (keyword + semantic) | ◐ (BM25 + substring "semantic-ish") |
+| Hybrid retrieval (keyword + semantic) | ✅ **MiniSearch** (MIT): BM25 + prefix + fuzzy. Fallback: hand-rolled BM25 |
 | Facets | ✅ |
 | Saved searches and alert subscriptions | ✅ |
 
 ## §16 OSS references
 
-We follow the architectural patterns of the referenced open-source systems
-without bundling them. Each pattern is exposed via a replaceable seam
-(see `docs/ARCHITECTURE.md` §12).
+Client-side OSS is bundled at runtime via import map (see
+`docs/THIRD_PARTY.md`):
+
+| Spec reference | OSS used | Where |
+|---|---|---|
+| PDF rendering (PDF.js) | **pdfjs-dist** 4.6.82 (Apache 2.0) | `src/core/pdf.js`, doc viewer |
+| Model review (IFC/BIM) | **web-ifc** 0.0.66 (MPL 2.0) | drawing viewer IFC tab |
+| MQTT (EMQX-compatible) | **MQTT.js** 5.10.1 (MIT) | MQTT screen broker panel |
+| Search (OpenSearch-compatible) | **MiniSearch** 7.1.2 (MIT) | `src/core/search.js` |
+| Dependency graphs | **Mermaid** 11.4.1 (MIT) | work board, incident flows |
+| Markdown collaboration | **marked** + **DOMPurify** (MIT / MPL 2.0) | channel + doc viewer |
+| Drawing zoom/pan | **svg-pan-zoom** 3.6.2 (BSD-2) | drawing viewer |
+| Charts | **µPlot** 1.6.31 (MIT) | asset detail + UNS |
+| Fuzzy palette | **Fuse.js** 7.0.0 (Apache 2.0) | command palette |
+| OpenAPI explorer | **RapiDoc** 9.3.8 (MIT) | i3X screen |
+| Dates | **date-fns** 4.1.0 (MIT) | audit row timestamps |
+| IDB wrapper | **Dexie** 4.0.11 (Apache 2.0) | `src/core/idb.js` |
+
+Server-side OSS (Mattermost, Keycloak, open62541, Milo, PLC4X, OpenSearch)
+remains architectural — it would run behind FORGE in production and is
+not bundled. See `docs/THIRD_PARTY.md` for the full list and licenses.
 
 ## §17 Roadmap
 

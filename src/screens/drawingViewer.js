@@ -20,6 +20,7 @@ import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { follow, isFollowing, unfollow } from "../core/subscriptions.js";
+import { vendor } from "../core/vendor.js";
 
 export function renderDrawingsIndex() {
   const root = document.getElementById("screenContainer");
@@ -214,6 +215,30 @@ function pageArea(dr, sheetId, mode, tool, markups, layers, compareWithId, overl
   });
 
   container.append(svg);
+
+  // Upgrade zoom/pan to svg-pan-zoom (BSD-2) if available. This replaces the
+  // custom wheel/drag handlers with a well-tested library when present, but
+  // keeps ours as the default so offline works.
+  (async () => {
+    try {
+      const spz = await vendor.svgPanZoom();
+      if (!spz) return;
+      // Give the browser a tick to lay out the SVG first.
+      await new Promise(r => requestAnimationFrame(r));
+      spz(svg, {
+        zoomEnabled: true,
+        panEnabled: mode !== "markup",
+        controlIconsEnabled: true,
+        fit: true,
+        center: true,
+        minZoom: 0.5,
+        maxZoom: 10,
+      });
+      // Mark so our hand-rolled transform helpers don't fight the lib.
+      svg.dataset.spz = "1";
+    } catch { /* fallback already active */ }
+  })();
+
   return container;
 }
 
@@ -541,6 +566,28 @@ function histogramMarkupTypes(markups) {
 }
 
 // ---------- IFC mode ----------
+async function loadIfcFile(dr) {
+  const url = window.prompt("IFC file URL (CORS-enabled):", dr.ifcUrl || "");
+  if (!url) return;
+  update(s => { const x = s.data.drawings.find(y => y.id === dr.id); if (x) x.ifcUrl = url; });
+  toast("Loading IFC via web-ifc (MPL 2.0)...", "info");
+  try {
+    const mod = await vendor.webIfc();
+    if (!mod) { toast("web-ifc unavailable", "warn"); return; }
+    const IfcAPI = new mod.IfcAPI();
+    await IfcAPI.Init();
+    const buf = await fetch(url).then(r => r.arrayBuffer());
+    const modelID = IfcAPI.OpenModel(new Uint8Array(buf));
+    const lines = IfcAPI.GetAllLines(modelID);
+    audit("drawing.ifc.load", dr.id, { url, entities: lines?.size?.() || 0 });
+    toast(`IFC loaded — ${lines?.size?.() || 0} entities`, "success");
+    IfcAPI.CloseModel(modelID);
+    renderDrawingViewer({ id: dr.id });
+  } catch (e) {
+    toast("IFC load failed: " + e.message, "danger");
+  }
+}
+
 function ifcPanel(dr) {
   const model = {
     name: dr.name,
@@ -577,10 +624,12 @@ function ifcPanel(dr) {
             el("span", { class: "mono small" }, [String(v)]),
           ])),
         ])),
-        card("Note", el("div", { class: "tiny muted" }, [
-          "IFC viewer stub: object tree + metadata inspector. In production this ",
-          "pane would host a BIM geometry renderer (web-ifc-viewer). The object ",
-          "graph is authoritative; geometry is a display concern."
+        card("IFC file", el("div", { class: "stack" }, [
+          el("div", { class: "tiny muted" }, [
+            "Backed by web-ifc (MPL 2.0, ThatOpen). Paste an IFC URL to load entity counts and metadata here.",
+          ]),
+          dr.ifcUrl ? el("div", { class: "mono tiny" }, [dr.ifcUrl]) : null,
+          el("button", { class: "btn sm primary", onClick: () => loadIfcFile(dr) }, [dr.ifcUrl ? "Reload IFC" : "Load IFC"]),
         ])),
       ]),
     ]),

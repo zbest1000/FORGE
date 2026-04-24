@@ -3,6 +3,7 @@ import { state, update, getById, audit } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { getServer } from "../core/i3x/client.js";
+import { sparkline } from "../core/charts.js";
 
 export function renderAssetsIndex() {
   const root = document.getElementById("screenContainer");
@@ -93,7 +94,7 @@ export function renderAssetDetail({ id }) {
 }
 
 function telemetry(a) {
-  const ticks = 40;
+  const ticks = 60;
   const data = [];
   let v = 50 + (a.id.charCodeAt(a.id.length - 1) % 20);
   for (let i = 0; i < ticks; i++) {
@@ -101,17 +102,11 @@ function telemetry(a) {
     v = Math.max(10, Math.min(95, v));
     data.push(v);
   }
-  const W = 300, H = 80;
-  const points = data.map((y, i) => `${(i / (ticks - 1) * W).toFixed(1)},${(H - (y / 100) * H).toFixed(1)}`).join(" ");
-  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", height: "100px" });
-  svg.innerHTML = `
-    <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
-    <line x1="0" x2="${W}" y1="${H*0.2}" y2="${H*0.2}" stroke="var(--border)" stroke-dasharray="3,3"/>
-  `;
   return el("div", { class: "stack" }, [
-    svg,
+    sparkline(data, { width: 360, height: 90 }),
     el("div", { class: "row wrap" }, (a.mqttTopics || []).map(t => el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["MQTT"]), t]))),
     el("div", { class: "row wrap" }, (a.opcuaNodes || []).map(n => el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["OPC"]), n]))),
+    el("div", { class: "tiny muted" }, ["Chart rendered by uPlot (MIT) with SVG fallback."]),
   ]);
 }
 

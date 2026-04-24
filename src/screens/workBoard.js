@@ -10,6 +10,7 @@ import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
+import { renderMermaid } from "../core/mermaid.js";
 
 const COLUMNS = ["Backlog", "Open", "In Progress", "In Review", "Approved", "Done"];
 
@@ -295,6 +296,32 @@ function timelineView(items) {
 
 // ---------- dependency map ----------
 function dependencyView(items) {
+  // Mermaid flowchart built from the blocked-by graph. Falls back to a
+  // hand-rolled SVG below.
+  const lines = ["flowchart LR"];
+  const safe = id => id.replace(/[^A-Za-z0-9_]/g, "_");
+  for (const w of items) {
+    const sev = w.severity === "high" || w.severity === "critical" ? ":::hi"
+      : w.severity === "medium" ? ":::md" : ":::lo";
+    lines.push(`  ${safe(w.id)}["${w.id}<br/>${(w.title || "").slice(0, 32)}"]${sev}`);
+  }
+  for (const w of items) {
+    for (const bl of (w.blockers || [])) {
+      if (items.some(x => x.id === bl)) lines.push(`  ${safe(bl)} --> ${safe(w.id)}`);
+    }
+  }
+  lines.push("  classDef hi fill:#ef4444,stroke:#991b1b,color:#fff;");
+  lines.push("  classDef md fill:#f59e0b,stroke:#92400e,color:#111;");
+  lines.push("  classDef lo fill:#38bdf8,stroke:#075985,color:#111;");
+  const def = lines.join("\n");
+  return card("Dependency map (Mermaid)", el("div", { class: "stack" }, [
+    renderMermaid(def),
+    el("div", { class: "tiny muted" }, ["Rendered with mermaid-js (MIT). Falls back to in-repo SVG if offline."]),
+    dependencyViewSvg(items),
+  ]), { subtitle: "Red = high/critical severity. Arrows = blocked-by." });
+}
+
+function dependencyViewSvg(items) {
   // Force-free layout: position nodes by status column + order.
   const byStatus = {};
   for (const w of items) (byStatus[w.status] = byStatus[w.status] || []).push(w);
@@ -356,7 +383,10 @@ function dependencyView(items) {
     svg.append(t);
   });
 
-  return card("Dependency map", svg, { subtitle: "Red arrows = blocked-by. Click a node to open." });
+  return el("div", { class: "stack" }, [
+    el("div", { class: "tiny muted" }, ["Hand-rolled SVG fallback (always available):"]),
+    svg,
+  ]);
 }
 
 // ---------- automation rules ----------

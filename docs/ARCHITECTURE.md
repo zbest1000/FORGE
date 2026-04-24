@@ -36,26 +36,40 @@ swap-point for a network implementation.
 
 ## 2. Technology choices
 
-| Concern | Tech | Rationale |
-|---|---|---|
-| Runtime | Browser ES modules, no build step | Keeps "any static server works" contract; no npm install risk |
-| Rendering | Hand-rolled DOM via `el()` helpers | Framework-free, deterministic, tiny |
-| State | Custom reactive store (`subscribe/notify/update`) | Small, predictable, fits everything |
-| Persistence (UI state) | `localStorage` | Synchronous, good for small JSON |
-| Persistence (append-only: audit, events, messages) | `IndexedDB` | Designed for large ordered stores |
-| Tamper-evident audit | `Web Crypto` SHA-256 hash-chain | Zero-dep cryptographic chain; spec §13.2 "tamper-evident audit trails" |
-| Signatures (approvals, audit packs) | `Web Crypto` HMAC-SHA256 with a demo tenant key | Real cryptographic signatures in-browser; spec §13.2 |
-| Routing | Hash router with params + query strings | No server; deep-linkable; survives reload |
-| Drawings / charts | Inline SVG with transform matrices | Zero-dep, zoomable, measurable, easy overlay compositing |
-| Search | BM25 inverted index | Industry standard; fits spec §15 "hybrid retrieval" when combined with substring fallback |
-| Telemetry | In-process ticker simulating MQTT/OPC UA ingress | Keeps prototype offline |
-| i3X / UNS | In-process engine (`src/core/i3x/server.js`) | Matches CESMII i3X 1.0-Beta OpenAPI envelopes |
+| Concern | Primary (OSS) | Fallback | Spec clause |
+|---|---|---|---|
+| Runtime | Browser ES modules, import map | — | — |
+| Rendering | Hand-rolled DOM via `el()` helpers | — | §12 |
+| State | Custom reactive store | — | — |
+| PDF viewer | **PDF.js** (Apache 2.0) | SVG "paper" placeholder | §7.10 |
+| Search | **MiniSearch** (MIT) | Hand-rolled BM25 | §15 |
+| Persistent logs | **Dexie** (Apache 2.0) over IndexedDB | Bare IDB wrapper | §6.4, §9.4 |
+| Markdown rendering | **marked** + **DOMPurify** (MIT, MPL 2.0) | Plain text | §6.1 |
+| Dependency / impact graphs | **Mermaid** (MIT) | Hand-rolled SVG graph | §11.4, §6.5 |
+| Drawing zoom/pan | **svg-pan-zoom** (BSD-2) | Hand-rolled transform matrix | §8 |
+| Sparklines / telemetry | **µPlot** (MIT) | Hand-rolled polyline | §6.4 |
+| MQTT broker | **MQTT.js** (MIT) WebSockets | In-process simulator | §6.4, §9.1 |
+| IFC / BIM | **web-ifc** (MPL 2.0) | Stub entity tree | §8 |
+| Command palette fuzzy match | **Fuse.js** (Apache 2.0) | Substring | §5.3 |
+| Time formatting | **date-fns** (MIT) | Intl / toLocaleString | — |
+| OpenAPI explorer (i3X) | **RapiDoc** (MIT) | — | i3X |
+| Tamper-evident audit | Web Crypto SHA-256 hash chain | — | §13.2 |
+| Signatures | Web Crypto HMAC-SHA256 | — | §13.2 |
+| Routing | Hash router with params + query strings | — | — |
+| i3X / UNS | In-process engine | — | CESMII i3X 1.0-Beta |
 
-The deliberate constraint is **zero npm dependencies**. This was tested: every
-feature in the spec either maps to a native browser primitive or a small hand-
-rolled module. PDF.js / IFC / Keycloak / EMQX / OpenSearch equivalents are
-represented as architectural **seams** — functions with well-defined shapes that
-a real implementation could replace — not as heavyweight bundled libraries.
+All OSS runs through `src/core/vendor.js`, which caches import promises
+and exposes `vendorStatus()` for a UI badge. Failures are non-fatal and
+switch the caller to its fallback path.
+
+**Third-party open-source integration**. An ES-module import map in
+`index.html` pulls 13 OSS packages at runtime from `esm.sh`: MiniSearch,
+Dexie, marked, DOMPurify, Mermaid, svg-pan-zoom, µPlot, MQTT.js, web-ifc,
+Fuse.js, date-fns, PDF.js, and RapiDoc. See `docs/THIRD_PARTY.md` for
+pinned versions and licenses. Every integration is loaded through
+`src/core/vendor.js` which caches the promise and lets callers fall back to
+the hand-rolled implementation on failure, so the prototype still runs fully
+offline with a local server.
 
 ## 3. Module map
 

@@ -6,6 +6,7 @@ import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { i3x, getServer } from "../core/i3x/client.js";
 import { parentPath } from "../core/i3x/uns.js";
+import { sparkline as chartSpark } from "../core/charts.js";
 
 export function renderUNSIndex() {
   const srv = getServer();
@@ -175,7 +176,7 @@ function renderLiveCard(elementId) {
         badge(vq?.quality || "—", qualityVariant(vq?.quality)),
       ]),
       el("div", { class: "tiny muted" }, [vq?.timestamp ? new Date(vq.timestamp).toLocaleTimeString() : ""]),
-      sparkline(history.data?.values || []),
+      chartSpark((history.data?.values || []).map(v => Number(v.value) || 0), { width: 280, height: 60 }),
       el("div", { class: "row wrap" }, [
         el("button", { class: "btn sm", onClick: () => writeValue(obj) }, ["Write value"]),
         el("button", { class: "btn sm", onClick: () => openSubscribe(obj) }, ["Subscribe → Explorer"]),

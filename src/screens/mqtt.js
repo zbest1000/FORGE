@@ -12,6 +12,10 @@ import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { can } from "../core/permissions.js";
 import { ingest } from "../core/events.js";
+import { vendor } from "../core/vendor.js";
+
+let _mqttClient = null;
+let _mqttStatus = "disconnected";
 
 export function renderMQTT() {
   const root = document.getElementById("screenContainer");
@@ -23,6 +27,7 @@ export function renderMQTT() {
   const tree = buildTree(sources.map(s => s.endpoint));
 
   mount(root, [
+    brokerPanel(),
     el("div", { class: "three-col" }, [
       card("Topic tree", renderTree(tree, "", selected, (topic) => {
         sessionStorage.setItem(selectedKey, topic);
@@ -49,6 +54,83 @@ export function renderMQTT() {
       ])),
     ]),
   ]);
+}
+
+function brokerPanel() {
+  const urlInput = input({
+    value: sessionStorage.getItem("mqtt.url") || "wss://test.mosquitto.org:8081/mqtt",
+    placeholder: "wss://broker.example:8083/mqtt",
+  });
+  const topicInput = input({
+    value: sessionStorage.getItem("mqtt.sub") || "forge/demo/#",
+    placeholder: "topic filter to subscribe",
+  });
+  const status = el("span", {}, [badge(_mqttStatus, _mqttStatus === "connected" ? "success" : _mqttStatus === "connecting" ? "warn" : "")]);
+
+  async function connect() {
+    if (!can("integration.write")) { toast("Requires Integration Admin", "warn"); return; }
+    sessionStorage.setItem("mqtt.url", urlInput.value);
+    sessionStorage.setItem("mqtt.sub", topicInput.value);
+    try {
+      const mqtt = await vendor.mqtt();
+      if (!mqtt) { toast("MQTT.js unavailable; using simulator only", "warn"); return; }
+      if (_mqttClient) { try { _mqttClient.end(true); } catch {} _mqttClient = null; }
+      _mqttStatus = "connecting"; renderMQTT();
+      const client = mqtt.connect(urlInput.value, { connectTimeout: 5000, reconnectPeriod: 0 });
+      _mqttClient = client;
+      client.on("connect", () => {
+        _mqttStatus = "connected";
+        client.subscribe(topicInput.value, { qos: 1 }, (err) => {
+          if (err) toast("Subscribe error: " + err.message, "danger");
+          else toast(`Connected · subscribed ${topicInput.value}`, "success");
+          audit("mqtt.broker.connect", urlInput.value, { topic: topicInput.value });
+          renderMQTT();
+        });
+      });
+      client.on("message", (topic, payload) => {
+        let body = payload.toString();
+        try { body = JSON.parse(body); } catch { /* keep as string */ }
+        ingest({
+          event_type: /alarm/i.test(topic) ? "alarm" : "telemetry",
+          severity: /alarm/i.test(topic) ? "SEV-3" : "info",
+          asset_ref: null,
+          payload: body,
+          dedupe_key: `mqtt:${topic}:${Date.now()}`,
+        }, { source: topic, source_type: "mqtt" });
+      });
+      client.on("error", (err) => {
+        _mqttStatus = "error";
+        toast("MQTT error: " + err.message, "danger");
+        audit("mqtt.broker.error", urlInput.value, { error: String(err.message) });
+        renderMQTT();
+      });
+      client.on("close", () => { _mqttStatus = "disconnected"; renderMQTT(); });
+    } catch (e) {
+      toast("Failed: " + e.message, "danger");
+    }
+  }
+
+  function disconnect() {
+    if (_mqttClient) { try { _mqttClient.end(true); } catch {} _mqttClient = null; }
+    _mqttStatus = "disconnected";
+    audit("mqtt.broker.disconnect", "");
+    renderMQTT();
+  }
+
+  return card("Live broker (MQTT.js)", el("div", { class: "stack" }, [
+    el("div", { class: "row wrap" }, [
+      formRow("WS URL", urlInput),
+      formRow("Subscribe", topicInput),
+    ]),
+    el("div", { class: "row" }, [
+      el("button", { class: "btn sm primary", onClick: connect }, ["Connect"]),
+      el("button", { class: "btn sm", onClick: disconnect }, ["Disconnect"]),
+      status,
+    ]),
+    el("div", { class: "tiny muted" }, [
+      "Uses MQTT.js (MIT). Any incoming message is normalized through the canonical event envelope (§9.2) and routed by the rule engine. Try a public test broker or point at your EMQX/Mosquitto instance.",
+    ]),
+  ]), { subtitle: "Real WebSocket client — failures fall back to the local simulator below." });
 }
 
 function buildTree(paths) {

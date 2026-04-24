@@ -1,6 +1,7 @@
 import { el, mount, card, badge } from "../core/ui.js";
 import { state, getById } from "../core/store.js";
 import { roleBanner } from "../core/permissions.js";
+import { relative } from "../core/time.js";
 
 export function renderContextPanel() {
   const root = document.getElementById("contextPanel");
@@ -86,7 +87,7 @@ function recentAudit() {
   return el("div", { class: "activity-list" },
     events.map(e =>
       el("div", { class: "activity-row" }, [
-        el("span", { class: "ts" }, [new Date(e.ts).toLocaleTimeString()]),
+        el("span", { class: "ts" }, [relative(e.ts)]),
         el("span", {}, [el("span", { class: "strong" }, [e.action]), " · ", String(e.subject)]),
         el("span", { class: "tiny muted" }, [e.actor]),
       ])

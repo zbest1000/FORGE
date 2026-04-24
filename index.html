@@ -5,6 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FORGE — Engineering Collaboration Platform</title>
     <link rel="stylesheet" href="styles.css" />
+
+    <!--
+      Import map — third-party OSS loaded as ES modules via esm.sh.
+      All packages are MIT / Apache 2.0 / BSD / MPL; see docs/THIRD_PARTY.md.
+      Every import is dynamic and fails gracefully: if the CDN is unreachable
+      the hand-rolled fallback in src/core/* runs instead.
+    -->
+    <script type="importmap">
+    {
+      "imports": {
+        "minisearch":  "https://esm.sh/minisearch@7.1.2?bundle",
+        "dexie":       "https://esm.sh/dexie@4.0.11?bundle",
+        "marked":      "https://esm.sh/marked@14.1.3?bundle",
+        "dompurify":   "https://esm.sh/dompurify@3.1.7?bundle",
+        "mermaid":     "https://esm.sh/mermaid@11.4.1?bundle",
+        "svg-pan-zoom":"https://esm.sh/svg-pan-zoom@3.6.2?bundle",
+        "uplot":       "https://esm.sh/uplot@1.6.31?bundle",
+        "mqtt":        "https://esm.sh/mqtt@5.10.1?bundle",
+        "web-ifc":     "https://esm.sh/web-ifc@0.0.66?bundle",
+        "fuse.js":     "https://esm.sh/fuse.js@7.0.0?bundle",
+        "date-fns":    "https://esm.sh/date-fns@4.1.0?bundle",
+        "pdfjs-dist":  "https://esm.sh/pdfjs-dist@4.6.82/build/pdf.mjs"
+      }
+    }
+    </script>
+
+    <!-- rapidoc is a custom element; load as a classic module script so the tag works. -->
+    <script type="module" src="https://esm.sh/rapidoc@9.3.8?bundle"></script>
+
+    <!-- uPlot optional stylesheet. Fail-graceful: missing = no uPlot visual polish. -->
+    <link rel="stylesheet" href="https://esm.sh/uplot@1.6.31/dist/uPlot.min.css" onerror="this.remove()" />
   </head>
   <body class="theme-dark">
     <div id="app" class="app-shell">

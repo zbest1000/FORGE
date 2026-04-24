@@ -84,6 +84,7 @@ export function renderI3X() {
 
   mount(root, [
     headerRow(),
+    rapidocCard(),
     el("div", { class: "two-col" }, [
       card("Endpoints", endpointList(epId)),
       endpointCard(endpoint, paramEls, bodyArea, requestBox, responseBox, () => {
@@ -102,6 +103,25 @@ export function renderI3X() {
     streamPanel,
     renderSpecCard(),
   ]);
+}
+
+function rapidocCard() {
+  // RapiDoc (MIT) renders the live CESMII i3X OpenAPI spec. We load the
+  // custom element eagerly from the <script type="module"> in index.html.
+  const rd = document.createElement("rapi-doc");
+  rd.setAttribute("spec-url", "https://api.i3x.dev/v1/openapi.json");
+  rd.setAttribute("render-style", "read");
+  rd.setAttribute("theme", document.body.classList.contains("theme-light") ? "light" : "dark");
+  rd.setAttribute("show-header", "false");
+  rd.setAttribute("allow-try", "false");
+  rd.style.height = "360px";
+  rd.style.width = "100%";
+  rd.style.display = "block";
+  rd.style.borderRadius = "8px";
+  rd.style.border = "1px solid var(--border)";
+  return card("i3X OpenAPI reference (rapidoc)", rd, {
+    subtitle: "Live spec from https://api.i3x.dev/v1/openapi.json · rendered by RapiDoc (MIT)",
+  });
 }
 
 function headerRow() {
