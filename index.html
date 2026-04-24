@@ -3,62 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FORGE MVP Shell</title>
+    <title>FORGE — Engineering Collaboration Platform</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
+  <body class="theme-dark">
     <div id="app" class="app-shell">
-      <aside class="far-left-rail">
-        <div class="logo">FORGE</div>
-        <nav id="globalNav"></nav>
-        <div class="rail-footer">
-          <button id="toggleDockBtn" class="ghost">Dock</button>
-          <button id="toggleThemeBtn" class="ghost">Theme</button>
-        </div>
-      </aside>
-
-      <aside class="left-panel">
-        <header class="panel-title">Workspace</header>
-        <section class="quick-actions">
-          <button id="newWorkItemBtn">+ Work Item</button>
-          <button id="newIncidentBtn">+ Incident</button>
-        </section>
-        <div id="workspaceTree" class="tree"></div>
-      </aside>
-
+      <aside class="far-left-rail" id="farLeftRail"></aside>
+      <aside class="left-panel" id="leftPanel"></aside>
       <main class="main-content">
-        <header class="main-header">
-          <div>
-            <h1 id="screenTitle">FORGE</h1>
-            <p id="screenSubtitle"></p>
-          </div>
-          <div class="header-controls">
-            <label>
-              Role
-              <select id="roleSelect"></select>
-            </label>
-            <input id="searchInput" placeholder="Search docs, assets, revisions..." />
-          </div>
-        </header>
-
-        <section id="screenLayout" class="screen-layout"></section>
+        <header class="main-header" id="mainHeader"></header>
+        <section id="screenContainer" class="screen-container"></section>
       </main>
-
-      <aside class="right-context-panel">
-        <header class="panel-title">Context</header>
-        <div id="contextPanel"></div>
-      </aside>
+      <aside class="right-context-panel" id="contextPanel"></aside>
     </div>
 
     <section id="operationsDock" class="operations-dock hidden"></section>
 
-    <template id="panelBlockTemplate">
-      <article class="panel-block">
-        <h3></h3>
-        <ul></ul>
-      </article>
-    </template>
+    <div id="modalRoot"></div>
+    <div id="toastRoot" class="toast-root"></div>
+    <div id="paletteRoot"></div>
 
-    <script src="app.js"></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>
