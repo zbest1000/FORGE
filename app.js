@@ -139,17 +139,42 @@ function boot() {
 
 boot();
 
-// Light sanity checks (console only; no-ops for production).
-window.__forgeSelfTest = function () {
+// Self-test suite (console only). Run `__forgeSelfTest()` in DevTools.
+window.__forgeSelfTest = async function () {
   const d = state.data;
-  console.assert(d.documents.length >= 3, "documents seeded");
-  console.assert(d.revisions.length >= 4, "revisions seeded");
-  console.assert(d.incidents.length >= 1, "incidents seeded");
-  console.assert(d.workItems.length >= 5, "work items seeded");
-  console.log("FORGE self-test OK", {
-    docs: d.documents.length,
-    revisions: d.revisions.length,
-    incidents: d.incidents.length,
-    workItems: d.workItems.length,
-  });
+  const results = [];
+  const check = (name, cond, detail) => {
+    results.push({ name, pass: !!cond, detail });
+    console.assert(cond, name + " — " + (detail || ""));
+  };
+
+  check("documents seeded", d.documents.length >= 3);
+  check("revisions seeded", d.revisions.length >= 4);
+  check("incidents seeded", d.incidents.length >= 1);
+  check("work items seeded", d.workItems.length >= 5);
+  check("§4 base fields on workItem", ["org_id","created_by","acl","audit_ref","labels"].every(k => k in d.workItems[0]));
+
+  try {
+    const { verifyLedger, exportAuditPack, verifyAuditPack } = await import("./src/core/audit.js");
+    const v = await verifyLedger();
+    check("audit ledger intact", v.ok, `strict=${v.strictCount}`);
+    const pack = await exportAuditPack();
+    check("audit pack verifies", await verifyAuditPack(pack), `entries=${pack.entry_count}`);
+  } catch (e) { check("audit module", false, e.message); }
+
+  try {
+    const search = await import("./src/core/search.js");
+    const r = search.query("valve");
+    check("BM25 search", r.total > 0, "hits=" + r.total);
+  } catch (e) { check("search", false, e.message); }
+
+  try {
+    const ev = await import("./src/core/events.js");
+    const pre = d.eventLog.length;
+    ev.ingest({ event_type: "test", payload: {}, dedupe_key: "st:" + Date.now() }, { source: "selftest", source_type: "rest" });
+    check("event pipeline ingest", d.eventLog.length > pre);
+  } catch (e) { check("events", false, e.message); }
+
+  console.table(results);
+  return results;
 };

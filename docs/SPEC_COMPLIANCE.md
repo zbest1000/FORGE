@@ -73,7 +73,7 @@ running change history.
 | Hierarchies (Plant>Area>Line>Cell>Machine / Site>Building>Floor>Room / Project>Package>Discipline>DrawingSet) | ✅ | UNS (`uns-seed.js`), ISA-95 namespace |
 | Asset page unifies drawings/docs/SOPs/tasks/incidents/dashboards/MQTT/OPC UA/ERP | ✅ | `assetDetail.js` |
 | Event normalization pipeline ingest→validate→map→enrich→route→audit→replay | ✅ | `core/events.js` |
-| Store-and-forward for low connectivity | ◐ | IDB-backed queue; no network layer |
+| Store-and-forward for low connectivity | ◐ | IDB-backed queue via `core/idb.js` (auditLog, events, dlq stores); no network layer to forward to |
 
 ## §6.5 AI Knowledge & Assistance
 

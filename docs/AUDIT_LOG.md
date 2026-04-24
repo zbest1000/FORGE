@@ -54,6 +54,76 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ## 2026-04-24 — Drawing viewer v2, Doc viewer v2, Approvals v2 (173f9d0)
 
+## 2026-04-24 — Work board, Channel, Incident, MQTT, OPC UA, ERP, AI, Search, Admin, Integrations v2 (ba47f06)
+
+**What**
+Finished the spec-driven rewrite of the remaining screens. Every major
+spec feature in §§11.3, 11.4, 11.9, 11.10, 11.11, 11.12, 11.13, 11.15,
+11.16, 15 is now exercised by the running UI.
+
+Highlights:
+- Work board gained two new views (timeline Gantt + dependency map) beyond
+  kanban/table, plus bulk operations via shift-click multi-select.
+- Channel supports edit/delete with audit, checklist blocks, decision
+  markers, and one-click conversion to work items or incidents.
+- Incident war room carries a per-severity playbook checklist, role roster,
+  alarms strip, and exports a signed postmortem (Markdown or JSON).
+- MQTT and OPC UA screens can **publish** simulated payloads straight into
+  `core/events.ingest()` so the rule engine drives incident creation,
+  channel notifications, and asset timelines end to end.
+- ERP mapping has conflict accept/override, writeback preview, and a
+  backfill dry-run/commit flow.
+- AI workspace now actually retrieves from the BM25 index, cites results,
+  records each call in `state.data.aiLog` with `retention: no-training-by-
+  default`, and has an Impact-of-revision intent that delegates to the
+  revision engine.
+- Search has a facet rail (kind/status/discipline/project/teamSpace) with
+  counts and deep-linkable URLs plus saved searches.
+- Admin console exposes `verifyLedger()` and `exportAuditPack()` from the
+  core audit module, plus a file-picker that verifies an exported pack's
+  HMAC.
+
+**Why**
+Screens were previously minimal-viable placeholders. The spec calls for
+tool-rich, permission-aware, auditable UX. Each feature now maps to a
+specific spec clause — see `SPEC_COMPLIANCE.md`.
+
+**Tech decisions**
+- Timeline / dependency views as hand-rolled SVG: zero deps, scales easily.
+- Publish-test and simulate-node routes through `events.ingest()` on
+  purpose, so the same routing rules apply whether an event came from a
+  real MQTT/OPC UA client or a UI simulation.
+- Postmortem export signs with HMAC-SHA256 over canonical JSON (same
+  helpers used by the audit pack), so incident exports are
+  independently verifiable.
+- BM25 retrieval for AI: avoids embedding models in-browser while still
+  producing ranked, citation-backed responses.
+- Batch ops use `sessionStorage` (not the reactive store) for transient
+  selection so it does not pollute `localStorage`.
+
+**Files**
+- `src/screens/workBoard.js`, `src/screens/channel.js`,
+  `src/screens/incident.js`, `src/screens/mqtt.js`, `src/screens/opcua.js`,
+  `src/screens/erp.js`, `src/screens/ai.js`, `src/screens/search.js`,
+  `src/screens/admin.js`, `src/screens/integrations.js`
+- `styles.css`: added `.success-text` / `.danger-text` / `.warn-text`.
+
+**Verification**
+- `node --check` passes on every changed file.
+- End-to-end runtime test (Node):
+  - §4 base fields present on a sample work item (`OK`).
+  - Revision transition IFR → Approved → IFC succeeds.
+  - `impactOfRevision("REV-2-C")` → 1 approval, 1 asset.
+  - Event envelope has all 14 spec-required fields.
+  - Follow + fanout: posting to followed subject creates a notification
+    for each subscriber.
+  - BM25 "vent interlock" returns 3 ranked hits led by "Add emergency vent
+    interlock".
+  - `verifyLedger()` → `ok: true` with `legacyCount: 3, strictCount: 7`.
+  - `exportAuditPack()` → 10 entries; `verifyAuditPack()` → `true`.
+- Static server returns 200 for every new/changed file.
+
+
 **What**
 Rewrote three signature screens to match the spec §7 / §8 / §11.14 feature
 lists in detail.
