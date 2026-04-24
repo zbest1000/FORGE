@@ -25,6 +25,18 @@ export function renderIntegrations() {
         ]),
       ]));
     })),
+    card("Unified Namespace binding", el("div", { class: "stack" }, [
+      el("div", { class: "small" }, ["All connectors publish into the canonical UNS and surface as i3X variables."]),
+      el("div", { class: "row wrap" }, [
+        badge("urn:cesmii:isa95:1", "purple"),
+        badge("urn:forge:signals:1", "accent"),
+        badge("urn:atlas:workspace:1", "info"),
+      ]),
+      el("div", { class: "row" }, [
+        el("button", { class: "btn sm", onClick: () => navigate("/uns") }, ["Open UNS browser →"]),
+        el("button", { class: "btn sm", onClick: () => navigate("/i3x") }, ["Open i3X Explorer →"]),
+      ]),
+    ])),
     card("Dead-letter queue (mock)", el("div", { class: "stack" }, [
       (d.integrations || []).filter(i => i.status === "failed").map(i =>
         el("div", { class: "activity-row" }, [

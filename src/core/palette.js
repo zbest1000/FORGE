@@ -4,6 +4,7 @@ import { el, clear } from "./ui.js";
 import { state } from "./store.js";
 import { navigate } from "./router.js";
 import { SCREEN_ROUTES } from "./screens-registry.js";
+import { getServer } from "./i3x/client.js";
 
 let open = false;
 
@@ -128,6 +129,19 @@ function collectEntries() {
   (d.incidents || []).forEach(i =>
     entries.push({ label: i.title, kind: "Incident", meta: i.id, route: `/incident/${i.id}` })
   );
+
+  try {
+    const srv = getServer();
+    const objects = srv.getObjects({}).data || [];
+    objects.forEach(o => {
+      entries.push({
+        label: o.name || o.elementId,
+        kind: "UNS:" + (o.typeElementId || "").split(":").pop(),
+        meta: o.path,
+        route: `/uns`,
+      });
+    });
+  } catch { /* server not ready yet */ }
 
   return entries;
 }

@@ -11,6 +11,8 @@ const ITEMS = [
   { icon: "📑", label: "Docs",     route: "/docs" },
   { icon: "📐", label: "Drawings", route: "/drawings" },
   { icon: "⚙️", label: "Assets",   route: "/assets" },
+  { icon: "🌐", label: "UNS",      route: "/uns" },
+  { icon: "🧩", label: "i3X",      route: "/i3x" },
   { icon: "📊", label: "Dash",     route: "/dashboards" },
   { icon: "🔌", label: "Integ",    route: "/integrations" },
   { icon: "🤖", label: "AI",       route: "/ai" },

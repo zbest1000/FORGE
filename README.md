@@ -12,9 +12,10 @@ client-side MVP prototype that exercises the full FORGE object model.
 - `index.html`, `app.js`, `styles.css` — static entry points for the MVP prototype.
 - `src/` — modular ES-module implementation:
   - `src/core/` — store (with `localStorage` persistence + audit log), router, permissions, UI atoms, command palette.
-  - `src/data/` — seed domain data (organization, workspaces, team spaces, channels, docs, revisions, drawings, markups, assets, work items, incidents, approvals, integrations, telemetry).
+  - `src/core/i3x/` — **Unified Namespace + CESMII i3X 1.0-Beta compatible engine** (server, client, path helpers).
+  - `src/data/` — seed domain data plus `uns-seed.js` that generates namespaces, types, relationship types, and a full instance graph from the FORGE data.
   - `src/shell/` — workspace shell: far-left rail, left panel, header, right context panel, operations dock.
-  - `src/screens/` — functional screens for all MVP pillars.
+  - `src/screens/` — functional screens for all MVP pillars, including a UNS browser and an i3X API explorer.
 
 ## Run locally
 
@@ -54,12 +55,68 @@ Requires a modern browser with ES module support.
 - **Admin Governance** — SSO/retention status, RBAC capability matrix, audit analytics, policy violation list.
 - **Dashboards** — dashboard cards + workspace KPIs.
 - **Spec reference** (`/spec`) — preserved screen-by-screen spec summary.
+- **Unified Namespace** (`/uns`) — hierarchical ISA-95 instance browser with live VQT, relationship panel, alternate addresses (MQTT topics, OPC UA nodes, FORGE IDs) for every node, and cross-links back to the asset/doc/drawing/incident records.
+- **i3X API Explorer** (`/i3x`) — live, in-process implementation of the [CESMII i3X 1.0-Beta OpenAPI](https://api.i3x.dev/v1/docs). Pick any endpoint, edit the request body, see the resolved request URL and the exact `SuccessResponse` / `BulkResponse` envelope the server returns, and open an SSE-simulated subscription stream that prints live sequence-numbered VQT updates.
 
 ### Permissions
 
 Role selector in the header switches capabilities in real time.
 Actions such as transitions, approvals, markup edits, and integration writes
 are gated per-role. See `src/core/permissions.js`.
+
+## Unified Namespace + i3X compatibility
+
+FORGE ships with an in-process engine that implements the **CESMII i3X 1.0-Beta**
+OpenAPI surface and a **Unified Namespace** built over ISA-95.
+
+### Namespaces
+
+| URI                         | Purpose                                        |
+|-----------------------------|------------------------------------------------|
+| `urn:cesmii:isa95:1`        | `Enterprise`/`Site`/`Area`/`ProductionLine`/`Cell`/`Equipment` types + `HasChild`/`HasComponent`/`LocatedIn` relationships |
+| `urn:forge:signals:1`       | `Variable`, `Alarm` signal types with `Measures` relationship |
+| `urn:forge:core:1`          | FORGE record types (`Document`, `Drawing`, `WorkItem`, `Incident`) |
+| `urn:atlas:workspace:1`     | Tenant-scoped instance namespace                |
+
+Every FORGE asset is emitted into a **single canonical UNS path**, e.g.:
+
+```
+atlas-industrial-systems/north-plant/line-a/cell-3/hx-01
+atlas-industrial-systems/north-plant/line-a/cell-3/hx-01/temp
+atlas-industrial-systems/north-plant/line-a/cell-3/hx-01/high-temp
+```
+
+Each variable records every **alternate address** (MQTT topic, OPC UA nodeId,
+FORGE asset id) so the same signal is resolvable by UNS path, by i3X
+`elementId`, by `ns=2;s=HX01.Temp`, by `line/a1/hx01/temp`, or by `AS-1`.
+
+### i3X endpoints
+
+All implemented against the in-process server and exposed through the Explorer:
+
+| Method | Path                                 | Tag       |
+|--------|--------------------------------------|-----------|
+| GET    | `/info`                              | Info      |
+| GET    | `/namespaces`                        | Explore   |
+| GET    | `/objecttypes` (+ `/query`)          | Explore   |
+| GET    | `/relationshiptypes` (+ `/query`)    | Explore   |
+| GET    | `/objects` (`?typeElementId`, `?root`, `?includeMetadata`) | Explore |
+| POST   | `/objects/list`                      | Explore   |
+| POST   | `/objects/related`                   | Explore   |
+| POST   | `/objects/value`  (maxDepth composition rollup) | Query |
+| POST   | `/objects/history`                   | Query     |
+| GET    | `/objects/{id}/history`              | Query     |
+| PUT    | `/objects/{id}/value`                | Update    |
+| PUT    | `/objects/{id}/history`              | Update    |
+| POST   | `/subscriptions` + `/register` + `/unregister` + `/sync` + `/list` + `/delete` | Subscribe |
+| POST   | `/subscriptions/stream`              | Subscribe (SSE-simulated) |
+
+Responses match the spec's `SuccessResponse` / `BulkResponse` / `ErrorResponse`
+envelopes and use **VQT** shapes (`value`, `quality` ∈ `Good`/`Uncertain`/`Bad`/`GoodNoData`, `timestamp`). A 1.5 s ticker generates live VQT updates so the UNS
+sparkline and the subscription stream move continuously.
+
+The client (`src/core/i3x/client.js`) exposes the same functions and can be
+replaced with an HTTP `fetch()` against a real i3X server without touching the UI.
 
 ## Structure
 
@@ -70,20 +127,16 @@ are gated per-role. See `src/core/permissions.js`.
 ├─ PRODUCT_SPEC.md         # full product spec
 └─ src/
    ├─ core/
-   │   ├─ store.js
-   │   ├─ router.js
-   │   ├─ permissions.js
-   │   ├─ palette.js
-   │   ├─ screens-registry.js
-   │   └─ ui.js
+   │   ├─ store.js         router.js       permissions.js
+   │   ├─ palette.js       screens-registry.js     ui.js
+   │   └─ i3x/
+   │       ├─ server.js    # in-process i3X engine + subscription manager
+   │       ├─ client.js    # thin REST-shaped client
+   │       └─ uns.js       # UNS path helpers
    ├─ data/
-   │   └─ seed.js
-   ├─ shell/
-   │   ├─ rail.js
-   │   ├─ leftPanel.js
-   │   ├─ header.js
-   │   ├─ contextPanel.js
-   │   └─ dock.js
+   │   ├─ seed.js          # FORGE domain seed
+   │   └─ uns-seed.js      # UNS namespaces/types/relationships/instances
+   ├─ shell/               # rail / leftPanel / header / contextPanel / dock
    └─ screens/
        ├─ home.js        inbox.js        search.js
        ├─ teamSpaces.js  channel.js      workBoard.js
@@ -91,6 +144,7 @@ are gated per-role. See `src/core/permissions.js`.
        ├─ drawingViewer.js assetDetail.js
        ├─ incident.js    approvals.js    ai.js
        ├─ integrations.js mqtt.js        opcua.js     erp.js
+       ├─ uns.js         i3x.js
        ├─ dashboards.js  admin.js        spec.js
 ```
 

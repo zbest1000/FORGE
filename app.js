@@ -4,6 +4,7 @@ import { buildSeed } from "./src/data/seed.js";
 import { state, initState, subscribe } from "./src/core/store.js";
 import { defineRoute, startRouter, rerenderCurrent } from "./src/core/router.js";
 import { openPalette } from "./src/core/palette.js";
+import { initI3X } from "./src/core/i3x/client.js";
 
 import { renderRail } from "./src/shell/rail.js";
 import { renderLeftPanel } from "./src/shell/leftPanel.js";
@@ -31,6 +32,8 @@ import { renderERP } from "./src/screens/erp.js";
 import { renderAdmin } from "./src/screens/admin.js";
 import { renderDashboards } from "./src/screens/dashboards.js";
 import { renderSpec } from "./src/screens/spec.js";
+import { renderUNSIndex } from "./src/screens/uns.js";
+import { renderI3X } from "./src/screens/i3x.js";
 
 function setupRoutes() {
   defineRoute("/home", renderHome);
@@ -69,6 +72,9 @@ function setupRoutes() {
   defineRoute("/dashboards", renderDashboards);
   defineRoute("/admin", renderAdmin);
   defineRoute("/spec", renderSpec);
+
+  defineRoute("/uns", renderUNSIndex);
+  defineRoute("/i3x", renderI3X);
 }
 
 function applyTheme() {
@@ -93,7 +99,9 @@ function attachHotkeys() {
 }
 
 function boot() {
-  initState(buildSeed());
+  const seed = buildSeed();
+  initState(seed);
+  initI3X(state.data);
   applyTheme();
   setupRoutes();
   attachHotkeys();
@@ -103,6 +111,17 @@ function boot() {
     renderShell();
     rerenderCurrent();
   });
+
+  // Re-render the UNS browser at a slow cadence so VQT values refresh live.
+  // The i3X explorer is NOT auto-refreshed because the user edits request
+  // bodies there and we must not wipe input focus.
+  setInterval(() => {
+    if ((state.route || "").startsWith("/uns")) {
+      // Skip refresh when a modal or palette is open.
+      if (document.querySelector(".modal-backdrop, .palette-backdrop")) return;
+      rerenderCurrent();
+    }
+  }, 1500);
 
   startRouter();
   renderShell();

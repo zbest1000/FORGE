@@ -1,7 +1,8 @@
-import { el, mount, card, badge, kpi, toast } from "../core/ui.js";
+import { el, mount, card, badge, kpi, toast, chip } from "../core/ui.js";
 import { state, update, getById, audit } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
+import { getServer } from "../core/i3x/client.js";
 
 export function renderAssetsIndex() {
   const root = document.getElementById("screenContainer");
@@ -50,6 +51,8 @@ export function renderAssetDetail({ id }) {
       kpi("Linked docs", linkedDocs.length, "", ""),
       kpi("Open incidents", incidents.filter(i => i.status === "active").length, "", incidents.some(i => i.status === "active") ? "down" : "up"),
     ]),
+
+    unsCard(a),
 
     el("div", { class: "two-col", style: { marginTop: "16px" } }, [
       card("Telemetry (mock)", telemetry(a)),
@@ -135,4 +138,36 @@ function openWarRoom(a) {
 
 function statusVariant(s) {
   return s === "alarm" ? "danger" : s === "warning" ? "warn" : s === "offline" ? "" : "success";
+}
+
+function unsCard(asset) {
+  let srv;
+  try { srv = getServer(); } catch { return null; }
+  // Find the UNS equipment object for this asset via alias.
+  const obj = srv.resolveObject(asset.id);
+  if (!obj) return null;
+  const val = srv.queryLastKnownValues({ elementIds: [obj.elementId], maxDepth: 2 }).results[0]?.result;
+  const variables = Object.entries(val?.components || {});
+
+  return card("Unified Namespace · i3X", el("div", { class: "stack" }, [
+    el("div", { class: "row wrap" }, [
+      chip(obj.path, { kind: "UNS path" }),
+      chip(obj.elementId, { kind: "i3X elementId" }),
+      chip(obj.typeElementId, { kind: "type" }),
+    ]),
+    variables.length
+      ? el("div", { class: "stack" }, variables.map(([name, vq]) =>
+          el("div", { class: "activity-row" }, [
+            el("span", { class: "mono tiny" }, [name]),
+            el("span", { class: "strong" }, [String(vq.value ?? "—")]),
+            badge(vq.quality || "", vq.quality === "Good" ? "success" : vq.quality === "Uncertain" ? "warn" : ""),
+            el("span", { class: "tiny muted" }, [vq.timestamp ? new Date(vq.timestamp).toLocaleTimeString() : ""]),
+          ])
+        ))
+      : el("div", { class: "muted tiny" }, ["No variables bound."]),
+    el("div", { class: "row" }, [
+      el("button", { class: "btn sm", onClick: () => navigate("/uns") }, ["Open in UNS →"]),
+      el("button", { class: "btn sm", onClick: () => navigate(`/i3x?ep=value`) }, ["Try /objects/value →"]),
+    ]),
+  ]), { subtitle: "Same asset, canonical UNS address, live VQT from the i3X engine." });
 }

@@ -16,4 +16,6 @@ export const SCREEN_ROUTES = {
   "Incidents": "/incidents",
   "Approvals": "/approvals",
   "Spec reference": "/spec",
+  "Unified Namespace": "/uns",
+  "i3X Explorer": "/i3x",
 };
