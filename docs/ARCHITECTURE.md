@@ -6,10 +6,41 @@ implementation.
 
 ## 1. Shape of the system
 
-FORGE ships here as a **pure client-side, zero-dependency prototype**: static
-HTML/CSS + ES modules served by any static file server. It is architected as if
-a real backend existed behind it, so each in-browser module has a clean
-swap-point for a network implementation.
+FORGE ships as **server + client**. The server is a Node.js 20+ Fastify
+application backed by SQLite; it serves the HTTP + CESMII i3X API and the
+static SPA client from the same origin. The client can also run standalone
+in "demo mode" (no backend) from `python3 -m http.server` — the in-browser
+store and i3X engine stand in for their server counterparts so the UX is
+fully exercisable offline.
+
+See `docs/SERVER.md` for the server API surface, deployment, and security
+model.
+
+```
+┌────────────────── Browser (client) ─────────────────────┐
+│  Shell · Screens · Reactive store                       │
+│     │                                                   │
+│     ▼  fetch() → /api/*   (auto-detected via /health)   │
+├──────────────────── Fastify server ─────────────────────┤
+│  /api/auth     JWT + bcrypt                             │
+│  /api/*        CRUD: spaces/channels/messages/docs/     │
+│                     revisions/assets/work-items/        │
+│                     incidents/approvals/audit           │
+│  /api/search   SQLite FTS5                              │
+│  /api/events   Canonical envelope + rule engine + DLQ   │
+│  /api/audit    Hash-chained ledger + signed export pack │
+│  /api/events/stream  SSE firehose                       │
+│  /v1/*         CESMII i3X 1.0-Beta                      │
+│  static        SPA client                               │
+│     │                                                   │
+│     ├── better-sqlite3  (WAL, FTS5)                     │
+│     ├── @fastify/jwt    (HS256)                         │
+│     ├── bcryptjs        (cost 10)                       │
+│     ├── pino            (structured logs)               │
+│     ├── Web Crypto      (SHA-256 chain + HMAC-SHA256)   │
+│     └── mqtt            (optional broker bridge)        │
+└─────────────────────────────────────────────────────────┘
+```
 
 ```
 ┌──────────────────── Browser ────────────────────────────────────────┐

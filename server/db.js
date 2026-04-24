@@ -1,0 +1,436 @@
+// SQLite database with FTS5 for search. Single-node, zero-config, production-grade.
+// Migration path to Postgres is straightforward (the SQL is portable except FTS5).
+
+import Database from "better-sqlite3";
+import path from "node:path";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DATA_DIR = process.env.FORGE_DATA_DIR || path.resolve(__dirname, "..", "data");
+fs.mkdirSync(DATA_DIR, { recursive: true });
+const DB_PATH = path.join(DATA_DIR, "forge.db");
+
+export const db = new Database(DB_PATH);
+db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = ON");
+db.pragma("synchronous = NORMAL");
+
+// ---------- Schema ----------
+// Version counter so we can evolve forward.
+
+const SCHEMA_VERSION = 2;
+
+db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
+
+function getVersion() {
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
+  return row ? Number(row.value) : 0;
+}
+function setVersion(v) {
+  db.prepare("INSERT INTO meta(key, value) VALUES('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(v));
+}
+
+function migrate() {
+  const current = getVersion();
+  if (current >= SCHEMA_VERSION) return;
+
+  db.transaction(() => {
+    // -- v1: core tables --
+    if (current < 1) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS organizations (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          tenant_key TEXT UNIQUE,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS workspaces (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          region TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          email TEXT UNIQUE NOT NULL,
+          name TEXT NOT NULL,
+          role TEXT NOT NULL,
+          password_hash TEXT,
+          initials TEXT,
+          disabled INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          abac TEXT DEFAULT '{}'
+        );
+        CREATE TABLE IF NOT EXISTS team_spaces (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          summary TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          acl TEXT NOT NULL DEFAULT '{}',
+          labels TEXT NOT NULL DEFAULT '[]',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS team_space_members (
+          team_space_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          role TEXT,
+          PRIMARY KEY(team_space_id, user_id)
+        );
+        CREATE TABLE IF NOT EXISTS projects (
+          id TEXT PRIMARY KEY,
+          team_space_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          status TEXT NOT NULL,
+          due_date TEXT,
+          milestones TEXT NOT NULL DEFAULT '[]',
+          acl TEXT NOT NULL DEFAULT '{}',
+          labels TEXT NOT NULL DEFAULT '[]',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS channels (
+          id TEXT PRIMARY KEY,
+          team_space_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          unread INTEGER NOT NULL DEFAULT 0,
+          acl TEXT NOT NULL DEFAULT '{}',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS messages (
+          id TEXT PRIMARY KEY,
+          channel_id TEXT NOT NULL,
+          author_id TEXT NOT NULL,
+          ts TEXT NOT NULL,
+          type TEXT NOT NULL,
+          text TEXT NOT NULL,
+          attachments TEXT NOT NULL DEFAULT '[]',
+          edits TEXT NOT NULL DEFAULT '[]',
+          deleted INTEGER NOT NULL DEFAULT 0,
+          deleted_at TEXT,
+          deleted_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_channel_ts ON messages(channel_id, ts);
+
+        CREATE TABLE IF NOT EXISTS documents (
+          id TEXT PRIMARY KEY,
+          team_space_id TEXT NOT NULL,
+          project_id TEXT,
+          name TEXT NOT NULL,
+          kind TEXT,
+          discipline TEXT,
+          current_revision_id TEXT,
+          sensitivity TEXT,
+          acl TEXT NOT NULL DEFAULT '{}',
+          labels TEXT NOT NULL DEFAULT '[]',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS revisions (
+          id TEXT PRIMARY KEY,
+          doc_id TEXT NOT NULL,
+          label TEXT NOT NULL,
+          status TEXT NOT NULL,
+          author_id TEXT,
+          approver_id TEXT,
+          summary TEXT,
+          notes TEXT,
+          pdf_url TEXT,
+          effective_date TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_revisions_doc ON revisions(doc_id);
+
+        CREATE TABLE IF NOT EXISTS drawings (
+          id TEXT PRIMARY KEY,
+          doc_id TEXT,
+          team_space_id TEXT,
+          project_id TEXT,
+          name TEXT NOT NULL,
+          discipline TEXT,
+          sheets TEXT NOT NULL DEFAULT '[]',
+          ifc_url TEXT,
+          acl TEXT NOT NULL DEFAULT '{}',
+          labels TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS markups (
+          id TEXT PRIMARY KEY,
+          drawing_id TEXT NOT NULL,
+          sheet_id TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'pin',
+          x REAL NOT NULL,
+          y REAL NOT NULL,
+          text TEXT,
+          stamp_label TEXT,
+          status_color TEXT,
+          author TEXT,
+          seq INTEGER,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_markups_drawing_sheet ON markups(drawing_id, sheet_id);
+
+        CREATE TABLE IF NOT EXISTS assets (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          type TEXT,
+          hierarchy TEXT,
+          status TEXT NOT NULL DEFAULT 'normal',
+          mqtt_topics TEXT NOT NULL DEFAULT '[]',
+          opcua_nodes TEXT NOT NULL DEFAULT '[]',
+          doc_ids TEXT NOT NULL DEFAULT '[]',
+          acl TEXT NOT NULL DEFAULT '{}',
+          labels TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS work_items (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          assignee_id TEXT,
+          status TEXT NOT NULL,
+          severity TEXT,
+          due TEXT,
+          blockers TEXT NOT NULL DEFAULT '[]',
+          labels TEXT NOT NULL DEFAULT '[]',
+          acl TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS incidents (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          status TEXT NOT NULL,
+          asset_id TEXT,
+          commander_id TEXT,
+          channel_id TEXT,
+          timeline TEXT NOT NULL DEFAULT '[]',
+          checklist_state TEXT NOT NULL DEFAULT '{}',
+          roster TEXT NOT NULL DEFAULT '{}',
+          started_at TEXT NOT NULL,
+          resolved_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS approvals (
+          id TEXT PRIMARY KEY,
+          subject_kind TEXT NOT NULL,
+          subject_id TEXT NOT NULL,
+          requester_id TEXT,
+          approvers TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL,
+          due_ts TEXT,
+          reason TEXT,
+          signed_by TEXT,
+          signed_at TEXT,
+          signature TEXT,
+          chain TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS files (
+          id TEXT PRIMARY KEY,
+          parent_kind TEXT NOT NULL,
+          parent_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          mime TEXT,
+          size INTEGER,
+          sha256 TEXT,
+          path TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS transmittals (
+          id TEXT PRIMARY KEY,
+          doc_id TEXT NOT NULL,
+          rev_id TEXT NOT NULL,
+          subject TEXT NOT NULL,
+          recipients TEXT NOT NULL DEFAULT '[]',
+          message TEXT,
+          sender TEXT,
+          ts TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS comments (
+          id TEXT PRIMARY KEY,
+          doc_id TEXT NOT NULL,
+          rev_id TEXT NOT NULL,
+          page INTEGER NOT NULL,
+          x REAL NOT NULL,
+          y REAL NOT NULL,
+          text TEXT NOT NULL,
+          author TEXT,
+          seq INTEGER,
+          replies TEXT NOT NULL DEFAULT '[]',
+          ts TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS subscriptions (
+          id TEXT PRIMARY KEY,
+          subject TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          events TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          UNIQUE(subject, user_id)
+        );
+        CREATE TABLE IF NOT EXISTS notifications (
+          id TEXT PRIMARY KEY,
+          ts TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          text TEXT NOT NULL,
+          route TEXT,
+          user_id TEXT NOT NULL,
+          subject TEXT,
+          read INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read, ts DESC);
+
+        CREATE TABLE IF NOT EXISTS audit_log (
+          id TEXT PRIMARY KEY,
+          ts TEXT NOT NULL,
+          actor TEXT NOT NULL,
+          action TEXT NOT NULL,
+          subject TEXT NOT NULL,
+          detail TEXT NOT NULL DEFAULT '{}',
+          trace_id TEXT,
+          prev_hash TEXT NOT NULL,
+          hash TEXT NOT NULL,
+          seq INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_subject ON audit_log(subject);
+        CREATE INDEX IF NOT EXISTS idx_audit_seq ON audit_log(seq);
+
+        CREATE TABLE IF NOT EXISTS integrations (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          status TEXT NOT NULL,
+          last_event TEXT,
+          events_per_min INTEGER DEFAULT 0,
+          config TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE IF NOT EXISTS data_sources (
+          id TEXT PRIMARY KEY,
+          integration_id TEXT NOT NULL,
+          endpoint TEXT NOT NULL,
+          asset_id TEXT,
+          kind TEXT NOT NULL,
+          unit TEXT,
+          sampling TEXT,
+          qos INTEGER,
+          retain INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS events (
+          id TEXT PRIMARY KEY,
+          received_at TEXT NOT NULL,
+          source TEXT NOT NULL,
+          source_type TEXT NOT NULL,
+          asset_ref TEXT,
+          project_ref TEXT,
+          object_refs TEXT NOT NULL DEFAULT '[]',
+          severity TEXT,
+          event_type TEXT NOT NULL,
+          payload TEXT,
+          trace_id TEXT,
+          routing_policy TEXT,
+          dedupe_key TEXT UNIQUE,
+          auth_context TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_events_received ON events(received_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_events_asset ON events(asset_ref);
+
+        CREATE TABLE IF NOT EXISTS dead_letters (
+          id TEXT PRIMARY KEY,
+          ts TEXT NOT NULL,
+          envelope TEXT NOT NULL,
+          error TEXT NOT NULL,
+          resolved INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS saved_searches (
+          id TEXT PRIMARY KEY,
+          user_id TEXT,
+          name TEXT NOT NULL,
+          query TEXT,
+          facets TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS retention_policies (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          days INTEGER NOT NULL,
+          legal_hold INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS ai_log (
+          id TEXT PRIMARY KEY,
+          ts TEXT NOT NULL,
+          actor TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          output TEXT NOT NULL,
+          citations TEXT NOT NULL DEFAULT '[]',
+          model TEXT,
+          scope TEXT,
+          trace_id TEXT,
+          retention TEXT NOT NULL DEFAULT 'no-training-by-default'
+        );
+      `);
+      setVersion(1);
+    }
+
+    // -- v2: FTS5 virtual tables for search --
+    if (getVersion() < 2) {
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_docs      USING fts5(id UNINDEXED, kind UNINDEXED, title, body);
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_messages  USING fts5(id UNINDEXED, channel_id UNINDEXED, text);
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_workitems USING fts5(id UNINDEXED, project_id UNINDEXED, title, description, labels);
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_assets    USING fts5(id UNINDEXED, name, hierarchy, type);
+      `);
+      setVersion(2);
+    }
+  })();
+}
+
+migrate();
+
+// ---------- Helpers ----------
+export function now() { return new Date().toISOString(); }
+
+export function uuid(prefix = "") {
+  const s = Math.random().toString(36).slice(2, 10).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
+  return prefix ? `${prefix}-${s}` : s;
+}
+
+export function jsonOrDefault(s, fallback) {
+  if (s == null) return fallback;
+  try { return JSON.parse(s); } catch { return fallback; }
+}
+
+/**
+ * Run a transaction. `fn` receives the db handle.
+ */
+export function tx(fn) { return db.transaction(fn)(); }
+
+if (process.argv.includes("--migrate-only")) {
+  console.log("schema_version =", getVersion());
+  process.exit(0);
+}

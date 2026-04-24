@@ -10,6 +10,7 @@ import * as auditMod from "./src/core/audit.js";
 import { initAuditLedger } from "./src/core/audit.js";
 import { buildIndex, scheduleRebuild } from "./src/core/search.js";
 import { installHotkeys } from "./src/core/hotkeys.js";
+import { probe, mode, getToken, login, logout, api } from "./src/core/api.js";
 
 import { renderRail } from "./src/shell/rail.js";
 import { renderLeftPanel } from "./src/shell/leftPanel.js";
@@ -103,7 +104,12 @@ function attachHotkeys() {
   });
 }
 
-function boot() {
+async function boot() {
+  // Server probe happens in parallel with local state init so the shell
+  // renders immediately in either mode. The client runs fully offline in
+  // demo mode and talks to a real Fastify backend when served from it.
+  const healthP = probe().catch(() => null);
+
   const seed = normalizeSeed(buildSeed());
   initState(seed);
   registerAuditImpl(auditMod);
@@ -137,7 +143,29 @@ function boot() {
 
   startRouter();
   renderShell();
+
+  const health = await healthP;
+  if (health) {
+    state.server = { connected: true, health };
+    console.info("[forge] connected to server", health);
+    // If a token is cached, warm /api/me to populate the real user.
+    if (getToken()) {
+      try {
+        const me = await api("/api/me");
+        state.server.user = me.user;
+        console.info("[forge] signed in as", me.user.email);
+      } catch {
+        console.warn("[forge] stored token rejected; staying anonymous");
+      }
+    }
+    renderShell();
+  } else {
+    state.server = { connected: false };
+    console.info("[forge] demo mode (no backend)");
+  }
 }
+
+window.forge = { mode, login, logout, api };
 
 boot();
 

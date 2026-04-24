@@ -3,6 +3,8 @@ import { state, update, resetState } from "../core/store.js";
 import { ROLES } from "../core/permissions.js";
 import { openPalette } from "../core/palette.js";
 import { navigate } from "../core/router.js";
+import { mode as apiMode, login as apiLogin, logout as apiLogout } from "../core/api.js";
+import { modal, formRow, input, toast } from "../core/ui.js";
 
 const TITLES = {
   "/home":        { title: "Workspace Home",   crumb: "Home" },
@@ -56,6 +58,7 @@ export function renderHeader() {
     ]),
     el("div", { class: "header-controls" }, [
       searchInput,
+      serverBadge(),
       el("button", { class: "btn sm", onClick: openPalette, title: "Command palette" }, ["⌘K"]),
       roleSelect,
       el("button", {
@@ -65,6 +68,52 @@ export function renderHeader() {
       }, ["Reset"]),
     ]),
   ]);
+}
+
+function serverBadge() {
+  const m = apiMode();
+  if (m === "server") {
+    const user = state.server?.user;
+    return el("button", {
+      class: "btn sm",
+      title: user ? `Signed in as ${user.email}` : "Server connected — sign in",
+      onClick: user ? () => signOut() : () => signIn(),
+    }, [user ? "● " + (user.name || user.email) : "● Sign in"]);
+  }
+  return el("span", { class: "badge", title: "No backend detected — running in local demo mode" }, ["demo mode"]);
+}
+
+function signIn() {
+  const emailInput = input({ placeholder: "email", value: "admin@forge.local" });
+  const pwInput = input({ type: "password", placeholder: "password", value: "forge" });
+  modal({
+    title: "Sign in to FORGE",
+    body: el("div", { class: "stack" }, [
+      el("div", { class: "tiny muted" }, ["Demo users are seeded with password `forge`. Admin: admin@forge.local"]),
+      formRow("Email", emailInput),
+      formRow("Password", pwInput),
+    ]),
+    actions: [
+      { label: "Cancel" },
+      { label: "Sign in", variant: "primary", onClick: async () => {
+        try {
+          const user = await apiLogin(emailInput.value.trim(), pwInput.value);
+          state.server = { ...(state.server || {}), user };
+          toast("Signed in as " + (user.name || user.email), "success");
+          renderHeader();
+        } catch (e) {
+          toast("Login failed: " + e.message, "danger");
+        }
+      } },
+    ],
+  });
+}
+
+function signOut() {
+  apiLogout();
+  state.server = { ...(state.server || {}), user: null };
+  toast("Signed out", "info");
+  renderHeader();
 }
 
 function resolveTitle(route) {

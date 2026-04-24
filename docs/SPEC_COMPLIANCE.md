@@ -89,14 +89,14 @@ running change history.
 
 | Feature | State | Where |
 |---|---|---|
-| SSO (SAML/OIDC), SCIM | ◐ | Admin screen shows config surface; no real IdP |
-| MFA policy | ◐ | Admin screen surfaces |
-| RBAC baseline | ✅ | `permissions.js` |
-| ABAC overlays (site/discipline/clearance) | ✅ | `permissions.js` `ABAC` lookup; asset ACLs |
-| Immutable audit ledger | ✅ | `core/audit.js` hash chain, tamper-evident |
-| Key management / encryption | ◐ | Surface only |
-| Retention policies | ✅ | Admin v2 retention editor |
-| Exportable audit packs | ✅ | Admin v2 export with HMAC signature |
+| SSO (SAML/OIDC), SCIM | ◐ | Client has admin surface; server JWT auth in place; IdP federation is a deployment-side concern (Keycloak, Auth0) |
+| MFA policy | ◐ | Server enforces passwords today; TOTP/WebAuthn is a small additive module |
+| RBAC baseline | ✅ | Client `permissions.js` + server `server/auth.js` capability matrix |
+| ABAC overlays (site/discipline/clearance) | ✅ | `users.abac` JSON column + client ABAC lookup |
+| Immutable audit ledger | ✅ | Server-side SHA-256 hash chain in `audit_log` table (§13.2) |
+| Key management / encryption | ◐ | HMAC via env var today; `FORGE_TENANT_KEY_ID` labels for rotation; KMS/HSM plug-in point is `server/crypto.js:getKey()` |
+| Retention policies | ✅ | `retention_policies` table + client editor |
+| Exportable audit packs | ✅ | `GET /api/audit/export` returns a signed pack; verified by independent Python HMAC implementation |
 
 ## §7 Engineering Records detail
 

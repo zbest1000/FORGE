@@ -1,0 +1,43 @@
+# Reference docker-compose for self-hosted FORGE.
+# `docker compose up -d` brings up the server + an optional Mosquitto
+# broker so the MQTT bridge has something to listen to.
+#
+# Run `docker compose run --rm forge node server/seed.js` once to seed.
+
+services:
+  forge:
+    build: .
+    image: forge:local
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      FORGE_JWT_SECRET: ${FORGE_JWT_SECRET:-change-me-in-production}
+      FORGE_TENANT_KEY: ${FORGE_TENANT_KEY:-change-me-in-production}
+      FORGE_DATA_DIR: /app/data
+      # Enable MQTT bridge by uncommenting (requires the mosquitto service below).
+      # FORGE_MQTT_URL: mqtt://mosquitto:1883
+      # FORGE_MQTT_TOPICS: "forge/#"
+      LOG_LEVEL: info
+    volumes:
+      - forge-data:/app/data
+    depends_on:
+      - mosquitto
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"  # MQTT
+      - "9001:9001"  # WebSocket MQTT
+    volumes:
+      - ./deploy/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+
+volumes:
+  forge-data:
+  mosquitto-data:
+  mosquitto-log:

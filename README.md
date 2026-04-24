@@ -17,17 +17,33 @@ client-side MVP prototype that exercises the full FORGE object model.
   - `src/shell/` — workspace shell: far-left rail, left panel, header, right context panel, operations dock.
   - `src/screens/` — functional screens for all MVP pillars, including a UNS browser and an i3X API explorer.
 
-## Run locally
+## Run
 
-The app is a static client prototype — any static file server works from the repo root:
+FORGE ships as a **server + client** and also runs client-only in "demo mode"
+for quick UX inspection.
+
+### Server (recommended)
+
+```bash
+npm install
+npm run seed        # one-time: creates ./data/forge.db + demo users
+npm start           # Fastify on http://localhost:3000
+# admin@forge.local / forge
+```
+
+See `docs/SERVER.md` for the full API surface, deployment, and security model.
+A Dockerfile and `docker-compose.yml` (with an optional Mosquitto broker) are
+included.
+
+### Client-only (no backend)
 
 ```bash
 python3 -m http.server 8080
+# open http://localhost:8080
 ```
 
-Open <http://localhost:8080/index.html>.
-
-Requires a modern browser with ES module support.
+The client probes `/api/health` and automatically drops into a fully-offline
+demo mode when no backend responds.
 
 ## Implemented MVP features
 

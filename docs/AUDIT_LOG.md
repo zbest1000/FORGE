@@ -60,6 +60,130 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ## 2026-04-24 — Integrate 13 OSS packages (import map, vendor loader, replacements) (cd762d4)
 
+## 2026-04-24 — FORGE server (Fastify + SQLite + JWT)
+
+**What**
+Added the server half of the product. The browser app can now be served
+by a real backend that persists everything in SQLite, signs approval
+decisions and audit packs, and mounts CESMII i3X on `/v1`.
+
+Key pieces:
+- `server/db.js` — SQLite schema (WAL, FKs, FTS5) with a migration runner
+  pinned at `schema_version = 2`. 30+ tables covering every spec §4 object
+  plus audit/events/dlq/notifications/retention.
+- `server/crypto.js` — Node Web Crypto SHA-256 chain + HMAC-SHA256 signing
+  using the same canonical JSON serialization as the browser.
+- `server/audit.js` — append-only, hash-chained audit ledger stored in
+  SQLite with `verifyLedger()` and a signed `exportAuditPack()`.
+- `server/auth.js` — bcrypt password verification, JWT sign/verify, role →
+  capability matrix, `require_(cap)` Fastify pre-handler.
+- `server/events.js` — canonical §9.2 envelope, idempotent dedup (via
+  UNIQUE dedupe_key), routing rules (high-sev alarm → incident, ERP →
+  work item, OPC UA → asset timeline, alarm → incident channel message),
+  DLQ + replay.
+- `server/sse.js` — broadcaster used by routes to emit live updates to
+  connected clients.
+- `server/routes/auth.js` — `/api/auth/login|logout`.
+- `server/routes/core.js` — every other `/api/*` endpoint (collab,
+  records, revisions transition, assets, work items, incidents,
+  approvals with HMAC signing and revision cascade, audit, search,
+  events, DLQ).
+- `server/routes/i3x.js` — mounts the CESMII i3X 1.0-Beta engine under
+  `/v1/*` by importing `src/core/i3x/server.js` directly — the client and
+  server share one implementation.
+- `server/connectors/mqtt.js` — optional MQTT bridge that ingests broker
+  messages into the event pipeline.
+- `server/main.js` — Fastify bootstrap: CORS, JWT (with a top-level
+  onRequest hook that resolves the DB user for every route), multipart,
+  static serving of the SPA, SPA fallback to index.html on `/`.
+- `server/seed.js` — seeds org/workspace/users (passwords bcrypt-hashed),
+  imports the client seed as the domain data, fills the FTS5 tables.
+- `package.json` — `type: module`, scripts (`dev`, `start`, `seed`,
+  `migrate`, `test`), pinned deps.
+- `test/audit-chain.test.js` — two tests: chain verify + tamper detect;
+  pack signature detects out-of-band mutation. Both pass.
+- `Dockerfile` — multi-stage Debian slim image with tini; healthcheck
+  hits `/api/health`.
+- `docker-compose.yml` — FORGE + Eclipse Mosquitto broker.
+- `deploy/mosquitto.conf`, `.dockerignore`, `.env.example`.
+- `src/core/api.js` — client-side probe + fetch helper; automatically
+  chooses "server" vs "demo" mode.
+- `app.js` boot — probes `/api/health` and, if present, warms `/api/me`.
+- `src/shell/header.js` — sign-in modal + mode badge (●/demo).
+- `docs/SERVER.md` — full server documentation.
+- `docs/ARCHITECTURE.md`, `docs/SPEC_COMPLIANCE.md`, `docs/CHANGELOG.md`,
+  `README.md` — updated to describe the server.
+
+**Why**
+Spec §1.1 states FORGE is "self-hostable"; §13 requires server-side RBAC,
+tamper-evident audit, and retention; §9 requires a real event pipeline.
+None of that is possible in a client-only prototype. The server closes
+the loop and makes every feature actually enforced rather than merely
+demonstrated.
+
+**Tech decisions (+ alternatives considered)**
+- **Node 20 + Fastify 5**: chosen over Express because of schema
+  validation, pluggable JWT/CORS/static, and faster perf. Alternative
+  (Hono + Bun) was discarded because Bun's native bindings for
+  better-sqlite3 still depend on Node, and the rest of the ecosystem
+  (@fastify/jwt, pino) is Node-first.
+- **SQLite (better-sqlite3) + WAL + FTS5**: zero-config, single-file,
+  production-grade for up to tens of millions of rows per tenant;
+  Postgres migration path is trivial (`pg` + `tsvector`). Alternative
+  (Postgres-first) was discarded because it adds operator burden for the
+  initial spec MVP — §1.1 explicitly calls for self-hostable.
+- **JWT (@fastify/jwt)**: HS256, 12h. Pluggable to RS256 and OIDC when
+  integrating with Keycloak (spec §16) — the `verifyPassword()` function
+  is the seam.
+- **bcryptjs over bcrypt**: pure-JS, no native compile, avoids breaking
+  on musl-based containers.
+- **HMAC-SHA256 (Web Crypto)** for approval signatures and audit packs:
+  identical algorithm on client and server so packs produced on either
+  side are verifiable on either side. Keys are supplied via env for now;
+  `getKey()` is the KMS/HSM swap-point.
+- **i3X engine shared with the client**: imports `src/core/i3x/server.js`
+  directly on the server. One authoritative implementation; no drift.
+- **MQTT.js both sides**: same package versions in the client
+  (via import map, for the UI's live broker panel) and the server
+  (via npm, for the bridge). One mental model.
+- **Fastify onRequest hook at top level** (not via a sub-plugin): a
+  plugin would be encapsulated and its request decorations would not
+  affect routes registered on the root app. Tested and corrected
+  in-place (see commit diff).
+
+**Files**
+- new: `package.json`, `server/db.js`, `server/crypto.js`, `server/audit.js`,
+  `server/auth.js`, `server/events.js`, `server/sse.js`,
+  `server/routes/{auth,core,i3x}.js`, `server/connectors/mqtt.js`,
+  `server/main.js`, `server/seed.js`, `test/audit-chain.test.js`,
+  `Dockerfile`, `docker-compose.yml`, `deploy/mosquitto.conf`,
+  `.dockerignore`, `.env.example`, `src/core/api.js`, `docs/SERVER.md`
+- modified: `app.js`, `src/shell/header.js`, `docs/ARCHITECTURE.md`,
+  `docs/SPEC_COMPLIANCE.md`, `docs/CHANGELOG.md`, `README.md`
+
+**Verification**
+- `npm install`: 310 packages, no vulnerabilities.
+- `npm run seed`: creates SQLite DB + 7 demo users.
+- `npm start`: listens on `:3000` cleanly.
+- Live end-to-end (against running server):
+  - `POST /api/auth/login` → 187-char JWT.
+  - `GET /api/me` (with Bearer) → Admin user + `capabilities: ["*"]`.
+  - `GET /api/audit/verify` → `{ ok: true, count: 9 }` after seed.
+  - `POST /api/work-items` → creates a new WI and appends audit entry.
+  - `POST /api/revisions/REV-1-B/transition {to:"Approved"}` → 200.
+  - `POST /api/approvals/APR-1/decide {outcome:"approved"}` → cascades
+    REV-1-B through Approved → IFC and auto-supersedes the prior IFC;
+    returns an HMAC-SHA256 signature block.
+  - `GET /api/audit/export` → signed pack; independently verified by a
+    Python HMAC implementation (matching byte-for-byte).
+  - `GET /v1/info`, `/v1/namespaces`, `/v1/objects?typeElementId=isa95:Equipment`
+    return the CESMII 1.0-Beta envelopes (4 namespaces, 12 object types, 4
+    equipment instances).
+  - `GET /api/search?q=valve` → 4 hits across revisions, messages, work
+    items via SQLite FTS5.
+- `npm test` → 2/2 passing (chain verify + pack tamper detect).
+
+
 **What**
 Answered "are we rebuilding the wheel?" — no more, we now actually consume
 well-known OSS where it replaces hand-rolled code.
