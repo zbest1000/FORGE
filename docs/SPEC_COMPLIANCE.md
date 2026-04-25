@@ -7,7 +7,9 @@ prototype; "◐" means functionally represented but deliberately simplified
 is simplified so reviewers can audit.
 
 Updated with each commit on this branch. See `docs/AUDIT_LOG.md` for the
-running change history.
+running change history. **`docs/AUDIT_REPORT.md` (2026-04-25) is the
+authoritative point-in-time audit** — clause-by-clause, with aggregate
+score and a prioritized list of remaining gaps.
 
 ## §4 Object model base fields
 
@@ -40,15 +42,18 @@ running change history.
 | Watch/follow by object + status transitions | ✅ | `core/subscriptions.js` + context panel Follow button |
 | Edit/delete with audit | ✅ | channel v2 |
 | Checklist blocks | ✅ | channel v2 message renderer |
+| Code/data snippet blocks | ◐ | Markdown fences via marked; **no language-aware data-table block** |
+| `@user` mentions (parser + notification fan-out) | ○ | Not implemented (string label only) |
 
 ## §6.2 Work Execution
 
 | Feature | State | Where |
 |---|---|---|
-| Work item types (Task/Issue/Action/RFI/Punch/Defect/CAPA/Change) | ✅ | `seed.js` `type` field |
+| Work item types (spec lists Task/Issue/Action/RFI/**NCR**/Change) | ◐ | Has Task/Issue/Action/RFI/Punch/Defect/CAPA/Change; **NCR not present** |
 | Kanban view | ✅ | `workBoard.js` |
 | Table view | ✅ | `workBoard.js` |
 | Timeline view | ✅ | `workBoard.js` timeline mode |
+| **Calendar view** | ○ | Not implemented |
 | Dependency map view | ✅ | `workBoard.js` deps graph |
 | SLA / severity / owners / due / blocked-by | ✅ | seed + card renderer |
 | Automation rules from integration events | ✅ | `core/events.js` default rules |
@@ -64,13 +69,13 @@ running change history.
 | Revision compare side-by-side + overlay + metadata diff | ✅ | `revisionCompare.js` |
 | Markup with anchored threads and issue creation | ✅ | drawing v2 + doc v2 |
 | Approval routing with signer identity and timestamp | ✅ | `approvals.js` + `core/crypto.js` HMAC signature |
-| Transmittals and review cycles | ✅ | doc v2 transmittal panel |
+| Transmittals and review cycles | ◐ | Transmittals ✅; review cycle is **not its own object** — implicit in revision lifecycle + approvals |
 
 ## §6.4 Asset Context & Data Exchange
 
 | Feature | State | Where |
 |---|---|---|
-| Hierarchies (Plant>Area>Line>Cell>Machine / Site>Building>Floor>Room / Project>Package>Discipline>DrawingSet) | ✅ | UNS (`uns-seed.js`), ISA-95 namespace |
+| Hierarchies (Plant>Area>Line>Cell>Machine / Site>Building>Floor>Room / Project>Package>Discipline>DrawingSet) | ◐ | Plant + Project hierarchies seeded in UNS; **Site>Building>Floor>Room template not seeded** |
 | Asset page unifies drawings/docs/SOPs/tasks/incidents/dashboards/MQTT/OPC UA/ERP | ✅ | `assetDetail.js` |
 | Event normalization pipeline ingest→validate→map→enrich→route→audit→replay | ✅ | `core/events.js` |
 | Store-and-forward for low connectivity | ◐ | IDB-backed queue via `core/idb.js` (auditLog, events, dlq stores); no network layer to forward to |
@@ -107,21 +112,24 @@ running change history.
 | 3 | Revision statuses incl. Superseded/Draft/Approved/IFR/IFC/Archived | ✅ |
 | 4 | Side-by-side revision comparison | ✅ |
 | 5 | Markup and annotation layer | ✅ |
-| 6 | Pinned comment threads to page region / drawing region / model element | ✅ |
+| 6 | Pinned comment threads to page region / drawing region / model element | ◐ Page+drawing region ✅; **model-element pinning ○** |
 | 7 | Approval routing + signatures | ✅ (HMAC signature) |
-| 8 | Linked transmittals and review cycles | ✅ |
+| 8 | Linked transmittals and review cycles | ◐ Transmittals ✅; review cycles ○ as separate object |
 | 9 | Rich metadata (discipline/project/package/area/line/system/vendor/revision/approver/effective date) | ✅ |
-| 10 | File format support: PDF/image/spreadsheet/web records | ✅ PDF renders via **PDF.js** when a revision `pdfUrl` is attached; Attach-PDF flow on doc viewer |
-| 11 | CAD/model review layer | ✅ IFC decoding via **web-ifc** (MPL 2.0). Object tree + metadata inspector; geometry rendering delegated to web-ifc-viewer in production |
-| 12 | Schematic/panel review mode | ✅ (drawing tag toggle "panel") |
+| 10 | File format support: PDF/image/spreadsheet/web records | ◐ PDF via **PDF.js**; **image/spreadsheet viewers ○** |
+| 11 | CAD/model review layer | ◐ IFC decode via **web-ifc** + tree+metadata; **3D geometry view ○** |
+| 12 | Schematic/panel review mode | ◐ (discipline tag exists; **dedicated panel-review tools ○**) |
 | 13 | One-click issue/action creation from annotation | ✅ |
 
 ## §8 Drawing viewer
 
 | Feature | State |
 |---|---|
-| Sheet navigator + mini-map + snap-to-region bookmarks | ✅ |
-| Zoom/pan/measure/callout/compare/overlay | ✅ |
+| Sheet navigator | ✅ |
+| Mini-map | ✅ |
+| Snap-to-region bookmarks | ○ |
+| Zoom/pan/measure/compare/overlay | ✅ |
+| Callout primitive | ◐ Arrow + text serve as callouts; **no formal connector** |
 | Arrows/clouds/highlights/text/stamps/status markers | ✅ |
 | Revision diff + overlay opacity slider | ✅ |
 | Layer toggle | ✅ |
@@ -132,9 +140,10 @@ running change history.
 
 | Feature | State |
 |---|---|
-| §9.1 MQTT topic/QoS/retain | ✅ MQTT screen simulates |
-| §9.1 OPC UA client/server-mode, namespace browsing, node mapping | ✅ OPC UA screen |
-| §9.1 REST/Webhooks | ✅ Inbound: `POST /api/events/ingest`. Outbound: `/api/webhooks` CRUD, HMAC-SHA256 signed (`X-FORGE-Signature`), retries via DLQ |
+| §9.1 MQTT topic/QoS/retain | ✅ MQTT screen + real broker bridge |
+| §9.1 OPC UA client/server-mode, namespace browsing, node mapping | ◐ Screen + ingress bridge (when `node-opcua` installed); browsing real servers requires bridge config |
+| §9.1 REST/Webhooks | ✅ Inbound: `POST /api/events/ingest`. Outbound: `/api/webhooks` CRUD, HMAC-SHA256 signed; **retries 1-shot, not exponential** |
+| §9.1 ERP/MES/CMMS/Historian adapters | ◐ ERP flow ✅; concrete adapters ○ |
 | §9.2 Canonical event envelope | ✅ `core/events.js` |
 | §9.3 Rule outcomes (notify, incident, work item, timeline, approval) | ✅ |
 | §9.4 Idempotency | ✅ dedupe_key check |
@@ -145,14 +154,14 @@ running change history.
 
 | # | Workflow | State |
 |---|---|---|
-| 1 | Drawing ingestion | ✅ (Upload stub → revision → metadata → reviewer assignment) |
+| 1 | Drawing ingestion | ◐ Manual upload via `/api/files`; **no auto revision-parse / metadata extract** |
 | 2 | Review cycle | ✅ |
 | 3 | Revision promotion (auto-supersede) | ✅ |
-| 4 | MQTT alerting | ✅ (MQTT simulator → events → incident) |
-| 5 | OPC UA state update | ✅ (write-node → asset state → timeline) |
-| 6 | ERP sync | ✅ (mapping → conflict → work item) |
-| 7 | RFI chain | ✅ |
-| 8 | Commissioning | ✅ (forms exist; checklist linked) |
+| 4 | MQTT alerting | ✅ MQTT bridge → events → incident |
+| 5 | OPC UA state update | ✅ Bridge → state_change → asset/timeline |
+| 6 | ERP sync | ◐ Conflict queue + writeback preview ✅; **no actual ERP adapter** |
+| 7 | RFI chain | ◐ RFI is a work-item type; **dedicated RFI link graph (drawing/spec/markup/approval/vendor) not modeled** |
+| 8 | Commissioning | ◐ Forms in seed; **no commissioning wizard / system-panel-package links** |
 | 9 | Incident war room | ✅ |
 
 ## §11 Screen-by-screen
@@ -185,46 +194,54 @@ running change history.
 | Typography Inter + JetBrains Mono | ✅ |
 | Color roles incl. revision-state | ✅ |
 | Navigation: rails/trees/breadcrumbs/command palette | ✅ |
+| Workspace switcher | ○ Single-workspace UI today |
 | Data: tables/frozen columns/timeline/board cards/metric tiles | ✅ |
 | Engineering: revision badge/sheet nav/markup toolbar/overlay slider | ✅ |
 | Actions: split buttons/signature/automation rule builder | ✅ |
 | Single-key quick actions C/G/A | ✅ `core/hotkeys.js` |
+| `/go OBJ-ID` palette syntax | ◐ Palette exists; **`/go` parser not implemented** |
 | Right panel shows contextual links | ✅ |
-| WCAG 2.2 AA contrast | ✅ (tokens pass AA) |
+| WCAG 2.2 AA contrast | ◐ Tokens pass AA; **no `aria-*` attributes**, no automated a11y checks |
+| Keyboard-first office operations | ◐ Many buttons reachable; **no full focus management / roving tabindex** |
+| Field mode (glove targets, offline drafts) | ○ Not implemented (no PWA) |
 
 ## §13 Security
 
 | Feature | State |
 |---|---|
-| RBAC + ABAC | ✅ |
-| Object-level ACL + field-level sensitivity tags | ✅ |
-| TLS in transit / at rest encryption | ○ (deployment concern, surfaced in Admin) |
+| RBAC | ✅ |
+| ABAC overlays | ◐ Helper exists; **only `/api/files` calls `allows()` today** — broader CRUD routes use role-only `require_(cap)` |
+| Object-level ACL | ◐ `acl` JSON column on every entity; **server enforces it on file downloads only** |
+| Field-level sensitivity tags | ◐ `documents.sensitivity` exists; **no field-level redaction in responses** |
+| TLS in transit | ◐ Reverse-proxy concern; not enforced in-process |
+| Encryption at rest | ○ Plain SQLite + plain file store |
 | Signed approvals | ✅ HMAC-SHA256 |
 | Tamper-evident audit | ✅ SHA-256 hash chain |
-| Secret vault integration | ◐ (placeholder refs in integrations) |
-| Retention + legal hold | ✅ |
+| Secret vault integration | ◐ Placeholder refs; no Vault/SecretsManager binding |
+| Retention + legal hold | ◐ Policies configurable; **retention sweeper that actually deletes is not yet wired** |
 | Exportable immutable audit packs | ✅ |
-| Data residency | ◐ (shown in Admin; no enforcement layer) |
+| Data residency | ◐ `region` field on workspace; **no enforcement** |
 
 ## §14 AI
 
 | Feature | State |
 |---|---|
-| Self-hosted gateway | ◐ (function seam — in-browser handler) |
-| Tenant-controlled model routing | ✅ (selector) |
+| Self-hosted gateway | ◐ No external LLM call; in-browser deterministic responses based on retrieval |
+| Tenant-controlled model routing | ◐ UI selector exists; **no actual provider switch** |
 | Permission-filtered retrieval | ✅ |
 | Mandatory citations | ✅ |
 | No-training-by-default | ✅ (policy tag on log entries) |
-| Audit of prompt/output/tool calls | ✅ |
+| Audit of prompt/output/tool calls | ✅ `ai_log` table |
 
 ## §15 Search
 
 | Feature | State |
 |---|---|
 | Unified index over objects, revisions, messages, telemetry events | ✅ |
-| Hybrid retrieval (keyword + semantic) | ✅ **MiniSearch** (MIT): BM25 + prefix + fuzzy. Fallback: hand-rolled BM25 |
-| Facets | ✅ |
-| Saved searches and alert subscriptions | ✅ |
+| Hybrid retrieval (keyword + semantic) | ◐ BM25 + prefix + fuzzy ✅; **no vector embeddings** |
+| Facets (object type, project, asset, discipline, status, **date**, **revision**) | ◐ kind/status/discipline/project/teamSpace ✅; **date and revision facets not surfaced** |
+| Saved searches | ✅ |
+| Alert subscriptions on saved searches | ○ Not implemented |
 
 ## §16 OSS references
 

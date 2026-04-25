@@ -64,6 +64,50 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ## 2026-04-25 — Production hardening (bbf36ec)
 
+## 2026-04-25 — Full spec audit (no code change)
+
+**What**
+Performed a clause-by-clause audit of `PRODUCT_SPEC.md` against the
+running code. Wrote `docs/AUDIT_REPORT.md` as a point-in-time, accurate
+status report and corrected several rows in `docs/SPEC_COMPLIANCE.md`
+where I had been overstating partials as "✅".
+
+**Method**
+For each clause I cross-checked:
+1. Routes registered in `app.js` and `server/main.js`.
+2. Tables present in `server/db.js`.
+3. Behaviour exercised by `test/*.test.js`.
+4. Live-grep for the spec terms (`mention`, `calendar`, `swimlane`,
+   `NCR`, `field mode`, `aria-`, `/go`, `review_cycle`, `encrypt`, etc.)
+   to detect features I had labelled done but had not actually built.
+
+**Findings (summary)**
+- Aggregate ≈ 70 % ✅, 28 % ◐, 3 % ○ at clause granularity.
+- Down-graded from ✅ → ◐ where the spec asks for more than is built:
+  work-item NCR type, calendar view, callout primitive, transmittal
+  vs review-cycle separation, multi-hierarchy templates, ABAC
+  enforcement coverage, retention sweeper, model-element pinning,
+  PDF.js coverage of image/spreadsheet, IFC geometry, AI gateway,
+  hybrid-retrieval semantic stage, facet completeness, RFI link
+  graph, commissioning wizard, ERP adapters, schematic/panel mode,
+  drawing ingestion auto-parse.
+- Marked ✅ → ○ where features are flat-out not present: `@user`
+  mentions parser, snap-to-region bookmarks, calendar view,
+  workspace switcher, `/go` palette parser, alert subscriptions on
+  saved searches, encryption at rest, field/PWA mode.
+- Wrote a **prioritized 30-item gap list** at the end of
+  `AUDIT_REPORT.md` so the next iteration can pick up directly.
+
+**Files**
+- new: `docs/AUDIT_REPORT.md`
+- modified: `docs/SPEC_COMPLIANCE.md` (corrected over-stated rows)
+
+**Verification**
+- `npm test` still 8/8 green (no code changes).
+- All ◐ rows in SPEC_COMPLIANCE now name the specific limitation in
+  their cell so reviewers can verify.
+
+
 **What**
 Closed most of the remaining server-side gaps. The server is now
 production-oriented: machine auth, file handling, outbound integration,
