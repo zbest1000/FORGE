@@ -21,6 +21,8 @@ import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { follow, isFollowing, unfollow } from "../core/subscriptions.js";
 import { vendor } from "../core/vendor.js";
+import { renderCad } from "../core/cad-viewer.js";
+import { detectCad, supportedExtensions } from "../core/cad.js";
 
 export function renderDrawingsIndex() {
   const root = document.getElementById("screenContainer");
@@ -110,6 +112,7 @@ function toolbar(dr, sheetId, mode, tool, layers, compareWithId, overlayOpacity)
     mode === "compare" ? compareSelector(dr, compareWithId, overlayOpacity) : null,
 
     el("span", { style: { flex: 1 } }),
+    el("button", { class: "btn sm", onClick: () => loadCadFile(dr) }, [dr.cadUrl ? "Reload CAD" : "Load CAD…"]),
     el("button", { class: "btn sm", onClick: () => exportSVG(id) }, ["Export SVG"]),
   ]);
 }
@@ -145,6 +148,18 @@ function canvasColumn(dr, sheetId, mode, tool, markups, layers, compareWithId, o
 function pageArea(dr, sheetId, mode, tool, markups, layers, compareWithId, overlayOpacity) {
   const id = dr.id;
   const viewState = loadViewState(id);
+
+  // If a CAD asset is attached, render that instead of the synthetic SVG
+  // sheet — DXF/STEP/IGES/STL/OBJ/glTF/IFC etc. The native markup palette
+  // still works for any kind, since the CAD viewer is hosted inside the
+  // same `viewer-page` container.
+  if (dr.cadUrl) {
+    const cadHost = el("div", { class: "viewer-page", style: { position: "relative", overflow: "hidden" } });
+    const innerHost = el("div", { style: { position: "absolute", inset: "0" } });
+    cadHost.append(innerHost);
+    renderCad(innerHost, { url: dr.cadUrl, name: dr.cadUrl }).catch(() => {});
+    return cadHost;
+  }
 
   const svg = buildSvg(dr, sheetId, markups, layers, compareWithId, overlayOpacity, viewState);
 
@@ -643,6 +658,20 @@ function histogramMarkupTypes(markups) {
 }
 
 // ---------- IFC mode ----------
+async function loadCadFile(dr) {
+  const url = window.prompt(
+    "CAD file URL (CORS-enabled). Supported: " + supportedExtensions().join(", "),
+    dr.cadUrl || ""
+  );
+  if (!url) return;
+  const detected = detectCad(url);
+  if (!detected) { toast("Unsupported CAD format", "warn"); return; }
+  update(s => { const x = s.data.drawings.find(y => y.id === dr.id); if (x) { x.cadUrl = url; x.cadKind = detected.kind; } });
+  audit("drawing.cad.attach", dr.id, { url, kind: detected.kind });
+  toast(`Loading ${detected.name}…`, "info");
+  renderDrawingViewer({ id: dr.id });
+}
+
 async function loadIfcFile(dr) {
   const url = window.prompt("IFC file URL (CORS-enabled):", dr.ifcUrl || "");
   if (!url) return;

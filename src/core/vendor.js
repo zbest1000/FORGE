@@ -60,6 +60,9 @@ export const vendor = {
   dateFns:     () => load("date-fns",     "date-fns",    m => m),
   pdfjs:       () => load("pdfjs-dist",   "pdfjs-dist",  m => (m.GlobalWorkerOptions ? m : (m.default || m))),
   papaparse:   () => load("papaparse",    "papaparse",   m => (m.default || m)),
+  three:       () => load("three",        "three",       m => m),
+  dxfViewer:   () => load("dxf-viewer",   "dxf-viewer",  m => m),
+  online3d:    () => load("online-3d-viewer", "online-3d-viewer", m => m),
 };
 
 /**

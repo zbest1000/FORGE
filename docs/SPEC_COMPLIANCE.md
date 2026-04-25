@@ -116,8 +116,8 @@ score and a prioritized list of remaining gaps.
 | 7 | Approval routing + signatures | ✅ (HMAC signature) |
 | 8 | Linked transmittals and review cycles | ✅ Transmittals ✅; **review cycles as their own object** via `/api/review-cycles` |
 | 9 | Rich metadata (discipline/project/package/area/line/system/vendor/revision/approver/effective date) | ✅ |
-| 10 | File format support: PDF/image/spreadsheet/web records | ✅ PDF via PDF.js; image via `<img>`; CSV via **PapaParse** |
-| 11 | CAD/model review layer | ◐ IFC decode via **web-ifc** + tree+metadata; **3D geometry view ○** |
+| 10 | File format support: PDF/image/spreadsheet/web records | ✅ PDF via PDF.js; image via `<img>`; CSV via **PapaParse**; DXF via **dxf-viewer**; DWG via **LibreDWG** server-side conversion → dxf-viewer |
+| 11 | CAD/model review layer | ✅ STEP/IGES/STL/OBJ/glTF/3DM/3DS/3MF/FBX/DAE/PLY/BREP/OFF/VRML via **Online3DViewer** (MIT, three.js + occt-import-js); IFC via **web-ifc**; DWG/DXF via the 2D pipeline |
 | 12 | Schematic/panel review mode | ◐ (discipline tag exists; **dedicated panel-review tools ○**) |
 | 13 | One-click issue/action creation from annotation | ✅ |
 
@@ -133,7 +133,7 @@ score and a prioritized list of remaining gaps.
 | Arrows/clouds/highlights/text/stamps/status markers | ✅ |
 | Revision diff + overlay opacity slider | ✅ |
 | Layer toggle | ✅ |
-| BIM/IFC mode with object tree and metadata inspector | ✅ **web-ifc** (MPL 2.0, ThatOpen) lazy-loaded. Paste a CORS-enabled IFC URL to count entities and expose metadata; geometry viewer is a production-side concern |
+| BIM/IFC mode with object tree and metadata inspector | ✅ **web-ifc** entity decode + metadata inspector; **Online3DViewer** renders the geometry |
 | Cross-link panel (drawing↔spec↔task↔asset↔discussion) | ✅ |
 
 ## §9 Data Exchange

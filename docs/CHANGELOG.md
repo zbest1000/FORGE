@@ -3,6 +3,36 @@
 Notable changes to FORGE. See `docs/AUDIT_LOG.md` for the detailed
 engineering log behind each change.
 
+## 0.6.0 — Major CAD format support (DWG / DXF / STEP / IGES / STL / glTF / IFC / …)
+
+### Added
+- `src/core/cad.js` — central CAD format detector (URL, MIME, extension)
+  covering: PDF · DXF · DWG · SVG · PNG · JPEG · CSV · STEP · IGES ·
+  STL · OBJ · glTF (.gltf, .glb) · 3DM (Rhino) · 3DS · 3MF · FBX · DAE
+  (Collada) · PLY · OFF · VRML · BREP · IFC.
+- `src/core/cad-viewer.js` — single-seam unified renderer:
+  - **dxf-viewer** (MIT) for DXF;
+  - **Online3DViewer** (MIT, wraps three.js + occt-import-js) for the
+    full 3D family;
+  - Server-side **LibreDWG** `dwg2dxf` (GPL-3.0, deployed-service
+    exception) for DWG, then dxf-viewer renders the DXF.
+- `server/converters/dwg.js` — subprocess wrapper with SHA-256 caching.
+- `server/routes/cad.js` — `/api/cad/info`, `/api/cad/info/:fileId`,
+  `/api/cad/convert/:fileId?to=dxf`, `/api/cad/convert?url=…`,
+  `/api/cad/converted/:hash.dxf` (immutable cache).
+- Drawing viewer: **Load CAD…** action accepts any supported format and
+  routes through the unified viewer.
+- Doc viewer: revision asset URLs that point at CAD files render in the
+  CAD viewer; PDF/image/CSV continue on their existing renderers.
+- Dockerfile installs `libredwg-tools` so DWG works out of the box in
+  `docker compose up`.
+
+### Tests
+- 10 new tests in `test/cad.test.js` (kind detection by URL / MIME,
+  3D family coverage, DWG flag, ext stripping, accept-attr generation,
+  converter argument validation, route-name regex hardening). 41/41
+  passing.
+
 ## 0.5.2 — xstate FSMs (revision / approval / incident)
 
 ### Added / Changed

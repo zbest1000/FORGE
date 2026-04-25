@@ -19,6 +19,8 @@ import { follow, unfollow, isFollowing } from "../core/subscriptions.js";
 import { impactOfRevision } from "../core/revisions.js";
 import { openPdf, renderPage } from "../core/pdf.js";
 import { parseCSV } from "../core/csv.js";
+import { detectCad, supportedExtensions } from "../core/cad.js";
+import { renderCad } from "../core/cad-viewer.js";
 
 export function renderDocsIndex() {
   const root = document.getElementById("screenContainer");
@@ -126,7 +128,19 @@ function paperPage(doc, rev, page) {
   ]);
 
   // If the revision has an attached URL, pick the renderer by content kind.
+  // CAD formats (DWG/DXF/STEP/IGES/STL/OBJ/glTF/3DM/3DS/3MF/FBX/DAE/PLY/IFC/...)
+  // are routed to the unified CAD viewer; PDF/image/CSV stay on their
+  // existing renderers.
   const url = rev.pdfUrl || rev.assetUrl || null;
+  const cadKind = detectCad(url, rev.assetMime);
+  if (url && cadKind && cadKind.viewer !== "image" && cadKind.viewer !== "pdf" && cadKind.viewer !== "csv") {
+    const host = document.createElement("div");
+    host.style.minHeight = "70vh";
+    container.replaceChildren(host);
+    renderCad(host, { url, name: url, mime: rev.assetMime }).catch(() => {});
+    for (const c of comments) container.append(commentPin(c));
+    return container;
+  }
   const kind = detectKind(url, rev.assetMime);
   if (url && kind) {
     const host = document.createElement("div");
@@ -433,11 +447,13 @@ function convertCommentToIssue(c) {
 
 function attachPdf(doc, rev) {
   const url = window.prompt(
-    "Attach a URL — supported: PDF (.pdf), image (.png/.jpg/.svg), spreadsheet (.csv).\nMust be CORS-enabled.",
+    "Attach a URL — supported: PDF, image (png/jpg/svg), CSV, " +
+    "and CAD (" + supportedExtensions().join(", ") + ").\nMust be CORS-enabled.",
     rev.pdfUrl || rev.assetUrl || "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf"
   );
   if (!url) return;
-  const kind = detectKind(url);
+  const cad = detectCad(url);
+  const kind = cad ? cad.kind : detectKind(url);
   update(s => {
     const r = s.data.revisions.find(x => x.id === rev.id);
     if (!r) return;

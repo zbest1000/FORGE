@@ -139,6 +139,83 @@ and `server/metrics-rollup.js` run as background workers.
   `failed-retry` with the right `next_attempt_at` and recovers when
   the receiver comes up.
 
+## 2026-04-25 — Major CAD format support (DWG / DXF / STEP / IGES / STL / glTF / 3DM / 3DS / 3MF / FBX / DAE / PLY / BREP / OFF / VRML / IFC)
+
+**What**
+The drawing/doc viewers previously rendered PDF + the SVG paper stub
+plus a web-ifc decode tab. Engineering teams expect every common CAD
+type, especially DWG. Walked the philosophy matrix — three OSS bands
+fit cleanly:
+
+- **dxf-viewer** (MIT, three.js based) for DXF.
+- **LibreDWG** `dwg2dxf` (GPL-3.0) server-side for DWG → DXF
+  conversion. Subprocess only, so the GPL applies to its binary, not
+  to FORGE — same "deployed-service" exception we already use for
+  Mosquitto and n8n.
+- **Online3DViewer** (MIT, wraps three.js + occt-import-js) for
+  STEP/IGES/STL/OBJ/glTF/3DM/3DS/3MF/FBX/DAE/PLY/BREP/OFF/VRML and IFC.
+
+Single seam: `src/core/cad-viewer.js` `renderCad(host, { url, name,
+mime, fileId })`. Lazy-loads the right OSS at use-time.
+
+Server side: `server/converters/dwg.js` wraps the `dwg2dxf` CLI with
+SHA-256 caching under `<DATA_DIR>/converted/<sha>.dxf`; routes at
+`/api/cad/{info,convert,converted}` enforce auth + parent-record ACL +
+filename shape regex (path-traversal safe).
+
+**Why**
+Spec §6.3 "Native doc viewer (PDF/image/sheet/web records)", §7.10
+"PDF, image sheets, spreadsheets, browser-viewable records" and §7.11
+"CAD/model review layer" + §8 "Drawing and Model Viewer" all imply
+broad CAD coverage. Engineering teams won't accept a system that
+can't open a `.dwg`.
+
+**Tech decisions (+ alternatives)**
+- LibreDWG over the **ODA File Converter** (proprietary, free for
+  developers but not redistributable in a Docker image we own).
+  LibreDWG is GPL-3.0 but runs out-of-process; we ship the binary in
+  the container and call it. `FORGE_DWG2DXF` env lets enterprises
+  swap in ODA if they prefer.
+- Online3DViewer over wiring up each three.js loader by hand — the
+  package already integrates `occt-import-js` (OpenCascade WASM) for
+  STEP/IGES/BREP and the standard three.js loaders for the rest, so
+  one component covers the whole 3D matrix.
+- dxf-viewer over a hand-rolled DXF parser — DXF is a beast (binary +
+  ASCII variants, block references, hatches, leaders…). Reusing a
+  maintained MIT package was an obvious philosophy-§2 decision.
+- Three.js shared between dxf-viewer and Online3DViewer via a single
+  import map entry pinned to `three@0.169.0` (browsers de-dup, and
+  esm.sh's `?deps=three@0.169.0` ensures both deps resolve to the
+  same instance).
+
+**Files**
+- new: `src/core/cad.js`, `src/core/cad-viewer.js`,
+  `server/converters/dwg.js`, `server/routes/cad.js`, `test/cad.test.js`
+- modified:
+  - `index.html` (import map: three, dxf-viewer, online-3d-viewer);
+  - `src/core/vendor.js` (loaders for the three new modules);
+  - `src/screens/drawingViewer.js` ("Load CAD…" action; CAD URL takes
+    precedence over the SVG sheet);
+  - `src/screens/docViewer.js` (revision asset URL routes through
+    the CAD viewer when format matches);
+  - `Dockerfile` (`libredwg-tools` apt package);
+  - `server/main.js` (cadRoutes registration);
+  - `docs/ENGINEERING_PHILOSOPHY.md` (CAD register row + Updates);
+  - `docs/THIRD_PARTY.md`, `docs/SPEC_COMPLIANCE.md`, `docs/CHANGELOG.md`.
+
+**Verification**
+- `npm test` — 41/41 passing (10 new CAD tests).
+- Live against the running server:
+  - `GET /api/cad/info` returns `{ converters: { dwg2dxf: false } }`
+    on the dev VM (LibreDWG only ships in the Docker image); calls
+    that need conversion get a 503 with a clear message.
+  - `GET /api/cad/converted/<bad-name>` rejected with 400 by the
+    `^[a-f0-9]{64}\.dxf$` shape regex (path traversal safe).
+  - Unauthenticated `/api/cad/convert` → 401.
+  - `file://` URLs → 400 (basic SSRF guard).
+- In Docker (`docker compose up`) the FORGE image has `dwg2dxf`
+  installed at apt time, so DWG files round-trip end to end.
+
 ## 2026-04-25 — xstate FSMs (revision / approval / incident)
 
 **What**

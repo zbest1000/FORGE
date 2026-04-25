@@ -40,6 +40,7 @@ or swapped for self-hosted copies without touching call sites.
 |---|---|---|
 | [n8nio/n8n](https://github.com/n8n-io/n8n) | **Sustainable Use License** (source-available; free for internal/business use) | Workflow automation engine — 400+ pre-built connectors covering spec §6.2 "Automation rules from integration events" |
 | [eclipse-mosquitto](https://github.com/eclipse/mosquitto) | EPL-2.0 / EDL-1.0 | MQTT broker dev sibling |
+| [LibreDWG](https://www.gnu.org/software/libredwg/) (`libredwg-tools`) | **GPL-3.0** (deployed-service exception — runs as a subprocess; FORGE code is not derived) | `dwg2dxf` CLI used by `server/converters/dwg.js` to convert DWG → DXF on the server |
 
 ### Client-side (browser, ES module import map)
 
@@ -49,6 +50,9 @@ or swapped for self-hosted copies without touching call sites.
 | [papaparse](https://github.com/mholt/PapaParse) | 5.4.1 | MIT | CSV parsing in the doc viewer (de-facto browser CSV) | §7.10 |
 | [workbox-sw](https://github.com/GoogleChrome/workbox) | 7.1.0 | MIT | Service worker routing + BackgroundSync queue (offline drafts) | §12.5 |
 | [xstate](https://github.com/statelyai/xstate) | 5.30.0 | MIT | FSMs for revision / approval / incident lifecycles (loaded via import map for client) | §6.3, §11.13, §11.14 |
+| [three](https://github.com/mrdoob/three.js) | 0.169.0 | MIT | 3D engine shared by dxf-viewer + Online3DViewer | §8 |
+| [dxf-viewer](https://github.com/vagran/dxf-viewer) | 1.1.7 | MIT | DXF rendering (and the destination format for converted DWG) | §6.3, §8 |
+| [online-3d-viewer](https://github.com/kovacsv/Online3DViewer) | 0.16.0 | MIT | STEP / IGES / STL / OBJ / glTF / 3DM / 3DS / 3MF / FBX / DAE / PLY / BREP / OFF / VRML / IFC viewer (wraps three.js + occt-import-js) | §6.3, §7.11, §8 |
 | [minisearch](https://github.com/lucaong/minisearch) | 7.1.2 | MIT | BM25 + prefix + fuzzy full-text search | §15 |
 | [dexie](https://github.com/dexie/Dexie.js) | 4.0.11 | Apache 2.0 | IndexedDB append-only logs (audit, events, DLQ) | §13.2, §9.4 |
 | [marked](https://github.com/markedjs/marked) | 14.1.3 | MIT | Markdown rendering in channel messages, transmittals, doc viewer | §6.1, §7 |

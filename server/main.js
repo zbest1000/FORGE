@@ -31,6 +31,7 @@ import webhookRoutes from "./routes/webhooks.js";
 import extrasRoutes from "./routes/extras.js";
 import aiRoutes from "./routes/ai.js";
 import automationRoutes from "./routes/automations.js";
+import cadRoutes from "./routes/cad.js";
 
 import { startMqttBridge } from "./connectors/mqtt.js";
 import { startOpcuaBridge } from "./connectors/opcua.js";
@@ -155,6 +156,7 @@ await app.register(webhookRoutes);
 await app.register(extrasRoutes);
 await app.register(aiRoutes);
 await app.register(automationRoutes);
+await app.register(cadRoutes);
 attachSSE(app);
 registerMetrics(app);
 

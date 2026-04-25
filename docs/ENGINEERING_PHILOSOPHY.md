@@ -198,6 +198,19 @@ write code that touches any concern below, **start from the OSS column**.
 | Approval lifecycle (pending→approved/rejected/expired/delegated) | **xstate v5** | `src/core/fsm/approval.js` | ✅ in use |
 | Incident lifecycle (active→escalated→stabilized→resolved→postmortem) | **xstate v5** | `src/core/fsm/incident.js` | ✅ in use |
 
+### CAD / engineering documents
+| Concern | Default OSS | License | Adapter location | Status |
+|---|---|---|---|---|
+| PDF | **PDF.js** | Apache-2.0 | `src/core/pdf.js` | ✅ |
+| DXF (AutoCAD interchange, 2D) | **dxf-viewer** | MIT | `src/core/cad-viewer.js` | ✅ |
+| DWG (AutoCAD native, 2D) | **LibreDWG** `dwg2dxf` (subprocess) | GPL-3.0 (deployed-service exception) | `server/converters/dwg.js` + `server/routes/cad.js` → output served via dxf-viewer | ✅ |
+| STEP / IGES / STL / OBJ / glTF / 3DM / 3DS / 3MF / FBX / DAE / PLY / BREP / OFF / VRML | **Online3DViewer** (wraps three.js + occt-import-js) | MIT | `src/core/cad-viewer.js` (lazy-load) | ✅ |
+| IFC / BIM | **web-ifc** + Online3DViewer | MPL-2.0 / MIT | drawing viewer IFC tab + `cad-viewer.js` | ✅ |
+| 3D engine | **three.js** | MIT | shared dep of DXF + Online3DViewer | ✅ |
+| Image (PNG / JPG / SVG) | native `<img>` | — | doc viewer | ✅ |
+| Spreadsheet (CSV) | **PapaParse** | MIT | `src/core/csv.js` | ✅ |
+| Spreadsheet (XLSX) | **SheetJS Community** | Apache-2.0 | TBD when needed | candidate |
+
 ### Spec §16 reference projects (already aligned)
 - Mattermost — collaboration patterns
 - Keycloak — SSO/SCIM
@@ -288,3 +301,9 @@ When you add a new concern that doesn't fit the register:
   `src/core/fsm/`, imported on client and server. Added the §8
   re-walk-the-matrix lesson. See `docs/AUDIT_LOG.md` for the full
   refactor entry.
+- **2026-04-25** — CAD support: DXF via dxf-viewer (MIT), DWG via
+  LibreDWG `dwg2dxf` (GPL-3.0, deployed-service exception), and
+  STEP/IGES/STL/OBJ/glTF/3DM/3DS/3MF/FBX/DAE/PLY/BREP/OFF/VRML via
+  Online3DViewer (MIT, three.js + occt-import-js). Single seam:
+  `src/core/cad-viewer.js`. Server-side conversion route at
+  `/api/cad/convert/:fileId` with SHA-256 caching.
