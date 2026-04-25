@@ -133,12 +133,15 @@ export default async function extrasRoutes(fastify) {
     return { ok: true };
   });
 
-  fastify.delete("/api/rfi/:id/links", { preHandler: require_("edit") }, async (req) => {
+  fastify.delete("/api/rfi/:id/links", { preHandler: require_("edit") }, async (req, reply) => {
     const { targetKind, targetId } = req.query || {};
-    db.prepare("DELETE FROM rfi_links WHERE rfi_id = ? AND target_kind = ? AND target_id = ?")
+    // The matching POST validates these — the DELETE silently dropped no
+    // rows when callers omitted them and still returned `{ ok: true }`.
+    if (!targetKind || !targetId) return reply.code(400).send({ error: "targetKind, targetId required" });
+    const r = db.prepare("DELETE FROM rfi_links WHERE rfi_id = ? AND target_kind = ? AND target_id = ?")
       .run(req.params.id, targetKind, targetId);
-    audit({ actor: req.user.id, action: "rfi.unlink", subject: req.params.id, detail: { targetKind, targetId } });
-    return { ok: true };
+    audit({ actor: req.user.id, action: "rfi.unlink", subject: req.params.id, detail: { targetKind, targetId, removed: r.changes } });
+    return { ok: true, removed: r.changes };
   });
 
   // ------- Saved-search alert subscriptions -------
@@ -172,6 +175,10 @@ export default async function extrasRoutes(fastify) {
     if (!fileId) return reply.code(400).send({ error: "fileId required" });
     const f = db.prepare("SELECT * FROM files WHERE id = ?").get(fileId);
     if (!f) return reply.code(404).send({ error: "file not found" });
+    // A revision must point at a real document. Falling back to the drawing
+    // id (as the previous code did) silently produced revisions referencing
+    // a non-existent document and broke every downstream join.
+    if (!dr.doc_id) return reply.code(409).send({ error: "drawing has no parent document; attach it to a document before ingesting a revision" });
 
     // Heuristic auto-parse: extract a revision label from the file name
     // ("...-Rev-C.pdf"), discipline tags, drawing number, sheet count.
@@ -181,7 +188,7 @@ export default async function extrasRoutes(fastify) {
     db.prepare(`INSERT INTO revisions (id, doc_id, label, status, author_id, summary, notes, pdf_url, effective_date, created_at, updated_at)
                 VALUES (@id, @doc, @label, 'IFR', @author, @summary, NULL, @pdf, NULL, @ts, @ts)`)
       .run({
-        id: revId, doc: dr.doc_id || dr.id, label: revLabel,
+        id: revId, doc: dr.doc_id, label: revLabel,
         author: req.user.id, summary: `Auto-ingested from ${f.name}`,
         pdf: (f.mime || "").includes("pdf") ? `/api/files/${f.id}` : null, ts: now(),
       });
