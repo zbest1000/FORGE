@@ -3,6 +3,33 @@
 Notable changes to FORGE. See `docs/AUDIT_LOG.md` for the detailed
 engineering log behind each change.
 
+## 0.4.0 — Spec gap-closing
+
+### Added
+- **Mentions** — `@user` parser + per-user notifications (`core/mentions.js`).
+- **`/go OBJ-ID` palette parser** — `D-101 Rev C`, `INC-4412`, `AS-1`, etc.
+- **Workspace switcher** in the rail; 3 seeded workspaces.
+- **Calendar view** + **NCR work-item type** on the work board.
+- **Site>Building>Floor>Room** alt hierarchy template seeded.
+- **Drawing snap-to-region bookmarks** with capture-current-view.
+- **Channel composer**: `</> Code` and `▦ Data` block helpers.
+- **Drawing callout primitive** (anchor + connector + bubble).
+- **Review cycles** as a first-class server object.
+- **Form submissions** signed with HMAC-SHA256.
+- **Commissioning checklists** linked to system/panel/package.
+- **RFI link graph** (drawing/spec/markup/approval/vendor).
+- **Model-element pins** (IFC element id anchor).
+- **Drawing ingestion auto-parse** (filename → revision label/discipline/...).
+- **Search facets**: kind + date + revision; with filter querystring.
+- **Saved-search alert subscriptions** with 60 s polling worker.
+- **Webhook retry** with exponential back-off + per-delivery rows.
+- **Daily roll-ups** for §19 success metrics; `/api/metrics/series`.
+- **AI provider routing** — local / OpenAI / Ollama via `FORGE_AI_POLICY`.
+- **Trigram-cosine semantic re-rank** for hybrid retrieval (§15).
+- **Image + CSV viewers** on doc viewer.
+- **Field-mode PWA**: service worker shell cache + offline write queue.
+- **a11y**: skip-link, aria-modal/role/aria-label, focus trap, focus-visible.
+
 ## 0.3.1 — Production hardening
 
 ### Added

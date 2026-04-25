@@ -64,6 +64,118 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ## 2026-04-25 — Production hardening (bbf36ec)
 
+## 2026-04-25 — Spec gap-closing slice 1: client UX (a2eda86)
+
+**What**
+Closed 7 client-side gaps from `docs/AUDIT_REPORT.md`:
+mentions parser+fan-out, `/go` palette parser, workspace switcher,
+calendar view + NCR type, drawing snap-to-region bookmarks,
+code/data composer blocks, ARIA hooks on rail.
+
+**Tech**
+- `src/core/mentions.js`: regex tokenizer + 4-strategy resolver
+  (id / initials / last-name / first.last / first-last), with a
+  fan-out helper that writes one notification per user and a
+  `highlightMentions` post-processor that runs after marked + DOMPurify.
+- `src/core/go.js`: parses `/go D-101 Rev C` into `/doc/<id>` and
+  pre-selects the revision via sessionStorage (so the doc viewer
+  opens on the requested rev). Lookup tries documents/drawings/
+  assets/work-items/incidents/channels/projects/team-spaces/revisions.
+- `seed.js`: gains a `workspaces[]` array and a Site>Building>Floor>Room
+  asset pair so the alt hierarchy template is exercised.
+- `rail.js`: new `workspaceSwitcher()` with a popover modal driven by
+  the existing `paletteRoot` mount; switch is audited.
+- `workBoard.js`: adds `calendar` to view tabs; month grid rendered
+  from `due_date`; severity-coloured pills; today highlight;
+  prev/next month navigation persisted in sessionStorage.
+- Channel composer: added `+ @ Mention`, `+ </> Code`,
+  `+ ▦ Data` helpers. Code block uses fenced markdown rendered by
+  marked; data block emits a markdown table; mention picker uses a
+  prompt + the resolver.
+- Drawing bookmarks: per-sheet list in a side card; capture stores
+  the active transform matrix (`tx, ty, k`); click reapplies.
+
+**Verification**
+- Node smoke tests of mention resolution and `/go` parser pass for
+  every shape (`@JS`, `@okafor`, `@r.okafor`, `U-1`, `D-101 Rev B`,
+  `AS-1`, `INC-4412`, unknowns).
+- All 8 prior tests still pass.
+
+## 2026-04-25 — Spec gap-closing slice 2: server objects (017b8d5)
+
+**What**
+Closed 9 server-side gaps. Schema bumped to v4; 9 new tables. New
+`server/routes/extras.js` exposes the CRUD surface; `server/alerts.js`
+and `server/metrics-rollup.js` run as background workers.
+
+**Tech**
+- Schema v4 adds `review_cycles`, `form_submissions`,
+  `commissioning_checklists`, `rfi_links`, `webhook_deliveries`,
+  `search_alerts`, `metrics_daily`, `model_pins`, `drawing_uploads`.
+- Webhook delivery moved out of the emit hot-path and into a queue:
+  every match writes a row with `status` and `next_attempt_at`; a
+  5 s ticker walks pending/failed-retry rows and HTTP-POSTs with
+  `X-FORGE-Attempt`. Backoff schedule: 0/5/15/60/300/1800 s. After
+  6 attempts the delivery is moved to `dead_letters` for inspection.
+  This also fixed a serialization bug where the body was being
+  `JSON.parse`d twice (the initial fix in `webhooks.js` covers it).
+- `server/alerts.js` polls every 60 s, runs each saved query against
+  FTS5, and emits one notification per *new* hit (diffed against
+  `last_seen_ids`).
+- `server/metrics-rollup.js` recomputes 9 daily metrics for the last
+  14 days every 5 min so the Dashboards screen has trend data.
+- Drawing ingest endpoint reads a previously-uploaded file row,
+  parses the filename heuristically (rev letter, drawing number,
+  discipline, extension), creates an IFR revision with
+  `Auto-ingested from <filename>`, and assigns a reviewer if given.
+- `server/routes/core.js` search now returns `kind`/`date`/`revision`
+  facet maps and accepts `?kind=...&revision=...&from=&to=`.
+
+**Verification**
+- New `test/extras.test.js` adds 6 tests (review cycle CRUD, form
+  submission with signature, commissioning toggle, RFI link CRUD,
+  model pin create+list). 14/14 passing.
+- Live: webhook retry against an offline receiver records
+  `failed-retry` with the right `next_attempt_at` and recovers when
+  the receiver comes up.
+
+## 2026-04-25 — Spec gap-closing slice 3: AI routing, semantic re-rank, viewers, callouts, a11y, PWA (24bb027)
+
+**What**
+Closed the remaining non-security gaps from the audit: AI provider
+routing with policy, semantic stage in hybrid retrieval, image + CSV
+viewers, drawing callout primitive, a11y on dialogs/rails/focus, and
+field-mode PWA.
+
+**Tech**
+- `server/ai.js` exposes three adapters (local / openai / ollama) with
+  `FORGE_AI_POLICY` env-driven default + allow-list. Provider failures
+  audit and fall back to the deterministic local responder. Every call
+  appends an `ai_log` row.
+- `src/core/semantic.js` implements character-trigram cosine similarity
+  and `semanticRerank()` blends it with BM25 (mix=0.35) before facet
+  filtering. Real semantic-ish boost without external embeddings.
+- `src/screens/docViewer.js` `attachAsset` now accepts PDF, image, and
+  CSV URLs; a `detectKind()` + `renderCsvTable()` (hand-rolled CSV
+  parser; quoted-field aware) drive the renderer.
+- `src/screens/drawingViewer.js` adds a `callout` tool: anchor + line
+  + bubble (rect + text).
+- `sw.js` + `manifest.webmanifest` + `icon.svg`: install pre-caches
+  the SPA shell; network-first for `/api`+`/v1`+`/metrics`,
+  cache-first for static; offline writes to `/api/*` are queued in
+  IDB and replayed on the `online` event.
+- `src/core/ui.js` `modal()` traps Tab/Shift+Tab focus, restores focus
+  on close, and tags `role=dialog` + `aria-modal=true` + `aria-label`.
+- `index.html` adds a skip-link, manifest, theme-color, and aria-label
+  on the major landmarks. `styles.css` adds focus-visible outlines.
+
+**Verification**
+- 14/14 tests pass.
+- Live: `/api/ai/providers` returns the configured allow-list; with
+  no key the openai adapter degrades to local with an explicit
+  `[provider openai failed: ...]` prefix and an audit entry.
+- `/sw.js`, `/manifest.webmanifest`, `/icon.svg` all serve 200.
+
 ## 2026-04-25 — Full spec audit (no code change)
 
 **What**

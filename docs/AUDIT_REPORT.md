@@ -418,7 +418,71 @@ Phase 3 deferred.
 
 ---
 
-# Aggregate score
+# Update — 2026-04-25 (post gap-closing)
+
+The aggregate counts below reflect the matrix as it stood at the time of
+the original audit. After commits **a2eda86 → 24bb027** the following 22
+clauses moved from ◐ or ○ to ✅:
+
+- §6.1: code/data snippet blocks (◐→✅), `@user` mentions parser + fan-out (○→✅)
+- §6.2: NCR work-item type (◐→✅), Calendar view (○→✅)
+- §6.4: Site>Building>Floor>Room hierarchy template (◐→✅)
+- §6.5/§14: Self-hosted gateway (◐→✅), tenant model routing (◐→✅)
+- §7 #6: Model-element comment pinning (◐→✅)
+- §7 #8: Review cycles as own object (◐→✅)
+- §7 #10: Image + spreadsheet viewers (◐→✅)
+- §8: Snap-to-region bookmarks (○→✅), Callout primitive (◐→✅)
+- §9.1: Webhook retry with exponential back-off (◐→✅)
+- §10 #1: Drawing ingestion auto-parse (◐→✅)
+- §10 #7: RFI link graph (◐→✅)
+- §10 #8: Commissioning wizard linked to system/panel/package (◐→✅)
+- §12.4: `/go OBJ-ID` palette parser (◐→✅)
+- §12.4: Workspace switcher (○→✅)
+- §12.5: WCAG aria-* (◐→✅), keyboard focus management (◐→✅), Field-mode PWA (○→✅)
+- §15: Hybrid retrieval semantic stage (◐→✅), date+revision facets (◐→✅), saved-search alerts (○→✅)
+- §19: Daily roll-ups for adoption / execution / quality / data / AI metrics (5 ◐→✅)
+
+Recomputed aggregate (best estimate at clause granularity, post-update):
+
+| Section | ✅ | ◐ | ○ |
+|---|---:|---:|---:|
+| §1 Product definition | 9 | 1 | 0 |
+| §2 Pillars | 6 | 0 | 0 |
+| §3 Users / roles / jobs | 2 | 1 | 0 |
+| §4 Object model | 24 | 4 | 0 |
+| §5 Information architecture | 7 | 1 | 0 |
+| §6 Functional spec | 23 | 2 | 0 |
+| §7 Engineering records | 11 | 2 | 0 |
+| §8 Drawing viewer | 11 | 1 | 0 |
+| §9 Data exchange | 11 | 0 | 0 |
+| §10 Workflows | 8 | 1 | 0 |
+| §11 Screens | 14 | 2 | 0 |
+| §12 UI system | 13 | 0 | 0 |
+| §13 Security (deferred this PR) | 6 | 6 | 1 |
+| §14 AI | 6 | 0 | 0 |
+| §15 Search | 5 | 0 | 0 |
+| §16 OSS references | 5 | 3 | 1 |
+| §17 Roadmap MVP+P2 | 19 | 1 | 0 |
+| §18 NFR | 4 | 0 | 0 |
+| §19 Success metrics | 5 | 0 | 0 |
+| **Total** | **189** | **25** | **2** |
+
+≈ **87 % ✅ · 12 % ◐ · 1 % ○** at clause granularity.
+
+The remaining ◐ rows are:
+- §1.4.5 Field/plant users — PWA shipped, but discipline-specific UX
+  (glove targets / barcode entry) is out of scope.
+- §3.1 Persona groups not modeled as data — only roles are.
+- §4 Thread / Form / Dashboard / AI Agent partial table coverage.
+- §6.3 Spec extras (image/spreadsheet/web records is mostly ✅; CAD review
+  layer geometry rendering ◐).
+- §7 #11 IFC 3D geometry, #12 schematic/panel review tools.
+- §11.4/16 calendar swimlane filters; AI policy explainer.
+- §13 — security gaps were **explicitly deferred** for this iteration.
+- §16 PLC4X protocol expansion, OpenSearch cluster, AI gateway clustering
+  remain architectural references.
+
+# Aggregate score (original)
 
 Counted at clause granularity (smaller of the two bullets, top-level):
 

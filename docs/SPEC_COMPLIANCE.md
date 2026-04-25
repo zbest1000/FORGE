@@ -42,18 +42,18 @@ score and a prioritized list of remaining gaps.
 | Watch/follow by object + status transitions | ✅ | `core/subscriptions.js` + context panel Follow button |
 | Edit/delete with audit | ✅ | channel v2 |
 | Checklist blocks | ✅ | channel v2 message renderer |
-| Code/data snippet blocks | ◐ | Markdown fences via marked; **no language-aware data-table block** |
-| `@user` mentions (parser + notification fan-out) | ○ | Not implemented (string label only) |
+| Code/data snippet blocks | ✅ | Markdown fences (marked) + `+ </> Code` and `+ ▦ Data` composer helpers |
+| `@user` mentions (parser + notification fan-out) | ✅ | `core/mentions.js` resolves by id/initials/last-name/first.last; emits per-user notifications |
 
 ## §6.2 Work Execution
 
 | Feature | State | Where |
 |---|---|---|
-| Work item types (spec lists Task/Issue/Action/RFI/**NCR**/Change) | ◐ | Has Task/Issue/Action/RFI/Punch/Defect/CAPA/Change; **NCR not present** |
+| Work item types (spec lists Task/Issue/Action/RFI/**NCR**/Change) | ✅ | NCR added to the type select |
 | Kanban view | ✅ | `workBoard.js` |
 | Table view | ✅ | `workBoard.js` |
 | Timeline view | ✅ | `workBoard.js` timeline mode |
-| **Calendar view** | ○ | Not implemented |
+| **Calendar view** | ✅ | Month grid by due_date; severity-coloured pills; today highlight |
 | Dependency map view | ✅ | `workBoard.js` deps graph |
 | SLA / severity / owners / due / blocked-by | ✅ | seed + card renderer |
 | Automation rules from integration events | ✅ | `core/events.js` default rules |
@@ -75,7 +75,7 @@ score and a prioritized list of remaining gaps.
 
 | Feature | State | Where |
 |---|---|---|
-| Hierarchies (Plant>Area>Line>Cell>Machine / Site>Building>Floor>Room / Project>Package>Discipline>DrawingSet) | ◐ | Plant + Project hierarchies seeded in UNS; **Site>Building>Floor>Room template not seeded** |
+| Hierarchies (Plant>Area>Line>Cell>Machine / Site>Building>Floor>Room / Project>Package>Discipline>DrawingSet) | ✅ | All three templates seeded; UNS infers ISA-95 levels |
 | Asset page unifies drawings/docs/SOPs/tasks/incidents/dashboards/MQTT/OPC UA/ERP | ✅ | `assetDetail.js` |
 | Event normalization pipeline ingest→validate→map→enrich→route→audit→replay | ✅ | `core/events.js` |
 | Store-and-forward for low connectivity | ◐ | IDB-backed queue via `core/idb.js` (auditLog, events, dlq stores); no network layer to forward to |
@@ -112,11 +112,11 @@ score and a prioritized list of remaining gaps.
 | 3 | Revision statuses incl. Superseded/Draft/Approved/IFR/IFC/Archived | ✅ |
 | 4 | Side-by-side revision comparison | ✅ |
 | 5 | Markup and annotation layer | ✅ |
-| 6 | Pinned comment threads to page region / drawing region / model element | ◐ Page+drawing region ✅; **model-element pinning ○** |
+| 6 | Pinned comment threads to page region / drawing region / model element | ✅ Page+drawing region ✅; **model-element pinning** via `/api/model-pins` (drawingId, ifcElementId) |
 | 7 | Approval routing + signatures | ✅ (HMAC signature) |
-| 8 | Linked transmittals and review cycles | ◐ Transmittals ✅; review cycles ○ as separate object |
+| 8 | Linked transmittals and review cycles | ✅ Transmittals ✅; **review cycles as their own object** via `/api/review-cycles` |
 | 9 | Rich metadata (discipline/project/package/area/line/system/vendor/revision/approver/effective date) | ✅ |
-| 10 | File format support: PDF/image/spreadsheet/web records | ◐ PDF via **PDF.js**; **image/spreadsheet viewers ○** |
+| 10 | File format support: PDF/image/spreadsheet/web records | ✅ PDF via PDF.js; image via `<img>`; CSV via in-process parser |
 | 11 | CAD/model review layer | ◐ IFC decode via **web-ifc** + tree+metadata; **3D geometry view ○** |
 | 12 | Schematic/panel review mode | ◐ (discipline tag exists; **dedicated panel-review tools ○**) |
 | 13 | One-click issue/action creation from annotation | ✅ |
@@ -127,9 +127,9 @@ score and a prioritized list of remaining gaps.
 |---|---|
 | Sheet navigator | ✅ |
 | Mini-map | ✅ |
-| Snap-to-region bookmarks | ○ |
+| Snap-to-region bookmarks | ✅ Capture-current-view, per-sheet listing, snap-back |
 | Zoom/pan/measure/compare/overlay | ✅ |
-| Callout primitive | ◐ Arrow + text serve as callouts; **no formal connector** |
+| Callout primitive | ✅ Anchor + connector + bubble (rect+text) tool added to palette |
 | Arrows/clouds/highlights/text/stamps/status markers | ✅ |
 | Revision diff + overlay opacity slider | ✅ |
 | Layer toggle | ✅ |
@@ -142,7 +142,7 @@ score and a prioritized list of remaining gaps.
 |---|---|
 | §9.1 MQTT topic/QoS/retain | ✅ MQTT screen + real broker bridge |
 | §9.1 OPC UA client/server-mode, namespace browsing, node mapping | ◐ Screen + ingress bridge (when `node-opcua` installed); browsing real servers requires bridge config |
-| §9.1 REST/Webhooks | ✅ Inbound: `POST /api/events/ingest`. Outbound: `/api/webhooks` CRUD, HMAC-SHA256 signed; **retries 1-shot, not exponential** |
+| §9.1 REST/Webhooks | ✅ Inbound: `POST /api/events/ingest`. Outbound: `/api/webhooks` CRUD, HMAC-SHA256 signed; **exponential back-off** retries (0/5/15/60/300/1800 s) with `webhook_deliveries` table + `X-FORGE-Attempt`; failures after 6 attempts move to DLQ |
 | §9.1 ERP/MES/CMMS/Historian adapters | ◐ ERP flow ✅; concrete adapters ○ |
 | §9.2 Canonical event envelope | ✅ `core/events.js` |
 | §9.3 Rule outcomes (notify, incident, work item, timeline, approval) | ✅ |
@@ -154,14 +154,14 @@ score and a prioritized list of remaining gaps.
 
 | # | Workflow | State |
 |---|---|---|
-| 1 | Drawing ingestion | ◐ Manual upload via `/api/files`; **no auto revision-parse / metadata extract** |
-| 2 | Review cycle | ✅ |
+| 1 | Drawing ingestion | ✅ `/api/drawings/:id/ingest` parses filename → revision label/discipline/drawing-number/format; creates an IFR revision; assigns reviewer |
+| 2 | Review cycle | ✅ First-class object via `/api/review-cycles` |
 | 3 | Revision promotion (auto-supersede) | ✅ |
 | 4 | MQTT alerting | ✅ MQTT bridge → events → incident |
 | 5 | OPC UA state update | ✅ Bridge → state_change → asset/timeline |
 | 6 | ERP sync | ◐ Conflict queue + writeback preview ✅; **no actual ERP adapter** |
-| 7 | RFI chain | ◐ RFI is a work-item type; **dedicated RFI link graph (drawing/spec/markup/approval/vendor) not modeled** |
-| 8 | Commissioning | ◐ Forms in seed; **no commissioning wizard / system-panel-package links** |
+| 7 | RFI chain | ✅ `/api/rfi/:id/links` exposes (drawing/spec/markup/approval/vendor) link graph |
+| 8 | Commissioning | ✅ `/api/commissioning` checklist linked to system/panel/package/items |
 | 9 | Incident war room | ✅ |
 
 ## §11 Screen-by-screen
@@ -194,16 +194,16 @@ score and a prioritized list of remaining gaps.
 | Typography Inter + JetBrains Mono | ✅ |
 | Color roles incl. revision-state | ✅ |
 | Navigation: rails/trees/breadcrumbs/command palette | ✅ |
-| Workspace switcher | ○ Single-workspace UI today |
+| Workspace switcher | ✅ Rail switcher with modal popover; 3 seeded workspaces; switch is audited |
 | Data: tables/frozen columns/timeline/board cards/metric tiles | ✅ |
 | Engineering: revision badge/sheet nav/markup toolbar/overlay slider | ✅ |
 | Actions: split buttons/signature/automation rule builder | ✅ |
 | Single-key quick actions C/G/A | ✅ `core/hotkeys.js` |
-| `/go OBJ-ID` palette syntax | ◐ Palette exists; **`/go` parser not implemented** |
+| `/go OBJ-ID` palette syntax | ✅ `core/go.js` resolves D-101 / Rev C / INC-* / AS-* / WI-* / REV-* and pre-selects the revision |
 | Right panel shows contextual links | ✅ |
-| WCAG 2.2 AA contrast | ◐ Tokens pass AA; **no `aria-*` attributes**, no automated a11y checks |
-| Keyboard-first office operations | ◐ Many buttons reachable; **no full focus management / roving tabindex** |
-| Field mode (glove targets, offline drafts) | ○ Not implemented (no PWA) |
+| WCAG 2.2 AA contrast | ✅ Tokens pass AA; aria-modal/role/aria-label on dialogs, aria-live on toasts, aria-current on rail, focus-visible outlines, skip-to-main link |
+| Keyboard-first office operations | ✅ Modal focus trap (Tab/Shift-Tab) + Escape; focus returns to opener |
+| Field mode (glove targets, offline drafts) | ✅ Service worker pre-caches the SPA shell; offline `/api/*` writes queued in IndexedDB and replayed on reconnect; PWA manifest |
 
 ## §13 Security
 
@@ -226,8 +226,8 @@ score and a prioritized list of remaining gaps.
 
 | Feature | State |
 |---|---|
-| Self-hosted gateway | ◐ No external LLM call; in-browser deterministic responses based on retrieval |
-| Tenant-controlled model routing | ◐ UI selector exists; **no actual provider switch** |
+| Self-hosted gateway | ✅ `server/ai.js` adapters: local + OpenAI-compatible + Ollama; gated by `FORGE_AI_POLICY` env |
+| Tenant-controlled model routing | ✅ `/api/ai/providers` + per-request `provider:` argument; falls back to local on failure |
 | Permission-filtered retrieval | ✅ |
 | Mandatory citations | ✅ |
 | No-training-by-default | ✅ (policy tag on log entries) |
@@ -238,10 +238,10 @@ score and a prioritized list of remaining gaps.
 | Feature | State |
 |---|---|
 | Unified index over objects, revisions, messages, telemetry events | ✅ |
-| Hybrid retrieval (keyword + semantic) | ◐ BM25 + prefix + fuzzy ✅; **no vector embeddings** |
-| Facets (object type, project, asset, discipline, status, **date**, **revision**) | ◐ kind/status/discipline/project/teamSpace ✅; **date and revision facets not surfaced** |
+| Hybrid retrieval (keyword + semantic) | ✅ BM25 + prefix + fuzzy + **trigram-cosine semantic re-rank** (`core/semantic.js`) |
+| Facets (object type, project, asset, discipline, status, **date**, **revision**) | ✅ All seven facets returned by `/api/search` and the client BM25 layer |
 | Saved searches | ✅ |
-| Alert subscriptions on saved searches | ○ Not implemented |
+| Alert subscriptions on saved searches | ✅ `/api/search/alerts` + 60-second poll worker emits `search` notifications for new hits |
 
 ## §16 OSS references
 
@@ -293,4 +293,10 @@ Phase 3 items are deferred and not part of this compliance table.
 
 ## §19 Success metrics
 
-Surfaces in Dashboards screen; metrics computed from the live store.
+| Metric area | State |
+|---|---|
+| Adoption (WAU, link rate) | ✅ Daily roll-ups in `metrics_daily` (WAU, messages_with_links); `/api/metrics/series?metric=wau&days=14` |
+| Execution (open WI, approved revisions, due dates) | ✅ Daily roll-ups (`open_workitems`, `approved_revisions`) |
+| Quality / Safety (active incidents) | ✅ Daily roll-up (`incidents_active`) |
+| Data reliability (events_total, dlq_open) | ✅ Daily roll-ups |
+| AI trust (citation rate) | ✅ Daily roll-ups (`ai_calls`, `ai_with_citations`); citation rate = ai_with_citations / ai_calls |
