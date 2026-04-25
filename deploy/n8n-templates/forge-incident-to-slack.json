@@ -1,0 +1,63 @@
+{
+  "name": "FORGE — Incident → Slack",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "forge-incident",
+        "options": {
+          "rawBody": true,
+          "responseMode": "lastNode"
+        }
+      },
+      "id": "forge-incident-trigger",
+      "name": "FORGE Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "forge-incident"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verify FORGE's HMAC-SHA256 signature against the incoming body.\nconst crypto = require('crypto');\nconst secret = $env.FORGE_WEBHOOK_SECRET || '';\nconst body = items[0].binary?.data ? items[0].binary.data.toString() : JSON.stringify(items[0].json);\nconst sigHeader = items[0].headers?.['x-forge-signature'] || '';\nconst expected = 'sha256=' + crypto.createHmac('sha256', secret).update(body).digest('hex');\nif (!secret) throw new Error('FORGE_WEBHOOK_SECRET not set');\nif (sigHeader !== expected) throw new Error('signature mismatch');\nreturn items;"
+      },
+      "id": "verify-sig",
+      "name": "Verify FORGE Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            { "value1": "={{$json.payload.event_type}}", "operation": "equals", "value2": "alarm" }
+          ]
+        }
+      },
+      "id": "is-alarm",
+      "name": "Is alarm?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "method": "POST",
+        "jsonBody": "={\n  \"text\": `:rotating_light: ${$json.payload.severity} ${$json.payload.event_type}: ${$json.payload.payload?.title || $json.payload.event_id}`\n}",
+        "options": { "timeout": 5000 }
+      },
+      "id": "slack-post",
+      "name": "Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 240]
+    }
+  ],
+  "connections": {
+    "FORGE Webhook":         { "main": [[{ "node": "Verify FORGE Signature", "type": "main", "index": 0 }]] },
+    "Verify FORGE Signature":{ "main": [[{ "node": "Is alarm?",              "type": "main", "index": 0 }]] },
+    "Is alarm?":             { "main": [[{ "node": "Slack",                  "type": "main", "index": 0 }]] }
+  }
+}

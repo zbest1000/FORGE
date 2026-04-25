@@ -20,11 +20,15 @@ services:
       # Enable MQTT bridge by uncommenting (requires the mosquitto service below).
       # FORGE_MQTT_URL: mqtt://mosquitto:1883
       # FORGE_MQTT_TOPICS: "forge/#"
+      # Talk to the n8n service over the internal network.
+      FORGE_N8N_URL: http://n8n:5678
+      FORGE_N8N_API_KEY: ${FORGE_N8N_API_KEY:-}
       LOG_LEVEL: info
     volumes:
       - forge-data:/app/data
     depends_on:
       - mosquitto
+      - n8n
 
   mosquitto:
     image: eclipse-mosquitto:2
@@ -37,7 +41,33 @@ services:
       - mosquitto-data:/mosquitto/data
       - mosquitto-log:/mosquitto/log
 
+  # n8n — workflow automation engine (Sustainable Use License).
+  # 400+ pre-built connectors (SAP/ServiceNow/Slack/SharePoint/etc.) cover
+  # spec §6.2 "Automation rules from integration events". FORGE talks to it
+  # via REST + GraphQL inbound and signed webhooks outbound.
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
+      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-true}
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
+      # Mount our pre-built workflow templates (read-only) so an operator can
+      # import them once n8n is up.
+      N8N_USER_FOLDER: /home/node
+      GENERIC_TIMEZONE: ${TZ:-UTC}
+    volumes:
+      - n8n-data:/home/node/.n8n
+      - ./deploy/n8n-templates:/templates:ro
+
 volumes:
   forge-data:
   mosquitto-data:
   mosquitto-log:
+  n8n-data:

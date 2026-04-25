@@ -13,6 +13,34 @@ or swapped for self-hosted copies without touching call sites.
 
 ## Pinned versions
 
+### Server-side (Node, npm)
+
+| Package | License | Purpose | Spec clause |
+|---|---|---|---|
+| [fastify](https://github.com/fastify/fastify) | MIT | HTTP server | §1.1 |
+| [@fastify/jwt](https://github.com/fastify/fastify-jwt) | MIT | Bearer-token auth | §13.1 |
+| [@fastify/helmet](https://github.com/fastify/fastify-helmet) | MIT | Secure headers | §13 |
+| [@fastify/rate-limit](https://github.com/fastify/fastify-rate-limit) | MIT | Per-user/IP throttle | §13 |
+| [@fastify/multipart](https://github.com/fastify/fastify-multipart) | MIT | File uploads | §7 #10 |
+| [@fastify/static](https://github.com/fastify/fastify-static) | MIT | SPA static serving | §11 |
+| [@fastify/cors](https://github.com/fastify/fastify-cors) | MIT | CORS policy | §13 |
+| [bcryptjs](https://github.com/dcodeIO/bcrypt.js) | MIT | Password hashing | §13.1 |
+| [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | MIT | SQLite + WAL + FTS5 | §1.1, §15 |
+| [mqtt](https://github.com/mqttjs/MQTT.js) | MIT | MQTT bridge | §6.4, §9.1 |
+| [pino](https://github.com/pinojs/pino) | MIT | Structured logs | §18 |
+| [mercurius](https://github.com/mercurius-js/mercurius) | MIT | GraphQL over Fastify | §15 traversal, n8n integration |
+| [graphql](https://github.com/graphql/graphql-js) | MIT | Reference GraphQL runtime | §15 |
+| node-opcua *(optional)* | MIT | OPC UA ingress | §6.4, §9.1 |
+
+### Self-hosted services (docker-compose)
+
+| Image | License | Purpose |
+|---|---|---|
+| [n8nio/n8n](https://github.com/n8n-io/n8n) | **Sustainable Use License** (source-available; free for internal/business use) | Workflow automation engine — 400+ pre-built connectors covering spec §6.2 "Automation rules from integration events" |
+| [eclipse-mosquitto](https://github.com/eclipse/mosquitto) | EPL-2.0 / EDL-1.0 | MQTT broker dev sibling |
+
+### Client-side (browser, ES module import map)
+
 | Package | Version | License | Purpose | Spec clause |
 |---|---|---|---|---|
 | [pdfjs-dist](https://github.com/mozilla/pdf.js) | 4.6.82 | Apache 2.0 | Native PDF rendering in the doc viewer | §7.10, §11.5 |

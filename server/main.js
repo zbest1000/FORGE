@@ -18,6 +18,10 @@ import { resolveToken } from "./tokens.js";
 import { attachSSE } from "./sse.js";
 import { register as registerMetrics } from "./metrics.js";
 
+import mercurius from "mercurius";
+import { typeDefs } from "./graphql/schema.js";
+import { resolvers } from "./graphql/resolvers.js";
+
 import authRoutes from "./routes/auth.js";
 import coreRoutes from "./routes/core.js";
 import i3xRoutes from "./routes/i3x.js";
@@ -26,6 +30,7 @@ import tokenRoutes from "./routes/tokens.js";
 import webhookRoutes from "./routes/webhooks.js";
 import extrasRoutes from "./routes/extras.js";
 import aiRoutes from "./routes/ai.js";
+import automationRoutes from "./routes/automations.js";
 
 import { startMqttBridge } from "./connectors/mqtt.js";
 import { startOpcuaBridge } from "./connectors/opcua.js";
@@ -128,6 +133,19 @@ app.get("/api/health", async () => ({
   ts: new Date().toISOString(),
 }));
 
+// GraphQL — mercurius mounted at /graphql with the same auth context as REST.
+// Use `graphiql: true` only in non-production for the UX and tooling.
+await app.register(mercurius, {
+  schema: typeDefs,
+  resolvers,
+  graphiql: process.env.NODE_ENV !== "production",
+  ide: process.env.NODE_ENV !== "production",
+  context: (request) => ({ user: request.user, tokenScopes: request.tokenScopes || [] }),
+  errorFormatter: (err, ctx) => {
+    return { statusCode: err?.errors?.[0]?.extensions?.http?.status || 200, response: { errors: err?.errors || [], data: err?.data ?? null } };
+  },
+});
+
 await app.register(authRoutes);
 await app.register(coreRoutes);
 await app.register(i3xRoutes);
@@ -136,6 +154,7 @@ await app.register(tokenRoutes);
 await app.register(webhookRoutes);
 await app.register(extrasRoutes);
 await app.register(aiRoutes);
+await app.register(automationRoutes);
 attachSSE(app);
 registerMetrics(app);
 
@@ -160,7 +179,7 @@ await app.register(fStatic, {
 // gets index.html so deep links (`/admin`, `/doc/DOC-1`) work after reload.
 app.setNotFoundHandler((req, reply) => {
   const p = (req.url || "/").split("?")[0];
-  if (p.startsWith("/api/") || p.startsWith("/v1/") || p.startsWith("/metrics")) {
+  if (p.startsWith("/api/") || p.startsWith("/v1/") || p.startsWith("/metrics") || p.startsWith("/graphql")) {
     return reply.code(404).send({ error: "not found", path: p });
   }
   // Paths that look like files (have an extension) should 404 rather than

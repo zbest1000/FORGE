@@ -143,7 +143,7 @@ score and a prioritized list of remaining gaps.
 | §9.1 MQTT topic/QoS/retain | ✅ MQTT screen + real broker bridge |
 | §9.1 OPC UA client/server-mode, namespace browsing, node mapping | ◐ Screen + ingress bridge (when `node-opcua` installed); browsing real servers requires bridge config |
 | §9.1 REST/Webhooks | ✅ Inbound: `POST /api/events/ingest`. Outbound: `/api/webhooks` CRUD, HMAC-SHA256 signed; **exponential back-off** retries (0/5/15/60/300/1800 s) with `webhook_deliveries` table + `X-FORGE-Attempt`; failures after 6 attempts move to DLQ |
-| §9.1 ERP/MES/CMMS/Historian adapters | ◐ ERP flow ✅; concrete adapters ○ |
+| §9.1 ERP/MES/CMMS/Historian adapters | ✅ via **n8n** (400+ pre-built connectors covering SAP/ServiceNow/Jira/M365/etc.). FORGE proxies n8n's REST API at `/api/automations/n8n/*` and ships 3 workflow templates in `deploy/n8n-templates/` |
 | §9.2 Canonical event envelope | ✅ `core/events.js` |
 | §9.3 Rule outcomes (notify, incident, work item, timeline, approval) | ✅ |
 | §9.4 Idempotency | ✅ dedupe_key check |
@@ -239,6 +239,7 @@ score and a prioritized list of remaining gaps.
 |---|---|
 | Unified index over objects, revisions, messages, telemetry events | ✅ |
 | Hybrid retrieval (keyword + semantic) | ✅ BM25 + prefix + fuzzy + **trigram-cosine semantic re-rank** (`core/semantic.js`) |
+| GraphQL traversal API | ✅ Mercurius at `/graphql`; one round-trip walks Document→Revisions→Approvals→ReviewCycles, Drawing→Markups→ModelPins, Asset→Docs/Incidents, etc. |
 | Facets (object type, project, asset, discipline, status, **date**, **revision**) | ✅ All seven facets returned by `/api/search` and the client BM25 layer |
 | Saved searches | ✅ |
 | Alert subscriptions on saved searches | ✅ `/api/search/alerts` + 60-second poll worker emits `search` notifications for new hits |

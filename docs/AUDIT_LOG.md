@@ -139,6 +139,70 @@ and `server/metrics-rollup.js` run as background workers.
   `failed-retry` with the right `next_attempt_at` and recovers when
   the receiver comes up.
 
+## 2026-04-25 — n8n + GraphQL integration
+
+**What**
+Two complementary integrations:
+
+1. **GraphQL** at `/graphql` (Mercurius v16). Reads cover every primary
+   object with deep field resolvers; mutations cover the high-traffic
+   write paths (work item create/update, post message, revision transition
+   with cascade, signed approval decision, event ingest). Auth shares the
+   REST onRequest hook so JWT and `fgt_…` tokens both work.
+2. **n8n** workflow engine bundled via docker-compose, plus a server-side
+   proxy at `/api/automations/n8n/*` so the FORGE Admin can list/activate
+   workflows without holding the n8n API key in the browser. Three
+   ready-to-import templates demonstrate the inbound (n8n→FORGE via REST
+   and GraphQL) and outbound (FORGE→n8n via signed webhooks) patterns.
+
+**Why**
+- Spec §6.2 calls for "Automation rules from integration events". n8n
+  ships with 400+ connectors (SAP, Jira, ServiceNow, Slack, M365,
+  PagerDuty, etc.) — building those individually inside FORGE would
+  duplicate a maintained OSS project.
+- Spec §15 hybrid retrieval and the cross-referenced object graph make
+  per-route REST chatty: a single Doc Viewer load needs 6+ REST calls
+  for revisions, drawings, approvals, review cycles, markups, model pins.
+  GraphQL collapses that into one query and is also the cleanest input
+  for n8n's GraphQL node and the AI tool-calling surface.
+
+**Tech decisions**
+- **Mercurius over apollo-server**: native Fastify v5 plugin, no extra
+  HTTP server, JIT-compiled queries, simple federation path later.
+- **One auth path**: GraphQL context reads `req.user` from the same
+  `onRequest` hook that REST uses (JWT or API token). No new credential
+  surface.
+- **Mutations limited** to the high-value writes; all the bulk CRUD stays
+  REST-only for now to keep the schema audit-able.
+- **n8n proxy not embed**: surfacing n8n via iframe would force CSP
+  relaxation. The proxy + "open in new tab" pattern keeps Helmet's
+  `frame-ancestors 'none'` intact while still giving operators a single
+  pane.
+- **License labelled**: `THIRD_PARTY.md` calls out n8n's Sustainable Use
+  License so adopters review it before deploying.
+
+**Files**
+- new: `server/graphql/schema.js`, `server/graphql/resolvers.js`,
+  `server/connectors/n8n.js`, `server/routes/automations.js`,
+  `deploy/n8n-templates/{forge-incident-to-slack,erp-po-to-workitem,
+  mqtt-alarm-to-incident}.json`, `deploy/n8n-templates/README.md`,
+  `test/graphql.test.js`.
+- modified: `server/main.js` (mercurius register + automations route +
+  SPA fallback whitelists `/graphql`), `src/screens/admin.js`
+  (Automations panel), `docker-compose.yml` (n8n service +
+  templates volume), `.env.example` (FORGE_N8N_URL/API_KEY +
+  N8N_*), `package.json` (mercurius, graphql).
+
+**Verification**
+- `npm test` — 19/19 passing (5 new GraphQL tests).
+- Live against the running server:
+  - `{ document(id:"DOC-1") { revisions { id label status } drawings { name markups { kind } } project { name } teamSpace { name } } }` returns the full tree in one round-trip.
+  - `mutation { createWorkItem(projectId:"PRJ-1", type:"NCR", title:"x") { id status } }` writes a row and audits.
+  - `mutation { transitionRevision(id:"REV-1-B", to:"Approved") { status } }` runs the cascade.
+  - Unauthenticated mutations return `errors[0].extensions.code = "UNAUTHENTICATED"`.
+  - Bad transitions return a structured error with `http.status: 400`.
+  - `/api/automations/n8n/status` returns `{ configured: false, url: null }` when env unset (graceful degrade).
+
 ## 2026-04-25 — Spec gap-closing slice 3: AI routing, semantic re-rank, viewers, callouts, a11y, PWA (24bb027)
 
 **What**

@@ -98,8 +98,28 @@ Outbound deliveries carry `X-FORGE-Signature: sha256=<hex>`, `X-FORGE-Event`, an
 ### i3X (CESMII 1.0-Beta)
 Identical envelope/VQT shapes as the spec and as the browser engine. All 20+ endpoints are mounted under `/v1` — `/info`, `/namespaces`, `/objecttypes`, `/relationshiptypes`, `/objects(/list|/related|/value|/history)`, `/objects/:id/history`, `/objects/:id/value`, `/subscriptions(/register|/unregister|/sync|/list|/delete|/stream)`.
 
-### Health
-`GET /api/health` → `{ status, version, schema_version, uptime_s, ts }`
+### GraphQL
+`POST /graphql` — Mercurius. Read across the whole object graph in one
+round-trip; mutate with `createWorkItem`, `updateWorkItem`, `postMessage`,
+`transitionRevision` (cascades IFR→Approved→IFC + auto-supersede),
+`decideApproval` (HMAC-signed chain-of-custody), `ingestEvent`. Auth is
+the same Bearer header as REST (JWT or `fgt_…` API token). GraphiQL is
+exposed at `/graphiql` when `NODE_ENV !== "production"`.
+
+### Automations (n8n)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET  | `/api/automations/n8n/status`            | `{ configured, url }` |
+| GET  | `/api/automations/n8n/workflows`         | List |
+| GET  | `/api/automations/n8n/workflows/:id`     | Detail |
+| POST | `/api/automations/n8n/workflows/:id/activate`   | Audited |
+| POST | `/api/automations/n8n/workflows/:id/deactivate` | Audited |
+| GET  | `/api/automations/n8n/executions`        | Recent execution log |
+
+The proxy uses `FORGE_N8N_URL` + `FORGE_N8N_API_KEY` from env so the browser
+never holds the n8n key. The bundled `docker-compose.yml` brings up n8n on
+`:5678` and mounts `deploy/n8n-templates/` read-only into the container.
 
 ## Authentication and authorization
 

@@ -3,6 +3,29 @@
 Notable changes to FORGE. See `docs/AUDIT_LOG.md` for the detailed
 engineering log behind each change.
 
+## 0.5.0 — n8n + GraphQL
+
+### Added
+- **GraphQL** at `POST /graphql` (Mercurius). Reads cover every primary
+  object with deep field resolvers (`Document.revisions`, `Drawing.markups`,
+  `Asset.docs`, `Revision.reviewCycles`, …). Mutations: `createWorkItem`,
+  `updateWorkItem`, `postMessage`, `transitionRevision` (with auto-
+  supersede cascade), `decideApproval` (HMAC chain-of-custody),
+  `ingestEvent`. Auth = same Bearer header as REST. GraphiQL at
+  `/graphiql` outside production.
+- **n8n integration** — workflow automation engine bundled in
+  `docker-compose.yml`.
+  - Internal proxy at `/api/automations/n8n/*` (status / list workflows /
+    activate / deactivate / executions); audited.
+  - Admin → "Automations (n8n)" panel renders workflows + activation
+    toggle and deep-links to the n8n UI.
+  - 3 ready-to-import workflow templates in `deploy/n8n-templates/`:
+    `forge-incident-to-slack` (signed-webhook receiver),
+    `erp-po-to-workitem` (GraphQL mutation),
+    `mqtt-alarm-to-incident` (REST event ingest).
+- 5 new tests in `test/graphql.test.js` (auth gating, deep traversal,
+  mutation cascade, introspection sanity).
+
 ## 0.4.0 — Spec gap-closing
 
 ### Added

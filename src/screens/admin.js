@@ -36,6 +36,7 @@ export function renderAdmin() {
     card("RBAC matrix (roles × capabilities)", rbacMatrix()),
     apiMode() === "server" ? card("Server admin — API tokens", apiTokensPanel()) : null,
     apiMode() === "server" ? card("Server admin — Webhooks", webhooksPanel()) : null,
+    apiMode() === "server" ? card("Server admin — Automations (n8n)", automationsPanel()) : null,
     apiMode() === "server" ? card("Server admin — Metrics", metricsPanel()) : null,
     card("Audit ledger", auditPanel()),
     card("Access review", accessReviewPanel(d)),
@@ -138,6 +139,63 @@ function webhooksPanel() {
       } }, ["+ Add"]),
     ]),
   ]);
+}
+
+function automationsPanel() {
+  const root = el("div", { class: "stack" }, [el("div", { class: "tiny muted" }, ["Loading…"])]);
+  const refresh = async () => {
+    try {
+      const status = await api("/api/automations/n8n/status");
+      if (!status.configured) {
+        root.replaceChildren(
+          el("div", { class: "small" }, [
+            "n8n is not configured. Set ", el("code", {}, ["FORGE_N8N_URL"]),
+            " (and optionally ", el("code", {}, ["FORGE_N8N_API_KEY"]), ") then restart the server. ",
+            "The bundled docker-compose stack runs n8n at http://localhost:5678 by default.",
+          ]),
+          el("div", { class: "tiny muted" }, [
+            "Pre-built workflow templates live at deploy/n8n-templates/ (incident → Slack, ERP PO → work item, MQTT alarm → event ingest).",
+          ]),
+        );
+        return;
+      }
+      const wfs = await api("/api/automations/n8n/workflows").catch(() => []);
+      root.replaceChildren(
+        el("div", { class: "row spread" }, [
+          el("div", { class: "tiny muted" }, [`Connected to `, el("code", {}, [status.url || "?"]), ` · ${wfs.length} workflows`]),
+          el("a", {
+            class: "btn sm primary", target: "_blank", rel: "noopener", href: status.url || "#",
+          }, ["Open n8n UI ↗"]),
+        ]),
+        wfs.length
+          ? el("table", { class: "table" }, [
+              el("thead", {}, [el("tr", {}, ["Name","ID","Active",""].map(h => el("th", {}, [h])))]),
+              el("tbody", {}, wfs.map(w => el("tr", {}, [
+                el("td", {}, [w.name || "(unnamed)"]),
+                el("td", { class: "mono tiny" }, [String(w.id || "")]),
+                el("td", {}, [badge(w.active ? "active" : "inactive", w.active ? "success" : "")]),
+                el("td", { class: "row" }, [
+                  el("button", {
+                    class: "btn sm",
+                    onClick: async () => {
+                      try {
+                        await api(`/api/automations/n8n/workflows/${encodeURIComponent(w.id)}/${w.active ? "deactivate" : "activate"}`, { method: "POST" });
+                        toast(`${w.name} ${w.active ? "deactivated" : "activated"}`, "success");
+                        refresh();
+                      } catch (e) { toast(e.message, "danger"); }
+                    },
+                  }, [w.active ? "Deactivate" : "Activate"]),
+                ]),
+              ]))),
+            ])
+          : el("div", { class: "muted tiny" }, ["No workflows yet — open n8n and import templates from deploy/n8n-templates/."]),
+      );
+    } catch (e) {
+      root.replaceChildren(el("div", { class: "muted tiny" }, ["Error: " + e.message]));
+    }
+  };
+  refresh();
+  return root;
 }
 
 function metricsPanel() {
