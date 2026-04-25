@@ -2,8 +2,10 @@ import { el, mount } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { audit } from "../core/audit.js";
+import { portalById, canAccessRoute, isOrgOwner } from "../core/groups.js";
 
-const ITEMS = [
+const DEFAULT_ITEMS = [
+  { icon: "🏛", label: "Hub",      route: "/hub" },
   { icon: "🏠", label: "Home",     route: "/home" },
   { icon: "📥", label: "Inbox",    route: "/inbox" },
   { icon: "🔎", label: "Search",   route: "/search" },
@@ -22,19 +24,37 @@ const ITEMS = [
 
 export function renderRail() {
   const root = document.getElementById("farLeftRail");
-  const path = state.route || "/home";
+  const path = state.route || "/hub";
+  const portal = state.ui.portalId ? portalById(state.ui.portalId) : null;
+
+  // Build the nav list — portal mode shows just that portal's items + a Hub
+  // button so the user can return to the launcher quickly.
+  let items;
+  if (portal) {
+    items = [{ icon: "🏛", label: "Hub", route: "/hub" }, ...portal.items];
+  } else {
+    items = DEFAULT_ITEMS;
+  }
+  // Group-based gating: hide rail items the viewer can't access. Org Owners
+  // bypass and see everything for support purposes.
+  if (!isOrgOwner()) items = items.filter(it => canAccessRoute(it.route));
 
   root.setAttribute("role", "navigation");
   root.setAttribute("aria-label", "Primary navigation");
   mount(root, [
-    el("div", { class: "rail-logo", title: "FORGE", "aria-hidden": "true" }, ["FORGE"]),
+    el("div", {
+      class: "rail-logo",
+      title: portal ? `${portal.label} portal` : "FORGE",
+      "aria-hidden": "true",
+      style: portal ? { background: portal.accent, color: "#0b1220" } : null,
+    }, [portal ? portal.icon : "FORGE"]),
     workspaceSwitcher(),
-    ...ITEMS.map(item =>
+    ...items.map(item =>
       el("button", {
         class: `rail-btn ${matches(path, item.route) ? "active" : ""}`,
         title: item.label,
         "aria-current": matches(path, item.route) ? "page" : null,
-        onClick: () => navigate(item.route),
+        onClick: () => navigate(item.route + (portal ? `?portal=${portal.id}` : "")),
       }, [
         el("span", { class: "rail-icon", "aria-hidden": "true" }, [item.icon]),
         el("span", {}, [item.label]),
@@ -58,9 +78,12 @@ export function renderRail() {
 }
 
 function matches(path, route) {
-  if (route === "/home") return path === "/home";
+  // Strip query string from path for comparison.
+  const p = (path || "").split("?")[0];
+  if (route === "/home") return p === "/home";
+  if (route === "/hub")  return p === "/hub";
   const base = route.split("/")[1];
-  return path.startsWith("/" + base);
+  return p.startsWith("/" + base);
 }
 
 function workspaceSwitcher() {

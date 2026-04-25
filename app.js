@@ -2,7 +2,7 @@
 
 import { buildSeed } from "./src/data/seed.js";
 import { state, initState, subscribe, registerAuditImpl } from "./src/core/store.js";
-import { defineRoute, startRouter, rerenderCurrent } from "./src/core/router.js";
+import { defineRoute, startRouter, rerenderCurrent, onRouteChange } from "./src/core/router.js";
 import { openPalette } from "./src/core/palette.js";
 import { initI3X } from "./src/core/i3x/client.js";
 import { normalizeSeed } from "./src/core/normalize.js";
@@ -11,6 +11,8 @@ import { initAuditLedger } from "./src/core/audit.js";
 import { buildIndex, scheduleRebuild } from "./src/core/search.js";
 import { installHotkeys } from "./src/core/hotkeys.js";
 import { probe, mode, getToken, login, logout, api } from "./src/core/api.js";
+import { canAccessRoute } from "./src/core/groups.js";
+import { el, mount } from "./src/core/ui.js";
 
 import { renderRail } from "./src/shell/rail.js";
 import { renderLeftPanel } from "./src/shell/leftPanel.js";
@@ -19,6 +21,7 @@ import { renderContextPanel } from "./src/shell/contextPanel.js";
 import { renderDock } from "./src/shell/dock.js";
 
 import { renderHome } from "./src/screens/home.js";
+import { renderHub } from "./src/screens/hub.js";
 import { renderInbox } from "./src/screens/inbox.js";
 import { renderSearch } from "./src/screens/search.js";
 import { renderTeamSpacesIndex, renderTeamSpace } from "./src/screens/teamSpaces.js";
@@ -42,6 +45,7 @@ import { renderUNSIndex } from "./src/screens/uns.js";
 import { renderI3X } from "./src/screens/i3x.js";
 
 function setupRoutes() {
+  defineRoute("/hub", renderHub);
   defineRoute("/home", renderHome);
   defineRoute("/inbox", renderInbox);
   defineRoute("/search", renderSearch);
@@ -84,10 +88,30 @@ function setupRoutes() {
 }
 
 function applyTheme() {
-  document.body.className = state.ui.theme === "dark" ? "theme-dark" : "theme-light";
+  const cls = [state.ui.theme === "dark" ? "theme-dark" : "theme-light"];
+  if (state.ui.focusMode) cls.push("focus-mode");
+  if (!state.ui.showLeftPanel) cls.push("hide-left-panel");
+  if (!state.ui.showContextPanel) cls.push("hide-right-panel");
+  if (!state.ui.showRail) cls.push("hide-rail");
+  if (!state.ui.showHeader) cls.push("hide-header");
+  if (state.ui.portalId) cls.push("portal-mode", "portal-" + state.ui.portalId);
+  document.body.className = cls.join(" ");
+}
+
+function applyPortalFromUrl() {
+  // Sync state.ui.portalId from `?portal=...` in the hash. Allows opening
+  // any link with a portal scope and re-rendering the rail/header to match.
+  try {
+    const raw = location.hash.replace(/^#/, "");
+    const q = raw.split("?")[1];
+    const sp = q ? new URLSearchParams(q) : null;
+    const id = sp ? sp.get("portal") : null;
+    if (state.ui.portalId !== id) state.ui.portalId = id || null;
+  } catch { /* noop */ }
 }
 
 function renderShell() {
+  applyPortalFromUrl();
   renderRail();
   renderLeftPanel();
   renderHeader();
@@ -102,6 +126,19 @@ function attachHotkeys() {
       openPalette();
     }
   });
+  // The floating "restore layout" button — only visible when chrome is hidden
+  // (see styles.css). Restores all panels and the header in one click.
+  const restoreBtn = document.getElementById("layoutRestore");
+  if (restoreBtn) {
+    restoreBtn.addEventListener("click", () => {
+      import("./src/core/store.js").then(({ update }) => {
+        update(s => {
+          s.ui.showRail = true; s.ui.showLeftPanel = true; s.ui.showContextPanel = true;
+          s.ui.showHeader = true; s.ui.focusMode = false; s.ui.dockVisible = true;
+        });
+      });
+    });
+  }
 }
 
 async function boot() {
@@ -140,6 +177,34 @@ async function boot() {
       rerenderCurrent();
     }
   }, 1500);
+
+  // Route-level group gating — if a user navigates to a route their groups
+  // don't grant access to (e.g. /admin without IT membership), show a polite
+  // forbidden screen instead of the underlying content.
+  onRouteChange(() => {
+    // Sync layout chrome (rail/header) to the new route's portal id.
+    applyTheme();
+    renderShell();
+
+    const route = (state.route || "").split("?")[0];
+    if (!canAccessRoute(route)) {
+      const root = document.getElementById("screenContainer");
+      if (root) {
+        mount(root, [
+          el("div", { class: "forbidden" }, [
+            el("h2", {}, ["Restricted area"]),
+            el("p", { class: "muted" }, [
+              "This route requires membership in a group you don't currently belong to. ",
+              "Ask an administrator to add you to the appropriate group, or pick a different portal from the Hub.",
+            ]),
+            el("div", { class: "row", style: { justifyContent: "center" } }, [
+              el("button", { class: "btn primary", onClick: () => location.hash = "#/hub" }, ["Go to Hub"]),
+            ]),
+          ]),
+        ]);
+      }
+    }
+  });
 
   startRouter();
   renderShell();

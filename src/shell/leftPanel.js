@@ -2,6 +2,7 @@ import { el, mount } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { openPalette } from "../core/palette.js";
+import { canSeeAsset } from "../core/groups.js";
 
 export function renderLeftPanel() {
   const root = document.getElementById("leftPanel");
@@ -31,7 +32,7 @@ export function renderLeftPanel() {
       route: `/drawing/${dr.id}`,
       label: dr.name,
     })),
-    section("Assets", d.assets || [], a => ({
+    section("Assets", (d.assets || []).filter(canSeeAsset), a => ({
       route: `/asset/${a.id}`,
       label: a.name,
       unread: a.status === "alarm" || a.status === "warning",

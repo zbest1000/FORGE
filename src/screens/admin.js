@@ -15,6 +15,7 @@ import { ROLES } from "../core/permissions.js";
 import { exportAuditPack, verifyLedger, verifyAuditPack } from "../core/audit.js";
 import { canonicalJSON } from "../core/crypto.js";
 import { mode as apiMode, api } from "../core/api.js";
+import { listGroups, currentUserId, effectiveGroupIds, isOrgOwner } from "../core/groups.js";
 
 export function renderAdmin() {
   const root = document.getElementById("screenContainer");
@@ -33,6 +34,7 @@ export function renderAdmin() {
       ])),
       card("Retention & compliance", el("div", { class: "stack" }, retentionEditor(d))),
     ]),
+    card("Groups & memberships", groupsPanel(d), { subtitle: "Hierarchical groups gate portals, routes, and asset assignments." }),
     card("RBAC matrix (roles × capabilities)", rbacMatrix()),
     apiMode() === "server" ? card("Server admin — API tokens", apiTokensPanel()) : null,
     apiMode() === "server" ? card("Server admin — Webhooks", webhooksPanel()) : null,
@@ -368,6 +370,135 @@ function signOff(u) {
 function signOffAll() {
   update(s => { for (const u of (s.data.users || [])) u.reviewedAt = new Date().toISOString(); });
   toast("All users reviewed", "success");
+}
+
+function groupsPanel(d) {
+  const groups = listGroups();
+  const users = d.users || [];
+  const userById = Object.fromEntries(users.map(u => [u.id, u]));
+  // Render parent → children indent.
+  const byParent = new Map();
+  for (const g of groups) {
+    const k = g.parentId || "__root__";
+    if (!byParent.has(k)) byParent.set(k, []);
+    byParent.get(k).push(g);
+  }
+
+  const rows = [];
+  function emit(parentId, depth) {
+    const list = byParent.get(parentId || "__root__") || [];
+    for (const g of list) {
+      rows.push(el("div", { class: `group-row ${depth ? "child" : ""}` }, [
+        el("div", { class: "group-name" }, [
+          el("span", { class: "strong" }, [g.name]),
+          el("span", { class: "tiny muted", style: { marginLeft: "8px" } }, [g.id]),
+          el("div", { class: "group-meta" }, [g.description || ""]),
+        ]),
+        el("div", { class: "row wrap" }, [
+          badge(`${(g.memberIds || []).length} members`, "info"),
+          ...(g.memberIds || []).slice(0, 4).map(uid => badge(userById[uid]?.name || uid, "")),
+        ]),
+        el("button", { class: "btn sm", onClick: () => editGroup(g) }, ["Edit"]),
+      ]));
+      emit(g.id, depth + 1);
+    }
+  }
+  emit(null, 0);
+
+  // "Become user" switcher to make demo testing easy.
+  const me = currentUserId();
+  const userPicker = select(users.map(u => ({ value: u.id, label: `${u.name} (${u.role})` })), {
+    value: me || users[0]?.id,
+    onChange: (e) => {
+      update(s => { s.data.currentUserId = e.target.value; });
+      toast(`Now viewing as ${userById[e.target.value]?.name || e.target.value}`, "info");
+    },
+  });
+
+  return el("div", { class: "stack" }, [
+    el("div", { class: "row wrap" }, [
+      el("span", { class: "tiny muted" }, ["Demo identity:"]),
+      userPicker,
+      el("span", { class: "tiny muted" }, [`Effective groups: ${effectiveGroupIds(me).join(", ") || "(none)"}`]),
+      isOrgOwner() ? badge("Organization Owner — bypasses all group gates", "accent") : null,
+    ]),
+    el("div", { class: "group-tree" }, rows),
+    el("button", { class: "btn sm primary", onClick: () => addGroup() }, ["+ New group"]),
+  ]);
+}
+
+function editGroup(g) {
+  const name = input({ value: g.name });
+  const desc = input({ value: g.description || "" });
+  const parents = listGroups().filter(x => x.id !== g.id);
+  const parent = select([{ value: "", label: "(no parent)" }, ...parents.map(p => ({ value: p.id, label: p.name }))], {
+    value: g.parentId || "",
+  });
+  const users = state.data?.users || [];
+  const memberRows = users.map(u => {
+    const cb = el("input", { type: "checkbox", checked: (g.memberIds || []).includes(u.id) });
+    cb.dataset.uid = u.id;
+    return el("label", { class: "row", style: { gap: "8px", padding: "4px 0" } }, [
+      cb, el("span", {}, [u.name]), el("span", { class: "tiny muted" }, [u.role]),
+    ]);
+  });
+  modal({
+    title: `Edit ${g.name}`,
+    body: el("div", { class: "stack" }, [
+      formRow("Name", name),
+      formRow("Description", desc),
+      formRow("Parent group", parent),
+      el("div", { class: "form-row" }, [
+        el("label", {}, ["Members"]),
+        el("div", { class: "stack", style: { maxHeight: "240px", overflow: "auto", gap: "0" } }, memberRows),
+      ]),
+    ]),
+    actions: [
+      { label: "Cancel" },
+      { label: "Save", variant: "primary", onClick: () => {
+        const memberIds = memberRows.map(r => r.querySelector("input"))
+          .filter(cb => cb.checked).map(cb => cb.dataset.uid);
+        update(s => {
+          const x = s.data.groups.find(y => y.id === g.id);
+          if (!x) return;
+          x.name = name.value;
+          x.description = desc.value;
+          x.parentId = parent.value || null;
+          x.memberIds = memberIds;
+        });
+        toast(`Group ${name.value} saved`, "success");
+      }},
+    ],
+  });
+}
+
+function addGroup() {
+  const name = input({ placeholder: "Group name" });
+  const desc = input({ placeholder: "Description" });
+  const parents = listGroups();
+  const parent = select([{ value: "", label: "(no parent)" }, ...parents.map(p => ({ value: p.id, label: p.name }))]);
+  modal({
+    title: "New group",
+    body: el("div", { class: "stack" }, [
+      formRow("Name", name), formRow("Description", desc), formRow("Parent", parent),
+    ]),
+    actions: [
+      { label: "Cancel" },
+      { label: "Create", variant: "primary", onClick: () => {
+        if (!name.value.trim()) { toast("Name required", "warn"); return false; }
+        update(s => {
+          s.data.groups.push({
+            id: "G-" + Math.random().toString(36).slice(2,7),
+            name: name.value.trim(),
+            description: desc.value,
+            parentId: parent.value || null,
+            memberIds: [],
+          });
+        });
+        toast("Group created", "success");
+      }},
+    ],
+  });
 }
 
 function policyPanel(d) {

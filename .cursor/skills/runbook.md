@@ -143,6 +143,46 @@ When changing audit code, also exercise it from the SPA: the header's
 **Reset** button + any object mutation appends entries; `__forgeSelfTest()`
 in DevTools verifies the in-browser ledger.
 
+### 2.5 Hub, portals, view modes & groups (`src/core/groups.js`, `src/screens/hub.js`)
+
+The default route is now `#/hub` (the FORGE Hub launcher). Each tile opens
+in a new browser tab via `target="_blank"` with `?portal=<id>` appended to
+the hash. In the new tab, `app.js:applyPortalFromUrl()` reads that query
+and sets `state.ui.portalId`, which triggers:
+
+- `body.portal-mode.portal-<id>` classes (CSS accent stripe + chip color).
+- `src/shell/rail.js` filters its nav list to the portal's `items`.
+- The header shows a portal chip and tints with the portal's `accent`.
+
+Hierarchical group gating lives in `src/core/groups.js`:
+
+```js
+import { canAccessRoute, canSeePortal, canSeeAsset, currentUserId,
+         effectiveGroupIds, isOrgOwner } from "./src/core/groups.js";
+canAccessRoute("/admin");        // false unless in G-it (or Org Owner)
+effectiveGroupIds("U-1");         // includes ancestors via parentId chain
+```
+
+To test gates from a specific user without logging in:
+
+1. Navigate to `#/admin` and scroll to **Groups & memberships**.
+2. Use the **Demo identity** dropdown to "become" any seed user.
+3. The role dropdown in the header still overrides via `state.ui.role`,
+   and `Organization Owner` bypasses every gate.
+
+To force portal mode from the URL bar:
+
+```
+http://localhost:3000/#/home?portal=automation
+http://localhost:3000/#/admin?portal=admin
+```
+
+View customization (in the header **View ▾** menu) writes
+`state.ui.{showRail, showLeftPanel, showContextPanel, showHeader,
+focusMode, dockVisible}`. These are persisted in `localStorage` via
+`store.js#persist`. The floating "⛶" button at bottom-left is the escape
+hatch when chrome is fully hidden.
+
 ### 3. Browser SPA — shell, screens, store (`app.js`, `src/`)
 
 No build step. Edit a file, hard-reload the page. Modules are served directly

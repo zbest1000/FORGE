@@ -11,6 +11,13 @@ export const state = {
     theme: "dark",
     dockVisible: true,
     workspaceId: "WS-1",
+    // Layout toggles — let the user reclaim screen real estate.
+    showRail: true,
+    showLeftPanel: true,
+    showContextPanel: true,
+    showHeader: true,
+    focusMode: false,        // true → hide both side panels
+    portalId: null,          // null = default rail; set to a portal id to filter
     selectedTeamSpaceId: null,
     selectedChannelId: null,
     selectedProjectId: null,
