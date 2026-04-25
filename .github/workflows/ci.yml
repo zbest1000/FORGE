@@ -1,0 +1,82 @@
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main, "cursor/**" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+          cache: "npm"
+
+      - name: Install
+        run: npm install --omit=optional --no-audit --no-fund
+
+      - name: Syntax check client + server modules
+        run: |
+          for f in app.js src/core/*.js src/core/i3x/*.js src/shell/*.js src/screens/*.js src/data/*.js server/*.js server/routes/*.js server/connectors/*.js; do
+            node --check "$f"
+          done
+
+      - name: Migrate schema (bare migration path)
+        run: node server/db.js --migrate-only
+
+      - name: Run tests
+        env:
+          FORGE_TENANT_KEY: "ci-tenant-key"
+          FORGE_JWT_SECRET: "ci-jwt-secret"
+        run: npm test
+
+      - name: Boot server and probe /api/health
+        env:
+          FORGE_TENANT_KEY: "ci-tenant-key"
+          FORGE_JWT_SECRET: "ci-jwt-secret"
+        run: |
+          npm run seed
+          node server/main.js &
+          SERVER_PID=$!
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -sS http://localhost:3000/api/health >/dev/null; then
+              echo "server up"
+              break
+            fi
+            sleep 1
+          done
+          curl -sS http://localhost:3000/api/health
+          curl -sS http://localhost:3000/metrics | head -5
+          kill $SERVER_PID
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t forge:ci .
+
+      - name: Run container health check
+        run: |
+          docker run -d --name forge-ci -p 3000:3000 \
+            -e FORGE_JWT_SECRET=ci \
+            -e FORGE_TENANT_KEY=ci \
+            forge:ci
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -sS http://localhost:3000/api/health >/dev/null; then
+              echo "ok"
+              break
+            fi
+            sleep 2
+          done
+          docker logs forge-ci | tail -20
+          curl -sS http://localhost:3000/api/health
+          docker rm -f forge-ci

@@ -62,6 +62,118 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ## 2026-04-24 — FORGE server (Fastify + SQLite + JWT) (cf75400)
 
+## 2026-04-25 — Production hardening
+
+**What**
+Closed most of the remaining server-side gaps. The server is now
+production-oriented: machine auth, file handling, outbound integration,
+observability, hardening, backup/DR, OPC UA ingress, and real route
+tests plus CI.
+
+- API tokens — `server/tokens.js` with SHA-256 storage + `/api/tokens`
+  routes. Format `fgt_<tokenId>_<random>`. Plaintext returned once.
+- Files — `server/routes/files.js` streams multipart uploads while
+  hashing, dedupes on disk under `data/files/<sha256[:2]>/<sha256>`,
+  stores metadata in SQLite, enforces the parent record's ACL on every
+  download, audits each action.
+- ACL — `server/acl.js` `allows(user, acl, capability)` implements spec
+  §13.1 object-level + ABAC-overlay enforcement. Wired into file
+  upload/download/delete.
+- Webhooks — `server/webhooks.js` stores per-hook secrets, signs each
+  delivery with HMAC-SHA256 (`X-FORGE-Signature`), records
+  `last_success_at` / `last_error`. `server/routes/webhooks.js` is
+  admin-gated. Dispatcher is called from `events.ingest()` post-routing.
+- Metrics — `server/metrics.js` exposes Prometheus text format at
+  `/metrics` with counters for HTTP requests, histograms for latency,
+  and gauges for audit and event counts.
+- Hardening — `@fastify/helmet` (CSP with ESM CDN allowlist for the
+  client's import map, HSTS, etc.) and `@fastify/rate-limit` (600
+  req/min per user/IP on API routes, configurable).
+- Backup/restore — `server/backup.js` CLI uses `VACUUM INTO` for an
+  online snapshot + tars `files/`. `npm run backup`, `npm run restore`.
+- OPC UA ingress — `server/connectors/opcua.js`. Imports `node-opcua`
+  lazily; if the optional dependency isn't available the bridge logs a
+  notice and skips so installs don't hard-fail.
+- Schema migration v3 added `api_tokens`, `webhooks`, `user_mfa` tables.
+- Auth hook now accepts both formats: API tokens first, then JWT.
+- SPA fallback serves index.html for any non-API, non-file path so
+  `/admin`, `/doc/DOC-1`, etc. deep-link correctly.
+- Admin screen gained three new panels (only rendered when the client
+  is connected to a server): API token issuance / revocation, webhook
+  CRUD (shows secret exactly once), live `/metrics` snapshot.
+- Tests — `test/routes.test.js` boots Fastify in-process against a
+  fresh DB and covers login, `/api/me`, work-item CRUD, revision
+  transition cascade (IFR → Approved → IFC with auto-supersede), file
+  upload + SHA-256 round-trip, API token lifecycle.
+- CI — `.github/workflows/ci.yml` runs syntax checks, migrations,
+  `npm test`, a live `/api/health` probe, and a Docker build with
+  container-level healthcheck.
+
+**Why**
+Spec §1.1 self-hostable implies ops-grade: observability, rate limit,
+secure headers, signed webhooks, backups, machine auth. These were all
+◐ or ○ in `SPEC_COMPLIANCE.md`. Today's cut moves them to ✅.
+
+**Tech decisions (+ alternatives)**
+- **API tokens** hashed with SHA-256, not bcrypt: lookup must be O(1)
+  indexed. Format prefix (`fgt_`) is a GitHub-style leak tripwire so
+  scanners can detect accidental commits.
+- **Webhooks in-process** rather than a queue worker: the prototype is
+  single-process; a production deployment would move dispatch to a
+  BullMQ/SQS worker without touching the emit-site code. The
+  canonical-JSON signature is already over the body only, so the
+  signing code is portable.
+- **Prometheus text format** hand-rolled: only two metric types needed
+  (counter + histogram). Avoided `prom-client` dependency.
+- **Helmet CSP** must include `https://esm.sh` so the client's import
+  map resolves when served from the same origin. `'unsafe-inline'` is
+  allowed only because the ESM CDN emits tiny inline bootstraps;
+  long-term we'll move to self-hosted vendor bundles and drop it.
+- **Rate limit on API routes only**, skipped for static assets —
+  otherwise the SPA's boot flood trips the limiter on first load.
+- **Backup uses `VACUUM INTO`** not `sqlite3 .backup`: it's built-in,
+  doesn't require a CLI binary in the container, and produces a fully
+  consistent copy.
+- **OPC UA as optional dep**: `node-opcua` has a native binding and
+  long install time. Making it optional keeps `npm install` snappy in
+  CI and dev; production operators opt in explicitly.
+- **SPA fallback**: extension-aware so `/missing.css` still 404s
+  correctly (avoids the classic "every asset serves index.html"
+  regression).
+
+**Files**
+- new: `server/tokens.js`, `server/acl.js`, `server/webhooks.js`,
+  `server/metrics.js`, `server/backup.js`, `server/connectors/opcua.js`,
+  `server/routes/files.js`, `server/routes/tokens.js`,
+  `server/routes/webhooks.js`, `test/routes.test.js`,
+  `.github/workflows/ci.yml`
+- modified: `server/db.js` (schema v3), `server/main.js` (helmet, rate
+  limit, metrics, dual-token auth, SPA fallback fix),
+  `server/events.js` (dispatches webhooks post-routing),
+  `src/screens/admin.js` (3 server-mode panels),
+  `package.json` (new scripts + deps), `docs/SERVER.md`,
+  `docs/SPEC_COMPLIANCE.md`, `docs/CHANGELOG.md`.
+
+**Verification**
+- `npm test` — 8/8 passing (audit: 2 · routes: 6).
+- Live end-to-end smoke (against the running server):
+  - API token create → use → revoke flow flips `/api/me` from 200 → 401
+    as expected.
+  - Webhook created; event ingest fires an outbound POST; failure
+    against `localhost:9999` is recorded as `last_error: "fetch failed"`.
+  - `/metrics` returns valid Prometheus text including per-route
+    counters and latency histograms.
+  - Security headers present: `Content-Security-Policy`, `HSTS`,
+    `X-Content-Type-Options`, `X-Frame-Options`.
+  - File upload `POST /api/files` (multipart) → SHA-256 hashed; list
+    returns it; download returns the exact bytes with
+    `X-Content-SHA256` header.
+  - Backup: `node server/backup.js backup` writes a 18 kB tarball with
+    the VACUUM snapshot and the `files/` directory.
+  - SPA fallback: `/admin`, `/doc/DOC-1` → 200 (index.html);
+    `/nope.css` → 404; `/api/missing` → 404.
+
+
 **What**
 Added the server half of the product. The browser app can now be served
 by a real backend that persists everything in SQLite, signs approval

@@ -7,6 +7,7 @@
 import { db, now, uuid } from "./db.js";
 import { audit } from "./audit.js";
 import { broadcast } from "./sse.js";
+import { dispatchEvent } from "./webhooks.js";
 
 const insertEvent = db.prepare(`
   INSERT INTO events (id, received_at, source, source_type, asset_ref, project_ref, object_refs,
@@ -72,6 +73,8 @@ export function ingest(raw, meta = {}) {
     deadLetter(env, err);
   }
   broadcast("events", env);
+  // Fan out to configured outbound webhooks (signed).
+  try { dispatchEvent(env.event_type, env); } catch { /* best-effort */ }
   return env;
 }
 

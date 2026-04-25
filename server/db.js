@@ -19,7 +19,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -406,6 +406,47 @@ function migrate() {
         CREATE VIRTUAL TABLE IF NOT EXISTS fts_assets    USING fts5(id UNINDEXED, name, hierarchy, type);
       `);
       setVersion(2);
+    }
+
+    // -- v3: API tokens + webhooks + MFA secrets --
+    if (getVersion() < 3) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS api_tokens (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE,
+          scopes TEXT NOT NULL DEFAULT '[]',
+          last_used_at TEXT,
+          expires_at TEXT,
+          revoked_at TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+
+        CREATE TABLE IF NOT EXISTS webhooks (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          url TEXT NOT NULL,
+          events TEXT NOT NULL DEFAULT '[]',
+          secret TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          last_success_at TEXT,
+          last_error TEXT,
+          last_error_at TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS user_mfa (
+          user_id TEXT PRIMARY KEY,
+          totp_secret TEXT,
+          enabled INTEGER NOT NULL DEFAULT 0,
+          recovery_codes TEXT NOT NULL DEFAULT '[]',
+          enrolled_at TEXT
+        );
+      `);
+      setVersion(3);
     }
   })();
 }

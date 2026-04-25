@@ -5,6 +5,8 @@ import jwt from "@fastify/jwt";
 import cors from "@fastify/cors";
 import fStatic from "@fastify/static";
 import multipart from "@fastify/multipart";
+import rateLimit from "@fastify/rate-limit";
+import helmet from "@fastify/helmet";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
@@ -12,13 +14,19 @@ import fs from "node:fs";
 import { db } from "./db.js";
 import { audit } from "./audit.js";
 import { userById } from "./auth.js";
+import { resolveToken } from "./tokens.js";
 import { attachSSE } from "./sse.js";
+import { register as registerMetrics } from "./metrics.js";
 
 import authRoutes from "./routes/auth.js";
 import coreRoutes from "./routes/core.js";
 import i3xRoutes from "./routes/i3x.js";
+import fileRoutes from "./routes/files.js";
+import tokenRoutes from "./routes/tokens.js";
+import webhookRoutes from "./routes/webhooks.js";
 
 import { startMqttBridge } from "./connectors/mqtt.js";
+import { startOpcuaBridge } from "./connectors/opcua.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -42,16 +50,58 @@ await app.register(cors, {
   origin: process.env.FORGE_CORS_ORIGIN ? process.env.FORGE_CORS_ORIGIN.split(",") : true,
   credentials: true,
 });
+// Secure HTTP headers. Permissive CSP for the SPA (needs the ESM CDN for the
+// vendor import map) but locked down for XSS defaults.
+await app.register(helmet, {
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      scriptSrc: ["'self'", "https://esm.sh", "'unsafe-inline'", "'unsafe-eval'"],
+      styleSrc:  ["'self'", "https://esm.sh", "'unsafe-inline'"],
+      imgSrc:    ["'self'", "data:", "blob:", "https:"],
+      connectSrc:["'self'", "https://esm.sh", "https://api.i3x.dev", "ws:", "wss:"],
+      fontSrc:   ["'self'", "https:", "data:"],
+      workerSrc: ["'self'", "blob:", "https://esm.sh"],
+      frameAncestors: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+});
+await app.register(rateLimit, {
+  global: true,
+  max: Number(process.env.FORGE_RATELIMIT_MAX || 600),
+  timeWindow: process.env.FORGE_RATELIMIT_WINDOW || "1 minute",
+  // Don't rate-limit static assets; they're small + cached.
+  skipOnError: true,
+  allowList: (req) => {
+    const p = req.url.split("?")[0];
+    return !(p.startsWith("/api/") || p.startsWith("/v1/"));
+  },
+  keyGenerator: (req) => (req.user?.id || req.ip || "anon"),
+});
 await app.register(jwt, { secret: JWT_SECRET });
 await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } });
 
-// @fastify/jwt already decorates request.user with the decoded token on
-// jwtVerify. We resolve the full DB user in an onRequest hook and store it
-// on req.user, overriding the decoded stub.
+// Auth resolution. Two token formats are accepted:
+//   - JWT bearer  (signed by FORGE_JWT_SECRET; short-lived)
+//   - API token   (long-lived, fgt_…; user-scoped, revocable)
+// The first match wins.
 app.addHook("onRequest", async (req) => {
   const h = req.headers.authorization || "";
   const token = h.startsWith("Bearer ") ? h.slice(7) : (req.query?.token ? String(req.query.token) : null);
   if (!token) { req.user = null; return; }
+
+  // 1) API token (machine clients).
+  if (token.startsWith("fgt_")) {
+    const r = resolveToken(token, userById);
+    req.user = r ? r.user : null;
+    if (r) { req.tokenId = r.tokenId; req.tokenScopes = r.scopes; }
+    return;
+  }
+
+  // 2) JWT bearer (interactive clients).
   try {
     const decoded = app.jwt.verify(token);
     if (decoded?.sub) {
@@ -77,7 +127,11 @@ app.get("/api/health", async () => ({
 await app.register(authRoutes);
 await app.register(coreRoutes);
 await app.register(i3xRoutes);
+await app.register(fileRoutes);
+await app.register(tokenRoutes);
+await app.register(webhookRoutes);
 attachSSE(app);
+registerMetrics(app);
 
 // Serve the static client from the repo root.
 await app.register(fStatic, {
@@ -88,17 +142,25 @@ await app.register(fStatic, {
   decorateReply: false,
 });
 
-// SPA-like fallback: only route `/` to index.html. API paths 404 as JSON.
+// SPA fallback: any non-API, non-file path that missed the static handler
+// gets index.html so deep links (`/admin`, `/doc/DOC-1`) work after reload.
 app.setNotFoundHandler((req, reply) => {
   const p = (req.url || "/").split("?")[0];
-  if (p === "/" || p === "") {
-    return reply.type("text/html").send(fs.readFileSync(path.join(ROOT, "index.html")));
+  if (p.startsWith("/api/") || p.startsWith("/v1/") || p.startsWith("/metrics")) {
+    return reply.code(404).send({ error: "not found", path: p });
   }
-  return reply.code(404).send({ error: "not found", path: p });
+  // Paths that look like files (have an extension) should 404 rather than
+  // serve HTML — prevents broken <img>/<script> from loading index.html.
+  const last = p.split("/").pop() || "";
+  if (last.includes(".")) {
+    return reply.code(404).send({ error: "not found", path: p });
+  }
+  return reply.type("text/html").send(fs.readFileSync(path.join(ROOT, "index.html")));
 });
 
-// Start MQTT bridge (optional).
+// Start optional ingress bridges.
 startMqttBridge(app.log);
+startOpcuaBridge(app.log);
 
 // Record boot in the audit ledger.
 audit({ actor: "system", action: "server.start", subject: "forge", detail: { host: HOST, port: PORT, pid: process.pid } });

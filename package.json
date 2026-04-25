@@ -12,12 +12,16 @@
     "start": "node server/main.js",
     "seed": "node server/seed.js",
     "migrate": "node server/db.js --migrate-only",
-    "test": "node --test test/**/*.test.js"
+    "backup": "node server/backup.js backup",
+    "restore": "node server/backup.js restore",
+    "test": "node --test --test-concurrency=1 test/**/*.test.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
+    "@fastify/helmet": "^12.0.1",
     "@fastify/jwt": "^9.0.3",
     "@fastify/multipart": "^9.0.1",
+    "@fastify/rate-limit": "^10.3.0",
     "@fastify/static": "^8.0.3",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.3.0",

@@ -14,6 +14,7 @@ import { state, update } from "../core/store.js";
 import { ROLES } from "../core/permissions.js";
 import { exportAuditPack, verifyLedger, verifyAuditPack } from "../core/audit.js";
 import { canonicalJSON } from "../core/crypto.js";
+import { mode as apiMode, api } from "../core/api.js";
 
 export function renderAdmin() {
   const root = document.getElementById("screenContainer");
@@ -33,9 +34,118 @@ export function renderAdmin() {
       card("Retention & compliance", el("div", { class: "stack" }, retentionEditor(d))),
     ]),
     card("RBAC matrix (roles × capabilities)", rbacMatrix()),
+    apiMode() === "server" ? card("Server admin — API tokens", apiTokensPanel()) : null,
+    apiMode() === "server" ? card("Server admin — Webhooks", webhooksPanel()) : null,
+    apiMode() === "server" ? card("Server admin — Metrics", metricsPanel()) : null,
     card("Audit ledger", auditPanel()),
     card("Access review", accessReviewPanel(d)),
     card("Policy violations", policyPanel(d)),
+  ]);
+}
+
+// ---------- server admin panels (only in server mode) ----------
+function apiTokensPanel() {
+  const list = el("div", { class: "stack" }, [el("div", { class: "tiny muted" }, ["Loading…"])]);
+  const refresh = async () => {
+    try {
+      const tokens = await api("/api/tokens");
+      if (!tokens.length) { list.replaceChildren(el("div", { class: "muted tiny" }, ["No tokens issued."])); return; }
+      list.replaceChildren(...tokens.map(t => el("div", { class: "activity-row" }, [
+        el("span", { class: "mono tiny" }, [t.id]),
+        el("span", { class: "small", style: { flex: 1 } }, [t.name]),
+        badge((t.scopes || []).join(","), "info"),
+        t.revoked_at ? badge("revoked", "danger") : t.expires_at ? badge(`exp ${new Date(t.expires_at).toLocaleDateString()}`, "warn") : badge("active", "success"),
+        t.revoked_at ? null : el("button", { class: "btn sm danger", onClick: async () => {
+          if (!window.confirm(`Revoke token ${t.id}?`)) return;
+          await api(`/api/tokens/${t.id}`, { method: "DELETE" });
+          refresh();
+        } }, ["Revoke"]),
+      ])));
+    } catch (e) {
+      list.replaceChildren(el("div", { class: "muted tiny" }, ["Error: " + e.message]));
+    }
+  };
+  refresh();
+  const name = input({ placeholder: "Token name", value: "service client" });
+  const ttl = input({ placeholder: "TTL days (blank = no expiry)", value: "" });
+  const scopes = select(["view","integration.read","integration.write","approve","incident.command"]);
+  return el("div", { class: "stack" }, [
+    el("div", { class: "tiny muted" }, ["Long-lived machine bearer tokens. The plaintext is shown once at creation; the server stores only the SHA-256."]),
+    list,
+    el("div", { class: "row wrap" }, [
+      name, scopes, ttl,
+      el("button", { class: "btn sm primary", onClick: async () => {
+        try {
+          const scopesVal = [scopes.value];
+          const body = { name: name.value, scopes: scopesVal };
+          if (ttl.value) body.ttlDays = Number(ttl.value);
+          const r = await api("/api/tokens", { method: "POST", body });
+          modal({
+            title: "Token issued",
+            body: el("div", { class: "stack" }, [
+              el("div", { class: "tiny muted" }, ["Copy this now — it will not be shown again:"]),
+              el("pre", { class: "mono tiny", style: { background: "var(--panel)", padding: "12px", borderRadius: "6px", wordBreak: "break-all" } }, [r.token]),
+            ]),
+            actions: [{ label: "Close" }],
+          });
+          refresh();
+        } catch (e) { toast("Error: " + e.message, "danger"); }
+      } }, ["+ Issue"]),
+    ]),
+  ]);
+}
+
+function webhooksPanel() {
+  const list = el("div", { class: "stack" });
+  const refresh = async () => {
+    try {
+      const whs = await api("/api/webhooks");
+      list.replaceChildren(...(whs.length ? whs.map(w => el("div", { class: "activity-row" }, [
+        el("span", { class: "mono tiny" }, [w.id]),
+        el("div", { class: "stack", style: { flex: 1, gap: "2px" } }, [
+          el("span", { class: "small" }, [w.name]),
+          el("span", { class: "tiny muted" }, [w.url, " · events: ", (w.events || ["*"]).join(",")]),
+          w.last_error ? el("span", { class: "tiny danger-text" }, ["last error: " + w.last_error]) : w.last_success_at ? el("span", { class: "tiny success-text" }, ["ok " + new Date(w.last_success_at).toLocaleString()]) : null,
+        ]),
+        badge(w.enabled ? "enabled" : "disabled", w.enabled ? "success" : ""),
+        el("button", { class: "btn sm", onClick: async () => { await api(`/api/webhooks/${w.id}`, { method: "PATCH", body: { enabled: !w.enabled } }); refresh(); } }, [w.enabled ? "Disable" : "Enable"]),
+        el("button", { class: "btn sm danger", onClick: async () => { if (!window.confirm("Delete webhook?")) return; await api(`/api/webhooks/${w.id}`, { method: "DELETE" }); refresh(); } }, ["×"]),
+      ])) : [el("div", { class: "muted tiny" }, ["No webhooks."])]));
+    } catch (e) { list.replaceChildren(el("div", { class: "muted tiny" }, ["Error: " + e.message])); }
+  };
+  refresh();
+  const name = input({ placeholder: "Webhook name" });
+  const url = input({ placeholder: "https://hook.example/forge" });
+  const events = input({ placeholder: "event types (comma-separated; * for all)", value: "*" });
+  return el("div", { class: "stack" }, [
+    el("div", { class: "tiny muted" }, ["Outbound callbacks carry an X-FORGE-Signature HMAC-SHA256 header and the event type."]),
+    list,
+    el("div", { class: "row wrap" }, [
+      name, url, events,
+      el("button", { class: "btn sm primary", onClick: async () => {
+        try {
+          const r = await api("/api/webhooks", { method: "POST", body: { name: name.value, url: url.value, events: events.value.split(",").map(s => s.trim()).filter(Boolean) } });
+          modal({
+            title: "Webhook created",
+            body: el("div", { class: "stack" }, [
+              el("div", { class: "tiny muted" }, ["Configure the signing secret on your receiver:"]),
+              el("pre", { class: "mono tiny", style: { background: "var(--panel)", padding: "12px", borderRadius: "6px", wordBreak: "break-all" } }, [r.secret || "(unchanged)"]),
+            ]),
+            actions: [{ label: "Close" }],
+          });
+          refresh();
+        } catch (e) { toast("Error: " + e.message, "danger"); }
+      } }, ["+ Add"]),
+    ]),
+  ]);
+}
+
+function metricsPanel() {
+  const target = el("pre", { class: "mono tiny", style: { background: "var(--panel)", padding: "12px", borderRadius: "6px", maxHeight: "260px", overflow: "auto" } }, ["Loading /metrics…"]);
+  fetch("/metrics").then(r => r.text()).then(txt => { target.textContent = txt.split("\n").slice(0, 40).join("\n"); });
+  return el("div", { class: "stack" }, [
+    el("div", { class: "tiny muted" }, ["Prometheus-compatible metrics endpoint. Full output at ", el("code", {}, ["GET /metrics"]), "."]),
+    target,
   ]);
 }
 

@@ -134,7 +134,7 @@ running change history.
 |---|---|
 | §9.1 MQTT topic/QoS/retain | ✅ MQTT screen simulates |
 | §9.1 OPC UA client/server-mode, namespace browsing, node mapping | ✅ OPC UA screen |
-| §9.1 REST/Webhooks | ✅ Integrations console |
+| §9.1 REST/Webhooks | ✅ Inbound: `POST /api/events/ingest`. Outbound: `/api/webhooks` CRUD, HMAC-SHA256 signed (`X-FORGE-Signature`), retries via DLQ |
 | §9.2 Canonical event envelope | ✅ `core/events.js` |
 | §9.3 Rule outcomes (notify, incident, work item, timeline, approval) | ✅ |
 | §9.4 Idempotency | ✅ dedupe_key check |
@@ -270,9 +270,9 @@ Phase 3 items are deferred and not part of this compliance table.
 |---|---|
 | p95 < 200ms navigation | ✅ (measured in self-test; see AUDIT_LOG) |
 | Availability 99.9% | N/A for client prototype |
-| Scalability, telemetry bursts | ◐ (in-process simulation, bounded) |
-| Observability / tracing | ✅ trace_id in events and AI calls |
-| Backup / DR | ○ |
+| Scalability, telemetry bursts | ◐ (MQTT + OPC UA bridges ingest into event pipeline; stress at large scale not yet measured) |
+| Observability / tracing | ✅ trace_id in events and AI calls + Prometheus `/metrics` endpoint (`forge_http_requests_total`, latency histograms, `forge_audit_ledger_entries`, `forge_events_total`) |
+| Backup / DR | ✅ `server/backup.js backup` / `restore` — SQLite `VACUUM INTO` + files/ tarball, `npm run backup` / `npm run restore` |
 
 ## §19 Success metrics
 

@@ -3,6 +3,42 @@
 Notable changes to FORGE. See `docs/AUDIT_LOG.md` for the detailed
 engineering log behind each change.
 
+## 0.3.1 — Production hardening
+
+### Added
+- **API tokens** (`/api/tokens`): long-lived machine bearer credentials
+  (`fgt_…`); SHA-256-stored, plaintext returned once; revocable.
+- **File upload/download** (`/api/files`): multipart upload streamed to a
+  SHA-256-addressed on-disk store; parent-record ACL enforced on download;
+  `X-Content-SHA256` header; soft delete.
+- **Outbound webhooks** (`/api/webhooks`): admin-scoped CRUD; every event
+  emits an HMAC-SHA256 signed callback with `X-FORGE-Signature`,
+  `X-FORGE-Event`, `X-FORGE-Delivery` headers; failures surface in
+  `last_error`.
+- **Prometheus metrics** (`/metrics`): counters + latency histograms +
+  gauges (audit ledger size, event count).
+- **Security hardening**: `@fastify/helmet` (CSP, HSTS, etc.),
+  `@fastify/rate-limit` (600 req/min/user default, configurable).
+- **Object-level ACL helper** (`server/acl.js`) with ABAC overlays (site /
+  discipline / clearance attribute equality).
+- **Backup / restore CLI** (`npm run backup` / `npm run restore`): online
+  SQLite `VACUUM INTO` snapshot + files tarball.
+- **OPC UA ingress bridge** (`server/connectors/opcua.js`): `node-opcua`
+  based, gracefully disabled when the optional dep isn't installed.
+- **SPA fallback** on the server: `/admin`, `/doc/…`, etc. reload into
+  the client deep-linked.
+- **Server admin UI**: Admin screen gains API-token, webhook, and
+  metrics panels (server-mode only).
+- **Route tests** (`test/routes.test.js`): in-process Fastify + fresh DB;
+  covers login, `/api/me`, work-item CRUD, revision cascade, file SHA-256
+  round-trip, API token lifecycle.
+- **CI workflow** (`.github/workflows/ci.yml`): syntax check, migrations,
+  `npm test`, live `/api/health` probe, Docker build + healthcheck.
+
+### Changed
+- `server/main.js` now accepts API tokens (`fgt_…`) and JWTs on the same
+  `Authorization: Bearer` header.
+
 ## 0.3.0 — Server (Fastify + SQLite + JWT)
 
 - Added **server/**: Node.js 20+ Fastify application.
