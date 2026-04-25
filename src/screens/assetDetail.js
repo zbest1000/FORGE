@@ -51,59 +51,68 @@ export function renderAssetDetail({ id }) {
     ]));
   }
 
-  const linkedDocs = (d.documents || []).filter(doc => a.docIds?.includes(doc.id));
+  const linkedProjects = (d.projects || []).filter(p => (a.projectIds || []).includes(p.id) || (p.assetIds || []).includes(a.id));
+  const linkedDocs = scopedAssetDocs(a, linkedProjects);
   const dataSources = (d.dataSources || []).filter(ds => ds.assetId === a.id);
   const incidents = (d.incidents || []).filter(i => i.assetId === a.id);
-  const tasks = (d.workItems || []).filter(w => (w.description || "").includes(a.id));
+  const tasks = (d.workItems || []).filter(w => (w.assetIds || []).includes(a.id) || (w.description || "").includes(a.id));
+  const maintenance = (d.maintenanceItems || []).filter(m => m.assetId === a.id);
+  const site = locationById(a.siteId);
+  const loc = locationById(a.locationId);
 
   mount(root, [
     el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
       el("div", {}, [
         el("div", { class: "strong" }, [a.name]),
-        el("div", { class: "tiny muted" }, [a.hierarchy, " · ", a.id]),
+        el("div", { class: "tiny muted" }, [site?.name || "Unassigned site", " · ", loc?.path || a.hierarchy, " · ", a.id]),
       ]),
       el("div", { class: "row" }, [
         badge(a.status.toUpperCase(), statusVariant(a.status)),
+        badge(`DAQ ${a.daqStatus || "unknown"}`, dataVariant(a.daqStatus)),
+        badge(`Maint ${a.maintenanceStatus || "none"}`, maintenanceVariant(a.maintenanceStatus)),
         el("button", { class: "btn sm danger", disabled: !can("incident.respond"), onClick: () => openWarRoom(a) }, ["🚨 War room"]),
       ]),
     ]),
     el("div", { class: "card-grid" }, [
-      kpi("MQTT topics", (a.mqttTopics || []).length, "", ""),
-      kpi("OPC UA nodes", (a.opcuaNodes || []).length, "", ""),
+      kpi("Projects", linkedProjects.length, "", ""),
       kpi("Linked docs", linkedDocs.length, "", ""),
+      kpi("DAQ sources", dataSources.length, a.daqStatus || "", dataSources.some(ds => ds.status === "stale") ? "down" : "up"),
+      kpi("Maintenance", maintenance.length, a.maintenanceStatus || "", maintenance.some(m => ["open","due"].includes(m.status)) ? "down" : "up"),
       kpi("Open incidents", incidents.filter(i => i.status === "active").length, "", incidents.some(i => i.status === "active") ? "down" : "up"),
     ]),
+
+    card("Enterprise hierarchy", el("div", { class: "stack" }, [
+      el("div", { class: "row wrap" }, [
+        chipText("Enterprise", d.organization?.name || "—"),
+        chipText("Site", site?.name || "—"),
+        chipText("Location", loc?.path || loc?.name || a.hierarchy),
+      ]),
+      linkedProjects.length
+        ? el("div", { class: "row wrap" }, linkedProjects.map(p =>
+            el("button", { class: "btn sm", onClick: () => navigate(`/work-board/${p.id}`) }, [`Project: ${p.name}`])
+          ))
+        : el("div", { class: "tiny muted" }, ["No active project owns this asset. It remains visible through the enterprise asset hierarchy."]),
+    ]), { subtitle: "Assets are mastered by enterprise/site/location. Projects can reference them temporarily." }),
 
     unsCard(a),
 
     el("div", { class: "two-col", style: { marginTop: "16px" } }, [
       card("Telemetry (mock)", telemetry(a)),
-      card("Data source mappings", el("div", { class: "stack" }, [
-        ...dataSources.map(ds => el("div", { class: "activity-row" }, [
-          badge(ds.kind, "info"),
-          el("span", { class: "mono small" }, [ds.endpoint]),
-          el("span", { class: "tiny muted" }, [ds.integrationId]),
-        ])),
-        dataSources.length ? null : el("div", { class: "muted tiny" }, ["No mappings yet."]),
-      ])),
+      card("DAQ / source health", daqPanel(dataSources), { subtitle: "Live, stale, simulated, and disconnected states should remain distinct." }),
     ]),
 
     el("div", { class: "two-col", style: { marginTop: "16px" } }, [
       card(`Linked documents (${linkedDocs.length})`, el("div", { class: "stack" }, linkedDocs.map(doc =>
         el("div", { class: "activity-row", onClick: () => navigate(`/doc/${doc.id}`) }, [
-          badge(doc.discipline, "info"),
+          badge(doc.scope || doc.discipline, doc.scope === "enterprise" ? "purple" : doc.scope === "asset" ? "accent" : "info"),
           el("span", {}, [doc.name]),
           el("span", { class: "tiny muted" }, [doc.id]),
         ])
       ))),
-      card("Incidents", el("div", { class: "stack" }, incidents.map(i =>
-        el("div", { class: "activity-row", onClick: () => navigate(`/incident/${i.id}`) }, [
-          badge(i.severity, "danger"),
-          el("span", {}, [i.title]),
-          badge(i.status, i.status === "active" ? "danger" : "success"),
-        ])
-      ).concat(incidents.length ? [] : [el("div", { class: "muted tiny" }, ["No incidents."])]))),
+      card("Work and maintenance", workMaintenancePanel(tasks, maintenance), { subtitle: "Work items and CMMS-style maintenance orders linked to this asset." }),
     ]),
+
+    card("Asset timeline", assetTimeline(a, { tasks, maintenance, incidents, dataSources, linkedDocs })),
 
     assignmentCard(a),
 
@@ -114,6 +123,70 @@ export function renderAssetDetail({ id }) {
       el("div", { class: "tiny muted" }, ["Citations: AS-1, AS-2, DS-1, DS-3"]),
     ])),
   ]);
+}
+
+function locationById(id) {
+  return (state.data?.locations || []).find(l => l.id === id) || null;
+}
+
+function scopedAssetDocs(asset, projects) {
+  const projectIds = new Set(projects.map(p => p.id));
+  return (state.data.documents || []).filter(doc =>
+    doc.scope === "enterprise" ||
+    (doc.assetIds || []).includes(asset.id) ||
+    (doc.siteId && doc.siteId === asset.siteId) ||
+    (doc.projectId && projectIds.has(doc.projectId)) ||
+    (asset.docIds || []).includes(doc.id)
+  );
+}
+
+function chipText(kind, value) {
+  return el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, [kind]), value || "—"]);
+}
+
+function daqPanel(dataSources) {
+  if (!dataSources.length) return el("div", { class: "muted tiny" }, ["No DAQ mappings yet."]);
+  return el("div", { class: "stack" }, dataSources.map(ds => el("div", { class: "activity-row" }, [
+    badge(ds.status || ds.kind, dataVariant(ds.status || ds.quality)),
+    el("span", { class: "mono tiny" }, [ds.endpoint]),
+    el("span", { class: "tiny muted" }, [ds.lastValue || ds.quality || ds.integrationId]),
+  ])));
+}
+
+function workMaintenancePanel(tasks, maintenance) {
+  const rows = [
+    ...tasks.map(w => ({ kind: w.type, text: `${w.id} · ${w.title}`, state: w.status, variant: w.severity === "high" ? "danger" : "info" })),
+    ...maintenance.map(m => ({ kind: m.source, text: `${m.id} · ${m.title}`, state: `${m.status} · ${m.priority}`, variant: m.priority === "high" ? "danger" : "warn" })),
+  ];
+  if (!rows.length) return el("div", { class: "muted tiny" }, ["No work or maintenance linked."]);
+  return el("div", { class: "stack" }, rows.map(r => el("div", { class: "activity-row" }, [
+    badge(r.kind, "info"),
+    el("span", {}, [r.text]),
+    badge(r.state, r.variant),
+  ])));
+}
+
+function assetTimeline(asset, ctx) {
+  const rows = [
+    ...ctx.linkedDocs.map(doc => ({ ts: revisionTs(doc.currentRevisionId), kind: "Document", text: `${doc.name} current revision`, route: `/doc/${doc.id}` })),
+    ...ctx.tasks.map(w => ({ ts: w.due, kind: w.type, text: `${w.id} · ${w.title}`, route: `/work-board/${w.projectId}` })),
+    ...ctx.maintenance.map(m => ({ ts: m.due, kind: "Maintenance", text: `${m.source} · ${m.title}`, route: null })),
+    ...ctx.incidents.flatMap(i => (i.timeline || []).map(t => ({ ts: t.ts, kind: "Incident", text: `${i.id} · ${t.text}`, route: `/incident/${i.id}` }))),
+    ...ctx.dataSources.map(ds => ({ ts: ds.lastSeen, kind: "DAQ", text: `${ds.endpoint} · ${ds.lastValue || ds.status}`, route: null })),
+  ].filter(r => r.ts).sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts)).slice(-10);
+  if (!rows.length) return el("div", { class: "muted tiny" }, [`No timeline events for ${asset.id}.`]);
+  return el("div", { class: "stack" }, rows.map(r => el(r.route ? "button" : "div", {
+    class: "activity-row",
+    onClick: r.route ? () => navigate(r.route) : null,
+  }, [
+    el("span", { class: "ts" }, [new Date(r.ts).toLocaleDateString()]),
+    el("span", {}, [r.text]),
+    badge(r.kind, "info"),
+  ])));
+}
+
+function revisionTs(revId) {
+  return (state.data.revisions || []).find(r => r.id === revId)?.createdAt || null;
 }
 
 function assignmentCard(a) {
@@ -209,6 +282,19 @@ function openWarRoom(a) {
 
 function statusVariant(s) {
   return s === "alarm" ? "danger" : s === "warning" ? "warn" : s === "offline" ? "" : "success";
+}
+
+function dataVariant(s) {
+  return s === "live" || s === "Good" || s === "connected" ? "success"
+    : s === "stale" || s === "Uncertain" || s === "GoodNoData" ? "warn"
+    : s === "not_connected" || s === "failed" || s === "disconnected" ? "danger"
+    : "info";
+}
+
+function maintenanceVariant(s) {
+  return s === "open" || s === "due" ? "danger"
+    : s === "watch" || s === "planned" || s === "scheduled" ? "warn"
+    : "success";
 }
 
 function unsCard(asset) {

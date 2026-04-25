@@ -27,6 +27,18 @@ export function buildSeed() {
     { id: "WS-3", orgId: "ORG-1", name: "Lab — R&D",      region: "us-west", icon: "🧪" },
   ];
 
+  const locations = [
+    { id: "LOC-ORG", orgId: "ORG-1", name: "Atlas Global", kind: "enterprise", parentId: null, path: "Atlas Industrial Systems" },
+    { id: "SITE-NP", orgId: "ORG-1", workspaceId: "WS-1", name: "North Plant", kind: "site", parentId: "LOC-ORG", path: "Atlas Industrial Systems > North Plant" },
+    { id: "AREA-LA", orgId: "ORG-1", workspaceId: "WS-1", name: "Line A", kind: "production_line", parentId: "SITE-NP", path: "Atlas Industrial Systems > North Plant > Line A" },
+    { id: "CELL-A1", orgId: "ORG-1", workspaceId: "WS-1", name: "Cell 1", kind: "cell", parentId: "AREA-LA", path: "Atlas Industrial Systems > North Plant > Line A > Cell 1" },
+    { id: "CELL-A3", orgId: "ORG-1", workspaceId: "WS-1", name: "Cell 3", kind: "cell", parentId: "AREA-LA", path: "Atlas Industrial Systems > North Plant > Line A > Cell 3" },
+    { id: "SITE-S1", orgId: "ORG-1", workspaceId: "WS-1", name: "Site 1 Utilities", kind: "site", parentId: "LOC-ORG", path: "Atlas Industrial Systems > Site 1 Utilities" },
+    { id: "SITE-S2", orgId: "ORG-1", workspaceId: "WS-2", name: "Site 2", kind: "site", parentId: "LOC-ORG", path: "Atlas Industrial Systems > Site 2" },
+    { id: "PKG-S2-P3", orgId: "ORG-1", workspaceId: "WS-2", name: "Package 3", kind: "project_area", parentId: "SITE-S2", path: "Atlas Industrial Systems > Site 2 > Package 3" },
+    { id: "HQ-B3", orgId: "ORG-1", workspaceId: "WS-3", name: "HQ Building B / Level 3", kind: "facility_floor", parentId: "LOC-ORG", path: "Atlas Industrial Systems > HQ > Building B > Level 3" },
+  ];
+
   const users = [
     { id: "U-1", name: "J. Singh",      role: "Engineer/Contributor",  initials: "JS", groupIds: ["G-eng","G-scada"] },
     { id: "U-2", name: "R. Okafor",     role: "Reviewer/Approver",     initials: "RO", groupIds: ["G-eng"] },
@@ -62,9 +74,9 @@ export function buildSeed() {
   ];
 
   const projects = [
-    { id: "PRJ-1", teamSpaceId: "TS-1", name: "Line A Controls Upgrade", status: "active", dueDate: iso(60*24*14), milestones: ["FAT", "SAT", "Commissioning"] },
-    { id: "PRJ-2", teamSpaceId: "TS-3", name: "Site 2 Expansion — Package 3", status: "active", dueDate: iso(60*24*60), milestones: ["IFR", "IFC", "Handover"] },
-    { id: "PRJ-3", teamSpaceId: "TS-2", name: "Boiler Reliability Initiative", status: "planning", dueDate: iso(60*24*30) },
+    { id: "PRJ-1", teamSpaceId: "TS-1", siteId: "SITE-NP", locationId: "AREA-LA", assetIds: ["AS-1","AS-2"], name: "Line A Controls Upgrade", status: "active", dueDate: iso(60*24*14), milestones: ["FAT", "SAT", "Commissioning"] },
+    { id: "PRJ-2", teamSpaceId: "TS-3", siteId: "SITE-S2", locationId: "PKG-S2-P3", assetIds: ["AS-3"], name: "Site 2 Expansion — Package 3", status: "active", dueDate: iso(60*24*60), milestones: ["IFR", "IFC", "Handover"] },
+    { id: "PRJ-3", teamSpaceId: "TS-2", siteId: "SITE-S1", locationId: "SITE-S1", assetIds: ["AS-4"], name: "Boiler Reliability Initiative", status: "planning", dueDate: iso(60*24*30), milestones: ["Baseline", "PM plan", "Reliability review"] },
   ];
 
   const channels = [
@@ -104,6 +116,9 @@ export function buildSeed() {
       currentRevisionId: "REV-1-B",
       revisionIds: ["REV-1-A","REV-1-B"],
       sensitivity: "internal",
+      scope: "project",
+      siteId: "SITE-NP",
+      assetIds: ["AS-2"],
     },
     {
       id: "DOC-2",
@@ -115,6 +130,9 @@ export function buildSeed() {
       currentRevisionId: "REV-2-C",
       revisionIds: ["REV-2-A","REV-2-B","REV-2-C"],
       sensitivity: "controlled",
+      scope: "project",
+      siteId: "SITE-S2",
+      assetIds: ["AS-3"],
     },
     {
       id: "DOC-3",
@@ -125,6 +143,20 @@ export function buildSeed() {
       currentRevisionId: "REV-3-A",
       revisionIds: ["REV-3-A"],
       sensitivity: "internal",
+      scope: "asset",
+      siteId: "SITE-S1",
+      assetIds: ["AS-1","AS-4"],
+    },
+    {
+      id: "DOC-4",
+      teamSpaceId: "TS-2",
+      name: "Global Lockout / Tagout Standard",
+      kind: "standard",
+      discipline: "Safety",
+      currentRevisionId: "REV-4-A",
+      revisionIds: ["REV-4-A"],
+      sensitivity: "controlled",
+      scope: "enterprise",
     },
   ];
 
@@ -141,6 +173,8 @@ export function buildSeed() {
       summary: "Approved for IFC. Utility crossover line added; valve sizing updated." },
     { id: "REV-3-A", docId: "DOC-3", label: "A", status: "Approved", authorId: "U-4", createdAt: iso(-60*24*20),
       summary: "Baseline SOP." },
+    { id: "REV-4-A", docId: "DOC-4", label: "A", status: "IFC", authorId: "U-4", createdAt: iso(-60*24*120),
+      summary: "Enterprise-wide LOTO standard for service and commissioning." },
   ];
 
   const drawings = [
@@ -174,24 +208,31 @@ export function buildSeed() {
   ];
 
   const assets = [
-    { id: "AS-1", name: "Line A / Cell-3 / HX-01", type: "heat_exchanger", hierarchy: "North Plant > Line A > Cell-3 > HX-01", status: "alarm", mqttTopics: ["line/a1/hx01/temp","line/a1/alarm/high-temp"], opcuaNodes: ["ns=2;s=HX01.Temp"], docIds: ["DOC-3"], assignedUserId: "U-1", assignedGroupId: "G-scada" },
-    { id: "AS-2", name: "Line A / Cell-1 / Feeder A1", type: "motor",      hierarchy: "North Plant > Line A > Cell-1 > Feeder A1", status: "warning", mqttTopics: ["line/a1/feeder/current"], opcuaNodes: ["ns=2;s=Feeder.A1.Current"], docIds: ["DOC-1"], assignedUserId: null, assignedGroupId: "G-scada" },
-    { id: "AS-3", name: "Site 2 / Package 3 / Utility Header", type: "piping", hierarchy: "Site 2 > Package 3 > Utility Header", status: "normal", mqttTopics: [], opcuaNodes: [], docIds: ["DOC-2"], assignedUserId: "U-6", assignedGroupId: "G-eng" },
-    { id: "AS-4", name: "Site 1 / Boiler B-201", type: "boiler", hierarchy: "Site 1 > Utilities > Boiler B-201", status: "normal", mqttTopics: ["site1/utilities/boiler/steam"], opcuaNodes: ["ns=2;s=B201.Steam.P"], docIds: ["DOC-3"], assignedUserId: null, assignedGroupId: "G-ops" },
+    { id: "AS-1", siteId: "SITE-NP", locationId: "CELL-A3", projectIds: ["PRJ-1"], name: "Line A / Cell-3 / HX-01", type: "heat_exchanger", hierarchy: "North Plant > Line A > Cell-3 > HX-01", status: "alarm", opsStatus: "alarm", maintenanceStatus: "watch", daqStatus: "live", mqttTopics: ["line/a1/hx01/temp","line/a1/alarm/high-temp"], opcuaNodes: ["ns=2;s=HX01.Temp"], docIds: ["DOC-3","DOC-4"], assignedUserId: "U-1", assignedGroupId: "G-scada" },
+    { id: "AS-2", siteId: "SITE-NP", locationId: "CELL-A1", projectIds: ["PRJ-1"], name: "Line A / Cell-1 / Feeder A1", type: "motor", hierarchy: "North Plant > Line A > Cell-1 > Feeder A1", status: "warning", opsStatus: "degraded", maintenanceStatus: "planned", daqStatus: "live", mqttTopics: ["line/a1/feeder/current"], opcuaNodes: ["ns=2;s=Feeder.A1.Current"], docIds: ["DOC-1","DOC-4"], assignedUserId: null, assignedGroupId: "G-scada" },
+    { id: "AS-3", siteId: "SITE-S2", locationId: "PKG-S2-P3", projectIds: ["PRJ-2"], name: "Site 2 / Package 3 / Utility Header", type: "piping", hierarchy: "Site 2 > Package 3 > Utility Header", status: "normal", opsStatus: "normal", maintenanceStatus: "none", daqStatus: "not_connected", mqttTopics: [], opcuaNodes: [], docIds: ["DOC-2","DOC-4"], assignedUserId: "U-6", assignedGroupId: "G-eng" },
+    { id: "AS-4", siteId: "SITE-S1", locationId: "SITE-S1", projectIds: ["PRJ-3"], name: "Site 1 / Boiler B-201", type: "boiler", hierarchy: "Site 1 > Utilities > Boiler B-201", status: "normal", opsStatus: "normal", maintenanceStatus: "due", daqStatus: "stale", mqttTopics: ["site1/utilities/boiler/steam"], opcuaNodes: ["ns=2;s=B201.Steam.P"], docIds: ["DOC-3","DOC-4"], assignedUserId: null, assignedGroupId: "G-ops" },
     // Spec §6.4 second hierarchy template: Site > Building > Floor > Room.
-    { id: "AS-5", name: "HQ / Building B / L3 / Server Room",   type: "facility_room",  hierarchy: "HQ > Building B > L3 > Server Room",   status: "normal",  mqttTopics: ["hq/b/3/server/temp"], opcuaNodes: [], docIds: [], assignedUserId: null, assignedGroupId: "G-it" },
-    { id: "AS-6", name: "HQ / Building B / L3 / Test Lab 3-12", type: "lab",            hierarchy: "HQ > Building B > L3 > Test Lab 3-12", status: "normal",  mqttTopics: ["hq/b/3/lab12/temp","hq/b/3/lab12/humidity"], opcuaNodes: [], docIds: [], assignedUserId: null, assignedGroupId: "G-erp" },
+    { id: "AS-5", siteId: "HQ-B3", locationId: "HQ-B3", projectIds: [], name: "HQ / Building B / L3 / Server Room", type: "facility_room", hierarchy: "HQ > Building B > L3 > Server Room", status: "normal", opsStatus: "normal", maintenanceStatus: "none", daqStatus: "live", mqttTopics: ["hq/b/3/server/temp"], opcuaNodes: [], docIds: ["DOC-4"], assignedUserId: null, assignedGroupId: "G-it" },
+    { id: "AS-6", siteId: "HQ-B3", locationId: "HQ-B3", projectIds: [], name: "HQ / Building B / L3 / Test Lab 3-12", type: "lab", hierarchy: "HQ > Building B > L3 > Test Lab 3-12", status: "normal", opsStatus: "normal", maintenanceStatus: "planned", daqStatus: "live", mqttTopics: ["hq/b/3/lab12/temp","hq/b/3/lab12/humidity"], opcuaNodes: [], docIds: ["DOC-4"], assignedUserId: null, assignedGroupId: "G-erp" },
   ];
 
   const workItems = [
-    { id: "WI-101", projectId: "PRJ-1", type: "Task",   title: "Verify terminal wiring A01-W", assigneeId: "U-1", status: "In Progress", severity: "medium", due: iso(60*24*3), blockers: [] },
-    { id: "WI-102", projectId: "PRJ-1", type: "Issue",  title: "Missing terminal strip at TB-3",assigneeId: "U-2", status: "In Review",   severity: "high",   due: iso(60*24*2), blockers: [] },
-    { id: "WI-103", projectId: "PRJ-1", type: "RFI",    title: "Confirm valve tag schema",      assigneeId: "U-2", status: "Open",        severity: "low",    due: iso(60*24*5), blockers: [] },
-    { id: "WI-104", projectId: "PRJ-2", type: "Change", title: "Add emergency vent interlock",  assigneeId: "U-6", status: "Approved",    severity: "high",   due: iso(60*24*10), blockers: [] },
-    { id: "WI-105", projectId: "PRJ-2", type: "Punch",  title: "Tag PSV-14 mismatch",           assigneeId: "U-2", status: "Open",        severity: "medium", due: iso(60*24*7), blockers: [] },
-    { id: "WI-106", projectId: "PRJ-3", type: "CAPA",   title: "Root-cause Boiler-B201 trip",   assigneeId: "U-3", status: "In Progress", severity: "high",   due: iso(60*24*5), blockers: ["WI-104"] },
-    { id: "WI-107", projectId: "PRJ-1", type: "Task",   title: "HMI refresh rate tuning",       assigneeId: "U-1", status: "Backlog",     severity: "low",    due: iso(60*24*14), blockers: [] },
-    { id: "WI-108", projectId: "PRJ-1", type: "Defect", title: "Scan cycle >500ms on PLC-A2",   assigneeId: "U-1", status: "Done",        severity: "medium", due: iso(-60*24*2), blockers: [] },
+    { id: "WI-101", projectId: "PRJ-1", assetIds: ["AS-2"], type: "Task", title: "Verify terminal wiring A01-W", assigneeId: "U-1", status: "In Progress", severity: "medium", due: iso(60*24*3), blockers: [] },
+    { id: "WI-102", projectId: "PRJ-1", assetIds: ["AS-2"], type: "Issue", title: "Missing terminal strip at TB-3", assigneeId: "U-2", status: "In Review", severity: "high", due: iso(60*24*2), blockers: [] },
+    { id: "WI-103", projectId: "PRJ-1", assetIds: ["AS-1","AS-2"], type: "RFI", title: "Confirm valve tag schema", assigneeId: "U-2", status: "Open", severity: "low", due: iso(60*24*5), blockers: [] },
+    { id: "WI-104", projectId: "PRJ-2", assetIds: ["AS-3"], type: "Change", title: "Add emergency vent interlock", assigneeId: "U-6", status: "Approved", severity: "high", due: iso(60*24*10), blockers: [] },
+    { id: "WI-105", projectId: "PRJ-2", assetIds: ["AS-3"], type: "Punch", title: "Tag PSV-14 mismatch", assigneeId: "U-2", status: "Open", severity: "medium", due: iso(60*24*7), blockers: [] },
+    { id: "WI-106", projectId: "PRJ-3", assetIds: ["AS-4"], type: "CAPA", title: "Root-cause Boiler-B201 trip", assigneeId: "U-3", status: "In Progress", severity: "high", due: iso(60*24*5), blockers: ["WI-104"] },
+    { id: "WI-107", projectId: "PRJ-1", assetIds: ["AS-1","AS-2"], type: "Task", title: "HMI refresh rate tuning", assigneeId: "U-1", status: "Backlog", severity: "low", due: iso(60*24*14), blockers: [] },
+    { id: "WI-108", projectId: "PRJ-1", assetIds: ["AS-2"], type: "Defect", title: "Scan cycle >500ms on PLC-A2", assigneeId: "U-1", status: "Done", severity: "medium", due: iso(-60*24*2), blockers: [] },
+  ];
+
+  const maintenanceItems = [
+    { id: "MX-1001", source: "MaintainX", assetId: "AS-2", projectId: "PRJ-1", type: "PM", title: "Inspect Feeder A1 bearings before SAT", status: "scheduled", priority: "medium", due: iso(60*24*4), ownerId: "U-3" },
+    { id: "MX-1002", source: "MaintainX", assetId: "AS-1", projectId: "PRJ-1", type: "Corrective", title: "Investigate HX-01 high-temp alarm trend", status: "open", priority: "high", due: iso(60*18), ownerId: "U-3" },
+    { id: "MX-1003", source: "SAP PM", assetId: "AS-4", projectId: "PRJ-3", type: "Inspection", title: "Boiler B-201 annual burner inspection", status: "due", priority: "high", due: iso(60*24*5), ownerId: "U-3" },
+    { id: "MX-1004", source: "UpKeep", assetId: "AS-6", projectId: null, type: "Calibration", title: "Lab humidity sensor calibration", status: "scheduled", priority: "low", due: iso(60*24*20), ownerId: "U-5" },
   ];
 
   const incidents = [
@@ -232,10 +273,11 @@ export function buildSeed() {
   ];
 
   const dataSources = [
-    { id: "DS-1", integrationId: "INT-MQTT", endpoint: "line/a1/#",                 assetId: "AS-1", kind: "topic" },
-    { id: "DS-2", integrationId: "INT-MQTT", endpoint: "line/a1/feeder/current",    assetId: "AS-2", kind: "topic" },
-    { id: "DS-3", integrationId: "INT-OPCUA", endpoint: "ns=2;s=HX01.Temp",         assetId: "AS-1", kind: "node"  },
-    { id: "DS-4", integrationId: "INT-ERP",   endpoint: "PurchaseOrder",            assetId: null,   kind: "entity"},
+    { id: "DS-1", integrationId: "INT-MQTT", endpoint: "line/a1/#", assetId: "AS-1", projectId: "PRJ-1", kind: "topic", status: "live", quality: "Good", lastValue: "112.3 degC", lastSeen: iso(-2) },
+    { id: "DS-2", integrationId: "INT-MQTT", endpoint: "line/a1/feeder/current", assetId: "AS-2", projectId: "PRJ-1", kind: "topic", status: "live", quality: "Good", lastValue: "112% FLA", lastSeen: iso(-5) },
+    { id: "DS-3", integrationId: "INT-OPCUA", endpoint: "ns=2;s=HX01.Temp", assetId: "AS-1", projectId: "PRJ-1", kind: "node", status: "live", quality: "Uncertain", lastValue: "111.8 degC", lastSeen: iso(-4) },
+    { id: "DS-4", integrationId: "INT-ERP", endpoint: "PurchaseOrder", assetId: null, projectId: "PRJ-2", kind: "entity", status: "connected", quality: "Good", lastValue: "3 open POs", lastSeen: iso(-30)},
+    { id: "DS-5", integrationId: "INT-OPCUA", endpoint: "ns=2;s=B201.Steam.P", assetId: "AS-4", projectId: "PRJ-3", kind: "node", status: "stale", quality: "GoodNoData", lastValue: "10.8 bar", lastSeen: iso(-180) },
   ];
 
   const dashboards = [
@@ -265,6 +307,7 @@ export function buildSeed() {
     organization,
     workspace,
     workspaces,
+    locations,
     users,
     groups,
     currentUserId,
@@ -279,6 +322,7 @@ export function buildSeed() {
     markups,
     assets,
     workItems,
+    maintenanceItems,
     incidents,
     approvals,
     forms,

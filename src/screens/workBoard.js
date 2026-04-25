@@ -48,6 +48,7 @@ export function renderWorkBoard({ id }) {
 
   mount(root, [
     header(project, view, filter, items.length, batch, viewKey, filterKey, batchKey, id),
+    projectContext(project, items),
     batchBar(batch, batchKey, id),
     view === "kanban"   ? kanbanView(items, batch, batchKey) :
     view === "table"    ? tableView(items, batch, batchKey) :
@@ -57,6 +58,136 @@ export function renderWorkBoard({ id }) {
     kanbanView(items, batch, batchKey),
     automationCard(project, id),
   ]);
+}
+
+function projectContext(project, items) {
+  const d = state.data;
+  const site = locationById(project.siteId);
+  const loc = locationById(project.locationId);
+  const projectAssets = linkedProjectAssets(project);
+  const projectDocs = scopedProjectDocs(project, projectAssets);
+  const dataSources = (d.dataSources || []).filter(ds => ds.projectId === project.id || projectAssets.some(a => a.id === ds.assetId));
+  const maintenance = (d.maintenanceItems || []).filter(m => m.projectId === project.id || projectAssets.some(a => a.id === m.assetId));
+  const incidents = (d.incidents || []).filter(i => projectAssets.some(a => a.id === i.assetId));
+  return el("div", { class: "stack project-context", style: { marginBottom: "16px" } }, [
+    card("Enterprise context", el("div", { class: "stack" }, [
+      el("div", { class: "row wrap" }, [
+        chipText("Enterprise", d.organization?.name || "—"),
+        chipText("Site", site?.name || "—"),
+        chipText("Location", loc?.path || loc?.name || "—"),
+        chipText("Project assets", String(projectAssets.length)),
+      ]),
+      el("div", { class: "tiny muted" }, ["Assets live in the enterprise/site hierarchy; projects reference the assets they affect without owning the asset master."]),
+    ])),
+    el("div", { class: "three-col" }, [
+      card(`Linked assets (${projectAssets.length})`, assetList(projectAssets)),
+      card(`Documents (${projectDocs.length})`, documentList(projectDocs)),
+      card("DAQ / connector status", daqList(dataSources)),
+    ]),
+    el("div", { class: "two-col", style: { marginTop: "16px" } }, [
+      card(`Maintenance (${maintenance.length})`, maintenanceList(maintenance)),
+      card("Project timeline", projectTimeline(project, { items, projectDocs, projectAssets, maintenance, incidents, dataSources })),
+    ]),
+  ]);
+}
+
+function locationById(id) {
+  return (state.data?.locations || []).find(l => l.id === id) || null;
+}
+
+function linkedProjectAssets(project) {
+  const ids = new Set(project.assetIds || []);
+  return (state.data.assets || []).filter(a => ids.has(a.id) || (a.projectIds || []).includes(project.id));
+}
+
+function scopedProjectDocs(project, assets) {
+  const assetIds = new Set(assets.map(a => a.id));
+  return (state.data.documents || []).filter(doc =>
+    doc.scope === "enterprise" ||
+    doc.projectId === project.id ||
+    doc.siteId === project.siteId ||
+    (doc.assetIds || []).some(id => assetIds.has(id))
+  );
+}
+
+function chipText(kind, value) {
+  return el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, [kind]), value || "—"]);
+}
+
+function assetList(assets) {
+  if (!assets.length) return el("div", { class: "muted tiny" }, ["No assets explicitly linked to this project."]);
+  return el("div", { class: "stack" }, assets.map(a => el("button", {
+    class: "activity-row",
+    onClick: () => navigate(`/asset/${a.id}`),
+  }, [
+    badge(a.status.toUpperCase(), statusVariant(a.status)),
+    el("span", {}, [a.name]),
+    el("span", { class: "tiny muted" }, [a.maintenanceStatus || "—"]),
+  ])));
+}
+
+function documentList(docs) {
+  if (!docs.length) return el("div", { class: "muted tiny" }, ["No scoped documents."]);
+  return el("div", { class: "stack" }, docs.map(doc => el("button", {
+    class: "activity-row",
+    onClick: () => navigate(`/doc/${doc.id}`),
+  }, [
+    badge(doc.scope || "project", doc.scope === "enterprise" ? "purple" : doc.scope === "asset" ? "accent" : "info"),
+    el("span", {}, [doc.name]),
+    el("span", { class: "tiny muted" }, [doc.discipline || doc.kind || doc.id]),
+  ])));
+}
+
+function daqList(sources) {
+  if (!sources.length) return el("div", { class: "muted tiny" }, ["No DAQ mappings linked to this project."]);
+  return el("div", { class: "stack" }, sources.map(ds => el("div", { class: "activity-row" }, [
+    badge(ds.status || ds.kind, dataVariant(ds.status || ds.quality)),
+    el("span", { class: "mono tiny" }, [ds.endpoint]),
+    el("span", { class: "tiny muted" }, [ds.lastValue || ds.kind]),
+  ])));
+}
+
+function maintenanceList(items) {
+  if (!items.length) return el("div", { class: "muted tiny" }, ["No maintenance items linked."]);
+  return el("div", { class: "stack" }, items.map(m => el("div", { class: "activity-row" }, [
+    badge(m.source, "purple"),
+    el("span", {}, [m.title]),
+    badge(`${m.status} · ${m.priority}`, m.priority === "high" ? "danger" : m.priority === "medium" ? "warn" : "info"),
+  ])));
+}
+
+function projectTimeline(project, ctx) {
+  const rows = [
+    ...ctx.projectDocs.map(doc => ({ ts: revisionTs(doc.currentRevisionId), kind: "Document", text: `${doc.name} current revision`, route: `/doc/${doc.id}` })),
+    ...ctx.items.map(w => ({ ts: w.due, kind: w.type, text: `${w.id} · ${w.title}`, route: null })),
+    ...ctx.maintenance.map(m => ({ ts: m.due, kind: "Maintenance", text: `${m.source} · ${m.title}`, route: `/asset/${m.assetId}` })),
+    ...ctx.incidents.flatMap(i => (i.timeline || []).map(t => ({ ts: t.ts, kind: "Incident", text: `${i.id} · ${t.text}`, route: `/incident/${i.id}` }))),
+    ...ctx.dataSources.map(ds => ({ ts: ds.lastSeen, kind: "DAQ", text: `${ds.endpoint} · ${ds.lastValue || ds.status}`, route: ds.assetId ? `/asset/${ds.assetId}` : null })),
+  ].filter(r => r.ts).sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts)).slice(-8);
+  if (!rows.length) return el("div", { class: "muted tiny" }, ["No timeline events yet."]);
+  return el("div", { class: "stack" }, rows.map(r => el(r.route ? "button" : "div", {
+    class: "activity-row",
+    onClick: r.route ? () => navigate(r.route) : null,
+  }, [
+    el("span", { class: "ts" }, [new Date(r.ts).toLocaleDateString()]),
+    el("span", {}, [r.text]),
+    badge(r.kind, "info"),
+  ])));
+}
+
+function revisionTs(revId) {
+  return (state.data.revisions || []).find(r => r.id === revId)?.createdAt || null;
+}
+
+function statusVariant(s) {
+  return s === "alarm" ? "danger" : s === "warning" ? "warn" : s === "offline" ? "" : "success";
+}
+
+function dataVariant(s) {
+  return s === "live" || s === "Good" || s === "connected" ? "success"
+    : s === "stale" || s === "Uncertain" || s === "GoodNoData" ? "warn"
+    : s === "not_connected" || s === "failed" ? "danger"
+    : "info";
 }
 
 function header(project, view, filter, count, batch, viewKey, filterKey, batchKey, id) {
