@@ -16,6 +16,7 @@ import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { signHMAC, canonicalJSON } from "../core/crypto.js";
 import { recentEvents } from "../core/events.js";
+import { canTransitionIncident, INCIDENT_STATUSES } from "../core/fsm/incident.js";
 
 export function renderIncidentsIndex() {
   const root = document.getElementById("screenContainer");
@@ -355,11 +356,16 @@ function changeSeverity(inc) {
 }
 
 function changeStatus(inc) {
-  const next = window.prompt("New status (active / escalated / stabilized / resolved / postmortem):", inc.status);
+  const next = window.prompt("New status (" + INCIDENT_STATUSES.join(" / ") + "):", inc.status);
   if (!next) return;
+  if (!canTransitionIncident(inc.status, next)) {
+    toast(`Cannot transition incident from ${inc.status} → ${next}`, "warn");
+    return;
+  }
   update(s => {
     const i = s.data.incidents.find(x => x.id === inc.id);
-    if (i) i.status = next;
+    if (!i) return;
+    i.status = next;
     if (next === "resolved") i.resolvedAt = new Date().toISOString();
     i.timeline = i.timeline || [];
     i.timeline.push({ ts: new Date().toISOString(), actor: s.ui.role, text: `Status changed to ${next}.` });

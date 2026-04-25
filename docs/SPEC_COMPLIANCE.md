@@ -64,8 +64,8 @@ score and a prioritized list of remaining gaps.
 | Feature | State | Where |
 |---|---|---|
 | Native doc viewer | ✅ | `docViewer.js` v2 |
-| Revision lifecycle Draft/IFR/Approved/IFC/Superseded/Archived | ✅ | `core/revisions.js` state machine |
-| Auto-supersede | ✅ | `revisions.transition` side effect |
+| Revision lifecycle Draft/IFR/Approved/IFC/Superseded/Archived | ✅ | **xstate v5** machine in `src/core/fsm/revision.js`; one source of truth shared across client UI + REST + GraphQL |
+| Auto-supersede | ✅ | `revisions.transition` side effect; cascade rule lives in `src/core/fsm/revision.js cascadeOnApprove()` |
 | Revision compare side-by-side + overlay + metadata diff | ✅ | `revisionCompare.js` |
 | Markup with anchored threads and issue creation | ✅ | drawing v2 + doc v2 |
 | Approval routing with signer identity and timestamp | ✅ | `approvals.js` + `core/crypto.js` HMAC signature |

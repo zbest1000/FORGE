@@ -5,6 +5,8 @@ import { db, now, uuid, jsonOrDefault } from "../db.js";
 import { audit } from "../audit.js";
 import { can, require_, listUsers, userById, CAPABILITIES } from "../auth.js";
 import { broadcast } from "../sse.js";
+import { canTransitionRevision, cascadeOnApprove } from "../../src/core/fsm/revision.js";
+import { canTransitionApproval } from "../../src/core/fsm/approval.js";
 
 function mapRowJson(row, fields) {
   const out = { ...row };
@@ -93,8 +95,9 @@ export default async function coreRoutes(fastify) {
     const { to, notes = "" } = req.body || {};
     const rev = db.prepare("SELECT * FROM revisions WHERE id = ?").get(req.params.id);
     if (!rev) return reply.code(404).send({ error: "not found" });
-    const ALLOWED = { Draft: ["IFR","Archived"], IFR: ["Approved","Rejected","Draft","Archived"], Approved: ["IFC","Rejected","Archived"], IFC: ["Superseded","Archived"], Rejected: ["Draft","Archived"], Superseded: [], Archived: [] };
-    if (!(ALLOWED[rev.status] || []).includes(to)) return reply.code(400).send({ error: `cannot transition ${rev.status} → ${to}` });
+    if (!canTransitionRevision(rev.status, to)) {
+      return reply.code(400).send({ error: `cannot transition ${rev.status} → ${to}` });
+    }
 
     db.transaction(() => {
       db.prepare("UPDATE revisions SET status = ?, updated_at = ? WHERE id = ?").run(to, now(), rev.id);
@@ -188,6 +191,9 @@ export default async function coreRoutes(fastify) {
     if (!["approved","rejected"].includes(outcome)) return reply.code(400).send({ error: "outcome must be approved|rejected" });
     const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
+    if (!canTransitionApproval(row.status, outcome)) {
+      return reply.code(400).send({ error: `cannot decide approval in status '${row.status}' → '${outcome}'` });
+    }
     const { signHMAC, canonicalJSON } = await import("../crypto.js");
     const payload = { approvalId: row.id, subject: { kind: row.subject_kind, id: row.subject_id }, outcome, notes, signer: req.user.id, ts: now() };
     const sig = await signHMAC(canonicalJSON(payload));
@@ -197,14 +203,14 @@ export default async function coreRoutes(fastify) {
       .run(outcome, notes, req.user.id, payload.ts, JSON.stringify(sig), JSON.stringify(chain), now(), row.id);
     audit({ actor: req.user.id, action: outcome === "approved" ? "approval.sign" : "approval.reject", subject: row.id, detail: { signature: sig.signature.slice(0, 12) } });
 
-    // Cascade: promote revision.
+    // Cascade: promote revision through the FSM-defined sequence
+    // (IFR → Approved → IFC). cascadeOnApprove() lives in
+    // src/core/fsm/revision.js so client + server agree.
     if (row.subject_kind === "Revision" && outcome === "approved") {
       const rev = db.prepare("SELECT * FROM revisions WHERE id = ?").get(row.subject_id);
       if (rev) {
-        let to = null;
-        if (rev.status === "IFR") to = "Approved";
-        else if (rev.status === "Approved") to = "IFC";
-        if (to) {
+        const to = cascadeOnApprove(rev.status);
+        if (to && canTransitionRevision(rev.status, to)) {
           // reuse transition logic via HTTP would be overkill; do it inline.
           db.prepare("UPDATE revisions SET status = ?, updated_at = ? WHERE id = ?").run(to, now(), rev.id);
           if (to === "IFC") {

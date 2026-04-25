@@ -17,6 +17,7 @@ import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { signHMAC, canonicalJSON } from "../core/crypto.js";
 import { transition } from "../core/revisions.js";
+import { cascadeOnApprove } from "../core/fsm/revision.js";
 
 export function renderApprovals() {
   const root = document.getElementById("screenContainer");
@@ -239,14 +240,15 @@ async function finalize(a, outcome, notes) {
   });
   const ent = audit(outcome === "approved" ? "approval.sign" : "approval.reject", a.id, { outcome, signature: sig.signature.slice(0, 12), keyId: sig.keyId });
 
-  // Cascade: approving a revision promotes its lifecycle.
+  // Cascade through the FSM-defined sequence (IFR → Approved → IFC).
   if (a.subject.kind === "Revision" && outcome === "approved") {
     const r = getById("revisions", a.subject.id);
     if (r) {
-      try {
-        if (r.status === "IFR") transition(r.id, "Approved", { via: a.id });
-        else if (r.status === "Approved") transition(r.id, "IFC", { via: a.id });
-      } catch (e) { /* unreachable transition — logged by revisions */ }
+      const target = cascadeOnApprove(r.status);
+      if (target) {
+        try { transition(r.id, target, { via: a.id }); }
+        catch { /* logged by core/revisions */ }
+      }
     }
   }
   if (a.subject.kind === "Revision" && outcome === "rejected") {

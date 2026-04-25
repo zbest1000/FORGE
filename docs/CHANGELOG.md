@@ -3,6 +3,20 @@
 Notable changes to FORGE. See `docs/AUDIT_LOG.md` for the detailed
 engineering log behind each change.
 
+## 0.5.2 — xstate FSMs (revision / approval / incident)
+
+### Added / Changed
+- Three formal state machines in `src/core/fsm/{revision,approval,incident}.js`
+  using **xstate v5** (MIT). One source of truth shared across the
+  client UI, REST routes, and GraphQL resolvers.
+- Refactored `src/core/revisions.js`, `src/screens/approvals.js`,
+  `src/screens/incident.js`, `server/routes/core.js`,
+  `server/graphql/resolvers.js` to delegate transition rules to the
+  FSMs (was 9 hand-typed sites with subtle drift).
+- 12 new FSM tests in `test/fsm.test.js`.
+- Reversed the philosophy doc's earlier "xstate overkill" decision and
+  added the **re-walk-the-matrix-when-rules-spread-to-3+-files** lesson.
+
 ## 0.5.1 — Engineering Philosophy + canonical OSS swaps
 
 ### Added

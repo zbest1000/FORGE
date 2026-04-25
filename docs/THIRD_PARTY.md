@@ -31,6 +31,7 @@ or swapped for self-hosted copies without touching call sites.
 | [mercurius](https://github.com/mercurius-js/mercurius) | MIT | GraphQL over Fastify | §15 traversal, n8n integration |
 | [graphql](https://github.com/graphql/graphql-js) | MIT | Reference GraphQL runtime | §15 |
 | [prom-client](https://github.com/siimon/prom-client) | Apache-2.0 | Prometheus metrics + Node process metrics | §18 |
+| [xstate](https://github.com/statelyai/xstate) | MIT | Revision / approval / incident lifecycle state machines (one source of truth across client + REST + GraphQL) | §6.3, §11.13, §11.14 |
 | node-opcua *(optional)* | MIT | OPC UA ingress | §6.4, §9.1 |
 
 ### Self-hosted services (docker-compose)
@@ -47,6 +48,7 @@ or swapped for self-hosted copies without touching call sites.
 | [pdfjs-dist](https://github.com/mozilla/pdf.js) | 4.6.82 | Apache 2.0 | Native PDF rendering in the doc viewer | §7.10, §11.5 |
 | [papaparse](https://github.com/mholt/PapaParse) | 5.4.1 | MIT | CSV parsing in the doc viewer (de-facto browser CSV) | §7.10 |
 | [workbox-sw](https://github.com/GoogleChrome/workbox) | 7.1.0 | MIT | Service worker routing + BackgroundSync queue (offline drafts) | §12.5 |
+| [xstate](https://github.com/statelyai/xstate) | 5.30.0 | MIT | FSMs for revision / approval / incident lifecycles (loaded via import map for client) | §6.3, §11.13, §11.14 |
 | [minisearch](https://github.com/lucaong/minisearch) | 7.1.2 | MIT | BM25 + prefix + fuzzy full-text search | §15 |
 | [dexie](https://github.com/dexie/Dexie.js) | 4.0.11 | Apache 2.0 | IndexedDB append-only logs (audit, events, DLQ) | §13.2, §9.4 |
 | [marked](https://github.com/markedjs/marked) | 14.1.3 | MIT | Markdown rendering in channel messages, transmittals, doc viewer | §6.1, §7 |

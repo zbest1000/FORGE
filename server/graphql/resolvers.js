@@ -8,6 +8,8 @@ import { can } from "../auth.js";
 import { signHMAC, canonicalJSON } from "../crypto.js";
 import { ingest } from "../events.js";
 import { readSeries } from "../metrics-rollup.js";
+import { canTransitionRevision, cascadeOnApprove } from "../../src/core/fsm/revision.js";
+import { canTransitionApproval } from "../../src/core/fsm/approval.js";
 import { GraphQLError, GraphQLScalarType, Kind } from "graphql";
 
 const json = arr => (Array.isArray(arr) ? arr : jsonOrDefault(arr, []));
@@ -155,8 +157,7 @@ export const resolvers = {
       requireCap(ctx, "approve");
       const rev = db.prepare("SELECT * FROM revisions WHERE id = ?").get(id);
       if (!rev) throw new GraphQLError("not found", { extensions: { http: { status: 404 } } });
-      const ALLOWED = { Draft: ["IFR","Archived"], IFR: ["Approved","Rejected","Draft","Archived"], Approved: ["IFC","Rejected","Archived"], IFC: ["Superseded","Archived"], Rejected: ["Draft","Archived"], Superseded: [], Archived: [] };
-      if (!(ALLOWED[rev.status] || []).includes(to))
+      if (!canTransitionRevision(rev.status, to))
         throw new GraphQLError(`cannot transition ${rev.status} → ${to}`, { extensions: { http: { status: 400 } } });
       db.transaction(() => {
         db.prepare("UPDATE revisions SET status = ?, updated_at = ? WHERE id = ?").run(to, now(), rev.id);
@@ -175,6 +176,8 @@ export const resolvers = {
         throw new GraphQLError("outcome must be approved|rejected", { extensions: { http: { status: 400 } } });
       const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(id);
       if (!row) throw new GraphQLError("not found", { extensions: { http: { status: 404 } } });
+      if (!canTransitionApproval(row.status, outcome))
+        throw new GraphQLError(`cannot decide approval in status '${row.status}'`, { extensions: { http: { status: 400 } } });
       const payload = { approvalId: row.id, subject: { kind: row.subject_kind, id: row.subject_id }, outcome, notes, signer: ctx.user.id, ts: now() };
       const sig = await signHMAC(canonicalJSON(payload));
       const chain = JSON.parse(row.chain || "[]");

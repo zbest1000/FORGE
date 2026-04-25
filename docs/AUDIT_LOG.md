@@ -139,6 +139,78 @@ and `server/metrics-rollup.js` run as background workers.
   `failed-retry` with the right `next_attempt_at` and recovers when
   the receiver comes up.
 
+## 2026-04-25 — xstate FSMs (revision / approval / incident)
+
+**What**
+Reversed the previous "xstate is overkill" decision and refactored the
+three lifecycle state machines into formal xstate v5 machines that the
+client UI, REST routes, and GraphQL resolvers all share.
+
+**Why**
+By the time the spec gap-closing slices landed, the same rules were
+typed by hand in 9 sites:
+
+- Revision FSM: `src/core/revisions.js` (ALLOWED), `server/routes/core.js`
+  (the `/api/revisions/:id/transition` route ALLOWED, **and** the
+  approval-decision route's cascade), `server/graphql/resolvers.js`
+  (ALLOWED in `Mutation.transitionRevision`).
+- Approval FSM: implicit in `server/routes/core.js`, `src/screens/
+  approvals.js`, `server/graphql/resolvers.js`.
+- Incident FSM: `src/screens/incident.js` (free-text prompt!),
+  `server/events.js` (auto-creation only).
+
+The duplication had **already started to drift**: the GraphQL
+resolver's ALLOWED table was missing `Approved → Archived`. That's
+exactly the bug the philosophy doc warns against in §8 — re-walk the
+matrix when a hand-rolled rule lives in more than two files. The
+clause moved from "small, isolated" to "three sources, one of them
+already wrong" and xstate became the obvious answer.
+
+**Tech decisions**
+- **xstate v5** (MIT, ~16 KB ESM) — industry-standard, runs on Node
+  and in the browser through the import map. Same package version on
+  both sides (`xstate@5.30.0`).
+- Helpers `canTransition*`, `transition*State`, `cascadeOnApprove`,
+  and `describe*Machine` keep call-sites synchronous and stateless
+  (no actor needed for the typical "can X go to Y?" check).
+- Machines are *side-effect-free*. Side effects (auto-supersede,
+  resolved-at timestamp, audit, notifications) stay in the calling
+  module. This keeps the machines unit-testable and lets us swap to a
+  visual editor (Stately Studio) later without touching call sites.
+- Imports cross the `src/core/fsm/` seam — server modules reach in
+  via `../../src/core/fsm/*`. We deliberately did **not** duplicate
+  the FSM under `server/`; one file, one source of truth.
+
+**Files**
+- new: `src/core/fsm/revision.js`, `src/core/fsm/approval.js`,
+  `src/core/fsm/incident.js`, `test/fsm.test.js`
+- modified:
+  - `src/core/revisions.js` — `transition()` delegates to xstate.
+  - `src/screens/approvals.js` — uses `cascadeOnApprove`.
+  - `src/screens/incident.js` — `changeStatus()` validates via FSM.
+  - `server/routes/core.js` — revision transition + approval cascade
+    + approval decide-state guard all use xstate.
+  - `server/graphql/resolvers.js` — same.
+  - `index.html` — xstate added to import map.
+  - `package.json` — xstate dep.
+  - `docs/ENGINEERING_PHILOSOPHY.md` — reversed the §8 "xstate
+    overkill" example, added a "re-walk the matrix" lesson, added
+    the State machines / lifecycles row to the OSS register.
+  - `docs/THIRD_PARTY.md`, `docs/SPEC_COMPLIANCE.md`,
+    `docs/CHANGELOG.md` updated.
+
+**Verification**
+- `npm test` — 31/31 passing (12 new FSM tests).
+- Live against the running server:
+  - Legal: `IFR → Approved → IFC` succeeds via REST.
+  - Illegal: `IFC → Draft` returns `{ error: "cannot transition IFC → Draft" }` with `status=400` (FSM-driven message).
+  - GraphQL `transitionRevision(id:"REV-2-C", to:"Draft")` errors with `extensions.http.status: 400`; legal `REV-3-A: Approved → IFC` succeeds.
+- Approval cascade: approving an IFR revision still drives
+  IFR → Approved; approving an Approved revision drives
+  Approved → IFC and auto-supersedes the previous IFC (cascade
+  preserved, but now both client and server reach the **same**
+  conclusion via `cascadeOnApprove()`).
+
 ## 2026-04-25 — Engineering Philosophy + canonical OSS swaps
 
 **What**

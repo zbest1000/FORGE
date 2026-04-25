@@ -191,6 +191,13 @@ write code that touches any concern below, **start from the OSS column**.
 | OpenAI-compatible | own HTTP adapter | adapter | ✅ in use |
 | Embeddings | **@xenova/transformers** for in-process; or hosted | TBD | candidate |
 
+### State machines / lifecycles
+| Concern | Default OSS | Adapter location | Status |
+|---|---|---|---|
+| Revision lifecycle (Draft→IFR→Approved→IFC→Superseded/Archived/Rejected) | **xstate v5** | `src/core/fsm/revision.js` | ✅ in use |
+| Approval lifecycle (pending→approved/rejected/expired/delegated) | **xstate v5** | `src/core/fsm/approval.js` | ✅ in use |
+| Incident lifecycle (active→escalated→stabilized→resolved→postmortem) | **xstate v5** | `src/core/fsm/incident.js` | ✅ in use |
+
 ### Spec §16 reference projects (already aligned)
 - Mattermost — collaboration patterns
 - Keycloak — SSO/SCIM
@@ -238,12 +245,26 @@ the model is wrong. Three real examples in this codebase:
    external server can be addressed by replacing the `client.js`
    wrapper with a `fetch()` call.
 
-3. **Revision lifecycle state machine.** A rule engine like xstate would
-   be overkill for ~10 transitions; we hand-rolled in `core/revisions.js`
-   and `server/routes/core.js`. If the rules grow, **xstate** is the
-   first candidate.
+3. **Revision / approval / incident state machines.** Originally
+   hand-rolled — and the doc said "xstate would be overkill for ~10
+   transitions". That was wrong: by the time the spec gap-closing
+   work landed, the same rules were typed by hand in 4 places
+   (client core, REST route, GraphQL resolver, approval cascade) and
+   were starting to drift (e.g. the GraphQL resolver had a slightly
+   different ALLOWED table). Reversing the call: **xstate v5** is now
+   the source of truth in `src/core/fsm/{revision,approval,incident}.js`,
+   imported on both client and server. The lesson — **walk the matrix
+   again whenever a hand-rolled rule appears in more than two files**.
 
 These are documented in `AUDIT_LOG.md`; do the same when you redesign.
+
+### Lesson — re-walk the matrix as the codebase grows
+
+A "small" rule that lives in one file can outgrow that envelope without
+warning. When you see the same logic copy-pasted in a third place,
+treat it as a signal to re-walk the decision matrix from §2 with the
+**actual** scope, not the original one. The xstate reversal above is
+the canonical example.
 
 ---
 
@@ -261,3 +282,9 @@ When you add a new concern that doesn't fit the register:
   register. Three wheels swapped to canonical OSS in the same PR
   (Prometheus → `prom-client`, service worker → Workbox, CSV parser →
   PapaParse). See `docs/AUDIT_LOG.md` 2026-04-25 entry for details.
+- **2026-04-25** — Reversed the earlier "xstate is overkill" call.
+  Three FSMs (revision / approval / incident) had been duplicated
+  across 9 sites. **xstate v5** is now the single source of truth in
+  `src/core/fsm/`, imported on client and server. Added the §8
+  re-walk-the-matrix lesson. See `docs/AUDIT_LOG.md` for the full
+  refactor entry.
