@@ -52,7 +52,7 @@ export function buildSeed() {
   // within groups, used for asset assignment & portal/item visibility.
   const groups = [
     { id: "G-it",          name: "IT & Platform Admins",   description: "Server status, MQTT broker, secrets",       parentId: null,           memberIds: ["U-4","U-5"] },
-    { id: "G-engineering", name: "Engineering",            description: "All engineering disciplines (parent group)", parentId: null,           memberIds: [] },
+    { id: "G-engineering", name: "Engineering",            description: "All engineering disciplines (parent group)", parentId: null,           memberIds: ["U-4"] },
     { id: "G-eng",         name: "Process Engineering",    description: "Process / controls engineers",              parentId: "G-engineering", memberIds: ["U-1","U-2","U-6"] },
     { id: "G-automation",  name: "Industrial Automation",  description: "i3X, UNS, OPC UA, MQTT consumers",          parentId: "G-engineering", memberIds: ["U-5"] },
     { id: "G-scada",       name: "SCADA Engineers",        description: "PLC/SCADA/HMI",                              parentId: "G-automation",  memberIds: ["U-1"] },
@@ -208,8 +208,8 @@ export function buildSeed() {
   ];
 
   const assets = [
-    { id: "AS-1", siteId: "SITE-NP", locationId: "CELL-A3", projectIds: ["PRJ-1"], name: "Line A / Cell-3 / HX-01", type: "heat_exchanger", hierarchy: "North Plant > Line A > Cell-3 > HX-01", status: "alarm", opsStatus: "alarm", maintenanceStatus: "watch", daqStatus: "live", mqttTopics: ["line/a1/hx01/temp","line/a1/alarm/high-temp"], opcuaNodes: ["ns=2;s=HX01.Temp"], docIds: ["DOC-3","DOC-4"], assignedUserId: "U-1", assignedGroupId: "G-scada" },
-    { id: "AS-2", siteId: "SITE-NP", locationId: "CELL-A1", projectIds: ["PRJ-1"], name: "Line A / Cell-1 / Feeder A1", type: "motor", hierarchy: "North Plant > Line A > Cell-1 > Feeder A1", status: "warning", opsStatus: "degraded", maintenanceStatus: "planned", daqStatus: "live", mqttTopics: ["line/a1/feeder/current"], opcuaNodes: ["ns=2;s=Feeder.A1.Current"], docIds: ["DOC-1","DOC-4"], assignedUserId: null, assignedGroupId: "G-scada" },
+    { id: "AS-1", siteId: "SITE-NP", locationId: "CELL-A3", projectIds: ["PRJ-1"], name: "Line A / Cell-3 / HX-01", type: "heat_exchanger", hierarchy: "North Plant > Line A > Cell-3 > HX-01", status: "alarm", opsStatus: "alarm", maintenanceStatus: "watch", daqStatus: "live", mqttTopics: ["line/a1/hx01/temp","line/a1/alarm/high-temp"], opcuaNodes: ["ns=2;s=HX01.Temp"], docIds: ["DOC-3","DOC-4"], assignedUserId: null, assignedGroupId: "G-engineering" },
+    { id: "AS-2", siteId: "SITE-NP", locationId: "CELL-A1", projectIds: ["PRJ-1"], name: "Line A / Cell-1 / Feeder A1", type: "motor", hierarchy: "North Plant > Line A > Cell-1 > Feeder A1", status: "warning", opsStatus: "degraded", maintenanceStatus: "planned", daqStatus: "live", mqttTopics: ["line/a1/feeder/current"], opcuaNodes: ["ns=2;s=Feeder.A1.Current"], docIds: ["DOC-1","DOC-4"], assignedUserId: null, assignedGroupId: "G-engineering" },
     { id: "AS-3", siteId: "SITE-S2", locationId: "PKG-S2-P3", projectIds: ["PRJ-2"], name: "Site 2 / Package 3 / Utility Header", type: "piping", hierarchy: "Site 2 > Package 3 > Utility Header", status: "normal", opsStatus: "normal", maintenanceStatus: "none", daqStatus: "not_connected", mqttTopics: [], opcuaNodes: [], docIds: ["DOC-2","DOC-4"], assignedUserId: "U-6", assignedGroupId: "G-eng" },
     { id: "AS-4", siteId: "SITE-S1", locationId: "SITE-S1", projectIds: ["PRJ-3"], name: "Site 1 / Boiler B-201", type: "boiler", hierarchy: "Site 1 > Utilities > Boiler B-201", status: "normal", opsStatus: "normal", maintenanceStatus: "due", daqStatus: "stale", mqttTopics: ["site1/utilities/boiler/steam"], opcuaNodes: ["ns=2;s=B201.Steam.P"], docIds: ["DOC-3","DOC-4"], assignedUserId: null, assignedGroupId: "G-ops" },
     // Spec §6.4 second hierarchy template: Site > Building > Floor > Room.
