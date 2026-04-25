@@ -57,10 +57,55 @@ export function renderDocViewer({ id }) {
   const activePage = parseInt(sessionStorage.getItem(SK(id, "page")) || "1", 10);
 
   mount(root, [
+    revisionSafetyBanner(doc, rev),
     metadataBar(doc, rev),
     el("div", { class: "viewer-layout" }, [
       canvasArea(doc, rev, activePage),
       sidePane(doc, rev),
+    ]),
+  ]);
+}
+
+function revisionSafetyBanner(doc, rev) {
+  const isCurrent = doc.currentRevisionId === rev.id;
+  const status = rev.status || "Unknown";
+  const variant = status === "Rejected" || (!isCurrent && status === "Superseded") ? "danger"
+    : status === "IFC" || status === "Approved" ? "success"
+    : status === "IFR" ? "info"
+    : "warn";
+  const title = !isCurrent
+    ? `Viewing historical revision ${rev.label}`
+    : status === "Superseded"
+      ? `Current pointer is superseded: Rev ${rev.label}`
+      : `Rev ${rev.label} is ${status}`;
+  const guidance = !isCurrent
+    ? "Do not approve, issue, or build from this revision until you compare it with the current revision."
+    : status === "IFC"
+      ? "Issued for construction. Confirm downstream work and transmittals before acting."
+      : status === "Approved"
+        ? "Approved but not necessarily issued. Review transmittals before external release."
+        : status === "Rejected"
+          ? "Rejected revision. Rework is required before approval or issue."
+          : status === "IFR"
+            ? "In review. Resolve comments and approvals before issue."
+            : "Draft or preliminary revision. Treat as controlled work in progress.";
+  return el("section", { class: `revision-safety-banner ${variant}`, "aria-live": "polite" }, [
+    el("div", { class: "revision-safety-main" }, [
+      el("div", { class: "revision-safety-kicker" }, ["Document control"]),
+      el("div", { class: "revision-safety-title" }, [title]),
+      el("div", { class: "revision-safety-guidance" }, [guidance]),
+    ]),
+    el("div", { class: "revision-safety-actions" }, [
+      badge(status, revVariant(status)),
+      isCurrent ? null : el("button", {
+        class: "btn sm",
+        onClick: () => {
+          sessionStorage.setItem(SK(doc.id, "rev"), doc.currentRevisionId);
+          renderDocViewer({ id: doc.id });
+        },
+      }, ["Open current"]),
+      el("button", { class: "btn sm", onClick: () => navigate(`/compare/${rev.id}/${pickOther(doc, rev)}`) }, ["Compare"]),
+      el("button", { class: "btn sm primary", disabled: !can("approve"), onClick: () => navigate("/approvals") }, ["Review approvals"]),
     ]),
   ]);
 }
