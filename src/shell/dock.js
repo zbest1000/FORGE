@@ -1,6 +1,13 @@
 import { el, mount } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
+import { effectiveGroupIds, currentUserId, isOrgOwner } from "../core/groups.js";
+
+function viewerCanSeeIntegrations() {
+  if (isOrgOwner()) return true;
+  const eff = new Set(effectiveGroupIds(currentUserId()));
+  return ["G-it","G-automation","G-erp"].some(id => eff.has(id));
+}
 
 export function renderDock() {
   const root = document.getElementById("operationsDock");
@@ -19,14 +26,16 @@ export function renderDock() {
     })
   );
 
-  (d.integrations || []).forEach(i => {
-    if (i.status === "connected") return;
-    items.push({
-      dot: i.status === "failed" ? "danger" : "warn",
-      text: `${i.kind.toUpperCase()} · ${i.name} · ${i.status}`,
-      route: `/integrations`,
+  if (viewerCanSeeIntegrations()) {
+    (d.integrations || []).forEach(i => {
+      if (i.status === "connected") return;
+      items.push({
+        dot: i.status === "failed" ? "danger" : "warn",
+        text: `${i.kind.toUpperCase()} · ${i.name} · ${i.status}`,
+        route: `/integrations`,
+      });
     });
-  });
+  }
 
   (d.approvals || []).filter(a => a.status === "pending").forEach(a =>
     items.push({

@@ -1541,3 +1541,294 @@ textarea:focus-visible {
   .left-panel { display: none; }
   .search-input { width: 180px; }
 }
+
+/* ================================================================
+   Layout toggles — view customization
+   The default grid is `72px 260px 1fr 340px`. As panels are hidden
+   we drop their tracks so the main pane reclaims their real estate.
+   ================================================================ */
+
+body.hide-left-panel .left-panel { display: none; }
+body.hide-right-panel .right-context-panel { display: none; }
+body.hide-rail .far-left-rail { display: none; }
+body.hide-header .main-header { display: none; }
+
+body.hide-left-panel:not(.hide-right-panel):not(.hide-rail) .app-shell { grid-template-columns: 72px 1fr 340px; }
+body.hide-right-panel:not(.hide-left-panel):not(.hide-rail) .app-shell { grid-template-columns: 72px 260px 1fr; }
+body.hide-left-panel.hide-right-panel:not(.hide-rail) .app-shell    { grid-template-columns: 72px 1fr; }
+body.hide-rail:not(.hide-left-panel):not(.hide-right-panel) .app-shell { grid-template-columns: 260px 1fr 340px; }
+body.hide-rail.hide-left-panel:not(.hide-right-panel) .app-shell    { grid-template-columns: 1fr 340px; }
+body.hide-rail.hide-right-panel:not(.hide-left-panel) .app-shell    { grid-template-columns: 260px 1fr; }
+body.hide-rail.hide-left-panel.hide-right-panel .app-shell          { grid-template-columns: 1fr; }
+body.hide-rail .operations-dock { left: 0; }
+
+body.focus-mode .left-panel,
+body.focus-mode .right-context-panel { display: none; }
+body.focus-mode .app-shell { grid-template-columns: 72px 1fr; }
+
+/* Portal mode: subtle accent stripe + chip in the header */
+body.portal-mode .main-header {
+  border-top: 3px solid var(--portal-accent, var(--accent));
+  box-shadow: inset 0 3px 0 0 var(--portal-accent, var(--accent));
+}
+body.portal-mode .far-left-rail .rail-logo { background: var(--portal-accent, var(--accent)); }
+
+.header-portal-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--portal-accent, var(--border));
+  color: var(--portal-accent, var(--text));
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.header-portal-chip .chip-emoji { font-size: 14px; }
+
+/* View menu (header) */
+.view-menu {
+  position: relative;
+}
+.view-menu-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 240px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+  z-index: 50;
+}
+.view-menu-popover .vm-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+.view-menu-popover .vm-row:hover { background: var(--elevated); }
+.view-menu-popover .vm-divider { height: 1px; background: var(--border); margin: 4px 0; }
+.view-menu-popover .vm-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 4px var(--space-2); }
+.view-menu-popover input[type="checkbox"] { accent-color: var(--accent); }
+
+/* ================================================================
+   Hub screen (portal launcher)
+   ================================================================ */
+.hub {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.hub-hero {
+  background: linear-gradient(135deg, rgba(56,189,248,0.10), rgba(167,139,250,0.10));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.hub-hero-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.hub-logo {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #0b1220;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 20px rgba(14,165,233,0.25);
+}
+
+.hub-title {
+  margin: 0;
+  font-size: 24px;
+  color: var(--text-strong);
+  font-weight: 700;
+}
+
+.hub-sub {
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 70ch;
+}
+
+.hub-meta {
+  gap: 6px !important;
+}
+
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+
+.hub-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--portal-accent, var(--accent));
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-3);
+  align-items: start;
+  text-decoration: none;
+  color: var(--text);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+  cursor: pointer;
+}
+
+.hub-tile:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.25);
+  border-color: var(--portal-accent, var(--accent));
+}
+
+.hub-tile-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--portal-accent, var(--accent)) 15%, transparent);
+  color: var(--portal-accent, var(--accent));
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--portal-accent, var(--accent)) 30%, transparent);
+}
+
+.hub-tile-body { display: flex; flex-direction: column; gap: 6px; }
+.hub-tile-body h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-strong);
+}
+.hub-tile-body p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.hub-tile-routes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.hub-tile-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.hub-tile-cta {
+  align-self: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--portal-accent, var(--accent));
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hub-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.hub-footer kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin: 0 2px;
+  color: var(--text);
+}
+
+/* Group chips on admin / asset pages */
+.group-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.group-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+.group-row.child { margin-left: 24px; border-left: 2px solid var(--border-strong); }
+.group-row .group-name { flex: 1; }
+.group-row .group-name .strong { color: var(--text-strong); }
+.group-row .group-meta { color: var(--muted); font-size: 11px; }
+
+/* Forbidden screen (group gating) */
+.forbidden {
+  max-width: 520px;
+  margin: 80px auto;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+}
+.forbidden h2 { margin-top: 0; color: var(--text-strong); }
+
+
+/* Floating "restore layout" button — only shown when chrome is fully hidden */
+.layout-restore {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #0b1220;
+  border: 1px solid var(--accent-strong);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  cursor: pointer;
+  z-index: 200;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+body.hide-rail .layout-restore { display: flex; }
+body.focus-mode.hide-rail .layout-restore { display: flex; }

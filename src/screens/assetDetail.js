@@ -1,25 +1,39 @@
-import { el, mount, card, badge, kpi, toast, chip } from "../core/ui.js";
+import { el, mount, card, badge, kpi, toast, chip, modal, formRow, select } from "../core/ui.js";
 import { state, update, getById, audit } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { getServer } from "../core/i3x/client.js";
 import { sparkline } from "../core/charts.js";
+import { canSeeAsset, listGroups, getGroup } from "../core/groups.js";
 
 export function renderAssetsIndex() {
   const root = document.getElementById("screenContainer");
   const d = state.data;
+  const visible = (d.assets || []).filter(canSeeAsset);
+  const hidden = (d.assets || []).length - visible.length;
+  const userById = Object.fromEntries((d.users || []).map(u => [u.id, u]));
   mount(root, [
-    card("Assets", el("table", { class: "table" }, [
-      el("thead", {}, [el("tr", {}, ["Asset","Hierarchy","Type","Status",""].map(h => el("th", {}, [h])))]),
-      el("tbody", {}, (d.assets || []).map(a =>
-        el("tr", { class: "row-clickable", onClick: () => navigate(`/asset/${a.id}`) }, [
-          el("td", {}, [a.name, el("div", { class: "tiny muted" }, [a.id])]),
-          el("td", { class: "tiny muted" }, [a.hierarchy]),
-          el("td", {}, [badge(a.type, "info")]),
-          el("td", {}, [badge(a.status.toUpperCase(), statusVariant(a.status))]),
-          el("td", {}, [el("button", { class: "btn sm", onClick: (e) => { e.stopPropagation(); navigate(`/asset/${a.id}`); } }, ["Open"])]),
-        ])
-      )),
+    card("Assets", el("div", { class: "stack" }, [
+      hidden ? el("div", { class: "tiny muted" }, [`${hidden} asset(s) hidden — not assigned to your user or groups.`]) : null,
+      el("table", { class: "table" }, [
+        el("thead", {}, [el("tr", {}, ["Asset","Hierarchy","Type","Status","Assigned",""].map(h => el("th", {}, [h])))]),
+        el("tbody", {}, visible.map(a => {
+          const owner = a.assignedUserId ? userById[a.assignedUserId]?.name || a.assignedUserId : null;
+          const grp = a.assignedGroupId ? getGroup(a.assignedGroupId)?.name || a.assignedGroupId : null;
+          return el("tr", { class: "row-clickable", onClick: () => navigate(`/asset/${a.id}`) }, [
+            el("td", {}, [a.name, el("div", { class: "tiny muted" }, [a.id])]),
+            el("td", { class: "tiny muted" }, [a.hierarchy]),
+            el("td", {}, [badge(a.type, "info")]),
+            el("td", {}, [badge(a.status.toUpperCase(), statusVariant(a.status))]),
+            el("td", { class: "tiny" }, [
+              owner ? el("div", {}, [owner]) : null,
+              grp ? el("div", { class: "muted" }, [grp]) : null,
+              !owner && !grp ? el("span", { class: "muted" }, ["—"]) : null,
+            ]),
+            el("td", {}, [el("button", { class: "btn sm", onClick: (e) => { e.stopPropagation(); navigate(`/asset/${a.id}`); } }, ["Open"])]),
+          ]);
+        })),
+      ]),
     ])),
   ]);
 }
@@ -29,6 +43,13 @@ export function renderAssetDetail({ id }) {
   const d = state.data;
   const a = getById("assets", id);
   if (!a) return mount(root, el("div", { class: "muted" }, ["Asset not found."]));
+  if (!canSeeAsset(a)) {
+    return mount(root, el("div", { class: "forbidden" }, [
+      el("h2", {}, ["This asset is restricted"]),
+      el("p", { class: "muted" }, ["Asset is assigned to a user or group you don't belong to. Ask an administrator for access."]),
+      el("button", { class: "btn primary", onClick: () => navigate("/assets") }, ["Back to assets"]),
+    ]));
+  }
 
   const linkedDocs = (d.documents || []).filter(doc => a.docIds?.includes(doc.id));
   const dataSources = (d.dataSources || []).filter(ds => ds.assetId === a.id);
@@ -84,6 +105,8 @@ export function renderAssetDetail({ id }) {
       ).concat(incidents.length ? [] : [el("div", { class: "muted tiny" }, ["No incidents."])]))),
     ]),
 
+    assignmentCard(a),
+
     card("AI — What changed in 24h?", el("div", { class: "stack" }, [
       el("div", { class: "small" }, [
         `${a.name}: feeder current exceeded baseline by ~12% for 12s; temperature drift observed on HX-01. No trips.`,
@@ -91,6 +114,59 @@ export function renderAssetDetail({ id }) {
       el("div", { class: "tiny muted" }, ["Citations: AS-1, AS-2, DS-1, DS-3"]),
     ])),
   ]);
+}
+
+function assignmentCard(a) {
+  const users = state.data?.users || [];
+  const userById = Object.fromEntries(users.map(u => [u.id, u]));
+  const owner = a.assignedUserId ? userById[a.assignedUserId] : null;
+  const grp = a.assignedGroupId ? getGroup(a.assignedGroupId) : null;
+  return card("Assignment", el("div", { class: "stack" }, [
+    el("div", { class: "row wrap" }, [
+      el("div", { class: "stack", style: { gap: "2px" } }, [
+        el("div", { class: "tiny muted" }, ["Owner (user)"]),
+        owner
+          ? el("div", { class: "row" }, [badge(owner.name, "accent"), el("span", { class: "tiny muted" }, [owner.role])])
+          : el("span", { class: "muted small" }, ["Unassigned"]),
+      ]),
+      el("div", { class: "stack", style: { gap: "2px" } }, [
+        el("div", { class: "tiny muted" }, ["Owner (group)"]),
+        grp
+          ? el("div", { class: "row" }, [badge(grp.name, "purple"), el("span", { class: "tiny muted" }, [grp.id])])
+          : el("span", { class: "muted small" }, ["Unassigned"]),
+      ]),
+    ]),
+    el("button", { class: "btn sm", onClick: () => editAssignment(a) }, ["Edit assignment"]),
+    el("div", { class: "tiny muted" }, ["When set, only the assigned user or members of the assigned group (and Organization Owners) can see this asset."]),
+  ]), { subtitle: "Assets can be assigned to a specific engineer or to a whole group." });
+}
+
+function editAssignment(a) {
+  const users = state.data?.users || [];
+  const groups = listGroups();
+  const userSel = select([{ value: "", label: "(unassigned)" }, ...users.map(u => ({ value: u.id, label: `${u.name} — ${u.role}` }))], { value: a.assignedUserId || "" });
+  const groupSel = select([{ value: "", label: "(unassigned)" }, ...groups.map(g => ({ value: g.id, label: g.name }))], { value: a.assignedGroupId || "" });
+  modal({
+    title: `Assign ${a.name}`,
+    body: el("div", { class: "stack" }, [
+      formRow("Assigned user", userSel),
+      formRow("Assigned group", groupSel),
+      el("div", { class: "tiny muted" }, ["Either, both, or neither. A user-only assignment makes the asset private to that user; a group makes it visible to all members of that group (and any sub-group descendant)."]),
+    ]),
+    actions: [
+      { label: "Cancel" },
+      { label: "Save", variant: "primary", onClick: () => {
+        update(s => {
+          const x = s.data.assets.find(y => y.id === a.id);
+          if (!x) return;
+          x.assignedUserId = userSel.value || null;
+          x.assignedGroupId = groupSel.value || null;
+        });
+        audit("asset.assign", a.id, { userId: userSel.value || null, groupId: groupSel.value || null });
+        toast("Assignment saved", "success");
+      }},
+    ],
+  });
 }
 
 function telemetry(a) {

@@ -27,7 +27,7 @@ export function navigate(hash) {
 }
 
 export function currentPath() {
-  const raw = location.hash.replace(/^#/, "") || "/home";
+  const raw = location.hash.replace(/^#/, "") || "/hub";
   return raw;
 }
 
@@ -49,10 +49,10 @@ export function resolve() {
     }
   }
 
-  const fallback = ROUTES.find(r => r.pattern === "/home");
+  const fallback = ROUTES.find(r => r.pattern === "/hub") || ROUTES.find(r => r.pattern === "/home");
   currentHandler = fallback ? fallback.handler : null;
   currentParams = {};
-  state.route = "/home";
+  state.route = fallback ? fallback.pattern : "/hub";
   if (fallback) fallback.handler({});
   emitRouteChange();
 }
@@ -67,6 +67,6 @@ function emitRouteChange() { routeListeners.forEach(fn => { try { fn(state); } c
 
 export function startRouter() {
   window.addEventListener("hashchange", resolve);
-  if (!location.hash) location.hash = "#/home";
+  if (!location.hash) location.hash = "#/hub";
   else resolve();
 }

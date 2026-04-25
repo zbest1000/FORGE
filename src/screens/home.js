@@ -1,6 +1,13 @@
 import { el, card, kpi, badge, mount } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
+import { effectiveGroupIds, currentUserId, isOrgOwner } from "../core/groups.js";
+
+function viewerInGroups(...ids) {
+  if (isOrgOwner()) return true;
+  const eff = new Set(effectiveGroupIds(currentUserId()));
+  return ids.some(id => eff.has(id));
+}
 
 export function renderHome() {
   const root = document.getElementById("screenContainer");
@@ -36,11 +43,27 @@ export function renderHome() {
       card("Recent revisions", recentRevisions(d), { actions: [
         el("button", { class: "btn sm", onClick: () => navigate("/docs") }, ["All docs →"]),
       ]}),
-      card("Integration health", integrationHealth(d), { actions: [
-        el("button", { class: "btn sm", onClick: () => navigate("/integrations") }, ["Console →"]),
-      ]}),
+      viewerInGroups("G-it","G-automation","G-erp")
+        ? card("Integration health", integrationHealth(d), { actions: [
+            el("button", { class: "btn sm", onClick: () => navigate("/integrations") }, ["Console →"]),
+          ]})
+        : card("Engineering picks for you", engineeringPicks(d), { subtitle: "Recently active in your spaces" }),
     ]),
   ]);
+}
+
+function engineeringPicks(d) {
+  const items = [
+    ...(d.documents || []).slice(0, 3).map(doc => ({ kind: "Doc", label: doc.name, route: `/doc/${doc.id}` })),
+    ...(d.projects || []).slice(0, 2).map(p => ({ kind: "Project", label: p.name, route: `/work-board/${p.id}` })),
+  ];
+  return el("div", { class: "activity-list" }, items.map(it =>
+    el("div", { class: "activity-row", onClick: () => navigate(it.route) }, [
+      badge(it.kind, "info"),
+      el("span", {}, [it.label]),
+      el("span", { class: "tiny muted" }, [it.route]),
+    ])
+  ));
 }
 
 function priorityQueue(d) {

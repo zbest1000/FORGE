@@ -28,13 +28,32 @@ export function buildSeed() {
   ];
 
   const users = [
-    { id: "U-1", name: "J. Singh",      role: "Engineer/Contributor",  initials: "JS" },
-    { id: "U-2", name: "R. Okafor",     role: "Reviewer/Approver",     initials: "RO" },
-    { id: "U-3", name: "M. Torres",     role: "Operator/Technician",   initials: "MT" },
-    { id: "U-4", name: "D. Chen",       role: "Workspace Admin",       initials: "DC" },
-    { id: "U-5", name: "L. Abidemi",    role: "Integration Admin",     initials: "LA" },
-    { id: "U-6", name: "A. Patel",      role: "Team Space Admin",      initials: "AP" },
+    { id: "U-1", name: "J. Singh",      role: "Engineer/Contributor",  initials: "JS", groupIds: ["G-eng","G-scada"] },
+    { id: "U-2", name: "R. Okafor",     role: "Reviewer/Approver",     initials: "RO", groupIds: ["G-eng"] },
+    { id: "U-3", name: "M. Torres",     role: "Operator/Technician",   initials: "MT", groupIds: ["G-ops"] },
+    { id: "U-4", name: "D. Chen",       role: "Workspace Admin",       initials: "DC", groupIds: ["G-it","G-business","G-mgmt"] },
+    { id: "U-5", name: "L. Abidemi",    role: "Integration Admin",     initials: "LA", groupIds: ["G-it","G-automation","G-erp"] },
+    { id: "U-6", name: "A. Patel",      role: "Team Space Admin",      initials: "AP", groupIds: ["G-eng","G-mgmt"] },
   ];
+
+  // Groups (with optional parents — sub-groups inherit access). Spec: groups
+  // within groups, used for asset assignment & portal/item visibility.
+  const groups = [
+    { id: "G-it",          name: "IT & Platform Admins",   description: "Server status, MQTT broker, secrets",       parentId: null,           memberIds: ["U-4","U-5"] },
+    { id: "G-engineering", name: "Engineering",            description: "All engineering disciplines (parent group)", parentId: null,           memberIds: [] },
+    { id: "G-eng",         name: "Process Engineering",    description: "Process / controls engineers",              parentId: "G-engineering", memberIds: ["U-1","U-2","U-6"] },
+    { id: "G-automation",  name: "Industrial Automation",  description: "i3X, UNS, OPC UA, MQTT consumers",          parentId: "G-engineering", memberIds: ["U-5"] },
+    { id: "G-scada",       name: "SCADA Engineers",        description: "PLC/SCADA/HMI",                              parentId: "G-automation",  memberIds: ["U-1"] },
+    { id: "G-erp",         name: "ERP Engineers",          description: "ERP integrations & masters",                 parentId: "G-it",          memberIds: ["U-5"] },
+    { id: "G-ops",         name: "Plant Operations",       description: "Operators & technicians",                    parentId: null,           memberIds: ["U-3"] },
+    { id: "G-mgmt",        name: "Management",             description: "PMs, leads, executives",                     parentId: null,           memberIds: ["U-4","U-6"] },
+    { id: "G-business",    name: "Business / ERP",         description: "Procurement, finance, ERP power users",      parentId: null,           memberIds: ["U-4"] },
+  ];
+
+  // Demo "current user" — used when no real auth user is present (demo mode).
+  // Defaults to the workspace admin so the operator sees most portals; the
+  // header user-switcher (in admin/groups panel) lets you flip identities.
+  const currentUserId = "U-4";
 
   const teamSpaces = [
     { id: "TS-1", name: "Controls Engineering", summary: "PLC/HMI/SCADA work for Line A and B", memberIds: ["U-1","U-2","U-3","U-4"] },
@@ -155,13 +174,13 @@ export function buildSeed() {
   ];
 
   const assets = [
-    { id: "AS-1", name: "Line A / Cell-3 / HX-01", type: "heat_exchanger", hierarchy: "North Plant > Line A > Cell-3 > HX-01", status: "alarm", mqttTopics: ["line/a1/hx01/temp","line/a1/alarm/high-temp"], opcuaNodes: ["ns=2;s=HX01.Temp"], docIds: ["DOC-3"] },
-    { id: "AS-2", name: "Line A / Cell-1 / Feeder A1", type: "motor",      hierarchy: "North Plant > Line A > Cell-1 > Feeder A1", status: "warning", mqttTopics: ["line/a1/feeder/current"], opcuaNodes: ["ns=2;s=Feeder.A1.Current"], docIds: ["DOC-1"] },
-    { id: "AS-3", name: "Site 2 / Package 3 / Utility Header", type: "piping", hierarchy: "Site 2 > Package 3 > Utility Header", status: "normal", mqttTopics: [], opcuaNodes: [], docIds: ["DOC-2"] },
-    { id: "AS-4", name: "Site 1 / Boiler B-201", type: "boiler", hierarchy: "Site 1 > Utilities > Boiler B-201", status: "normal", mqttTopics: ["site1/utilities/boiler/steam"], opcuaNodes: ["ns=2;s=B201.Steam.P"], docIds: ["DOC-3"] },
+    { id: "AS-1", name: "Line A / Cell-3 / HX-01", type: "heat_exchanger", hierarchy: "North Plant > Line A > Cell-3 > HX-01", status: "alarm", mqttTopics: ["line/a1/hx01/temp","line/a1/alarm/high-temp"], opcuaNodes: ["ns=2;s=HX01.Temp"], docIds: ["DOC-3"], assignedUserId: "U-1", assignedGroupId: "G-scada" },
+    { id: "AS-2", name: "Line A / Cell-1 / Feeder A1", type: "motor",      hierarchy: "North Plant > Line A > Cell-1 > Feeder A1", status: "warning", mqttTopics: ["line/a1/feeder/current"], opcuaNodes: ["ns=2;s=Feeder.A1.Current"], docIds: ["DOC-1"], assignedUserId: null, assignedGroupId: "G-scada" },
+    { id: "AS-3", name: "Site 2 / Package 3 / Utility Header", type: "piping", hierarchy: "Site 2 > Package 3 > Utility Header", status: "normal", mqttTopics: [], opcuaNodes: [], docIds: ["DOC-2"], assignedUserId: "U-6", assignedGroupId: "G-eng" },
+    { id: "AS-4", name: "Site 1 / Boiler B-201", type: "boiler", hierarchy: "Site 1 > Utilities > Boiler B-201", status: "normal", mqttTopics: ["site1/utilities/boiler/steam"], opcuaNodes: ["ns=2;s=B201.Steam.P"], docIds: ["DOC-3"], assignedUserId: null, assignedGroupId: "G-ops" },
     // Spec §6.4 second hierarchy template: Site > Building > Floor > Room.
-    { id: "AS-5", name: "HQ / Building B / L3 / Server Room",   type: "facility_room",  hierarchy: "HQ > Building B > L3 > Server Room",   status: "normal",  mqttTopics: ["hq/b/3/server/temp"], opcuaNodes: [], docIds: [] },
-    { id: "AS-6", name: "HQ / Building B / L3 / Test Lab 3-12", type: "lab",            hierarchy: "HQ > Building B > L3 > Test Lab 3-12", status: "normal",  mqttTopics: ["hq/b/3/lab12/temp","hq/b/3/lab12/humidity"], opcuaNodes: [], docIds: [] },
+    { id: "AS-5", name: "HQ / Building B / L3 / Server Room",   type: "facility_room",  hierarchy: "HQ > Building B > L3 > Server Room",   status: "normal",  mqttTopics: ["hq/b/3/server/temp"], opcuaNodes: [], docIds: [], assignedUserId: null, assignedGroupId: "G-it" },
+    { id: "AS-6", name: "HQ / Building B / L3 / Test Lab 3-12", type: "lab",            hierarchy: "HQ > Building B > L3 > Test Lab 3-12", status: "normal",  mqttTopics: ["hq/b/3/lab12/temp","hq/b/3/lab12/humidity"], opcuaNodes: [], docIds: [], assignedUserId: null, assignedGroupId: "G-erp" },
   ];
 
   const workItems = [
@@ -247,6 +266,8 @@ export function buildSeed() {
     workspace,
     workspaces,
     users,
+    groups,
+    currentUserId,
     teamSpaces,
     projects,
     channels,

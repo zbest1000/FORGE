@@ -5,8 +5,15 @@ import { openPalette } from "../core/palette.js";
 import { navigate } from "../core/router.js";
 import { mode as apiMode, login as apiLogin, logout as apiLogout } from "../core/api.js";
 import { modal, formRow, input, toast } from "../core/ui.js";
+import { portalById, effectiveGroupIds, currentUserId, isOrgOwner } from "../core/groups.js";
+
+function viewerHasIT() {
+  if (isOrgOwner()) return true;
+  return effectiveGroupIds(currentUserId()).includes("G-it");
+}
 
 const TITLES = {
+  "/hub":         { title: "FORGE Hub",        crumb: "Hub" },
   "/home":        { title: "Workspace Home",   crumb: "Home" },
   "/inbox":       { title: "Inbox",            crumb: "Inbox" },
   "/search":      { title: "Search",           crumb: "Search" },
@@ -47,6 +54,13 @@ export function renderHeader() {
     },
   });
 
+  const portal = state.ui.portalId ? portalById(state.ui.portalId) : null;
+  if (portal) {
+    root.style.setProperty("--portal-accent", portal.accent);
+  } else {
+    root.style.removeProperty("--portal-accent");
+  }
+
   mount(root, [
     el("div", { class: "header-title" }, [
       el("div", { class: "breadcrumb" }, [
@@ -54,12 +68,19 @@ export function renderHeader() {
         state.data?.workspace?.name || "", " / ",
         meta.crumb,
       ]),
-      el("h1", {}, [meta.title]),
+      el("div", { class: "row", style: { gap: "10px", alignItems: "center" } }, [
+        el("h1", {}, [meta.title]),
+        portal ? el("span", { class: "header-portal-chip", style: { "--portal-accent": portal.accent } }, [
+          el("span", { class: "chip-emoji", "aria-hidden": "true" }, [portal.icon]),
+          portal.label,
+        ]) : null,
+      ]),
     ]),
     el("div", { class: "header-controls" }, [
       searchInput,
-      serverBadge(),
+      viewerHasIT() ? serverBadge() : authOnlyBadge(),
       el("button", { class: "btn sm", onClick: openPalette, title: "Command palette" }, ["⌘K"]),
+      viewMenu(),
       roleSelect,
       el("button", {
         class: "btn sm ghost",
@@ -68,6 +89,101 @@ export function renderHeader() {
       }, ["Reset"]),
     ]),
   ]);
+}
+
+function viewMenu() {
+  const wrap = el("span", { class: "view-menu" });
+  let open = false;
+  let pop = null;
+
+  const close = () => {
+    open = false;
+    if (pop) { pop.remove(); pop = null; }
+    document.removeEventListener("mousedown", onDocClick, true);
+  };
+  const onDocClick = (e) => {
+    if (pop && !pop.contains(e.target) && !wrap.contains(e.target)) close();
+  };
+
+  const toggle = (key) => {
+    update(s => { s.ui[key] = !s.ui[key]; });
+  };
+  const row = (key, label) => el("label", { class: "vm-row" }, [
+    el("span", {}, [label]),
+    el("input", { type: "checkbox", checked: !!state.ui[key], onChange: () => toggle(key) }),
+  ]);
+
+  const button = el("button", {
+    class: "btn sm",
+    title: "View options — show/hide panels",
+    onClick: (e) => {
+      e.stopPropagation();
+      if (open) { close(); return; }
+      open = true;
+      pop = el("div", { class: "view-menu-popover", role: "menu" }, [
+        el("div", { class: "vm-title" }, ["Layout"]),
+        row("showRail",         "Far-left rail"),
+        row("showLeftPanel",    "Left navigator"),
+        row("showContextPanel", "Right context panel"),
+        row("showHeader",       "Page header"),
+        el("div", { class: "vm-divider" }),
+        el("div", { class: "vm-title" }, ["Quick modes"]),
+        el("button", {
+          class: "btn sm vm-row",
+          onClick: () => { update(s => { s.ui.focusMode = !s.ui.focusMode; }); },
+        }, [state.ui.focusMode ? "Exit focus mode" : "Focus mode (hide side panels)"]),
+        el("button", {
+          class: "btn sm vm-row",
+          onClick: () => {
+            update(s => {
+              s.ui.showRail = true; s.ui.showLeftPanel = true; s.ui.showContextPanel = true;
+              s.ui.showHeader = true; s.ui.focusMode = false;
+            });
+          },
+        }, ["Reset to default layout"]),
+        el("button", {
+          class: "btn sm vm-row",
+          onClick: () => {
+            update(s => {
+              s.ui.showRail = false; s.ui.showLeftPanel = false; s.ui.showContextPanel = false;
+              s.ui.showHeader = false; s.ui.focusMode = true; s.ui.dockVisible = false;
+            });
+            toast("Maximized — press the rail toggle in the corner to restore", "info");
+          },
+        }, ["Maximize (full screen)"]),
+        el("div", { class: "vm-divider" }),
+        el("button", {
+          class: "btn sm vm-row",
+          onClick: () => { update(s => { s.ui.dockVisible = !s.ui.dockVisible; }); },
+        }, [state.ui.dockVisible ? "Hide ops dock" : "Show ops dock"]),
+        el("button", {
+          class: "btn sm vm-row",
+          onClick: () => { update(s => { s.ui.theme = s.ui.theme === "dark" ? "light" : "dark"; }); },
+        }, ["Toggle theme"]),
+      ]);
+      wrap.append(pop);
+      // Close after any item action.
+      pop.querySelectorAll("button").forEach(b => b.addEventListener("click", () => setTimeout(close, 50)));
+      setTimeout(() => document.addEventListener("mousedown", onDocClick, true), 0);
+    },
+  }, ["View ▾"]);
+
+  wrap.append(button);
+  return wrap;
+}
+
+function authOnlyBadge() {
+  // Non-IT users still need a way to sign in/out — show a minimal pill
+  // without the green "● connected" indicator that exposes server status.
+  const m = apiMode();
+  if (m !== "server") return null;
+  const user = state.server?.user;
+  if (user) {
+    return el("button", { class: "btn sm", onClick: () => signOut(), title: `Signed in as ${user.email}` }, [
+      (user.name || user.email),
+    ]);
+  }
+  return el("button", { class: "btn sm", onClick: () => signIn(), title: "Sign in" }, ["Sign in"]);
 }
 
 function serverBadge() {
@@ -117,6 +233,7 @@ function signOut() {
 }
 
 function resolveTitle(route) {
+  route = (route || "").split("?")[0];
   if (TITLES[route]) return TITLES[route];
   const base = "/" + route.split("/")[1];
   if (TITLES[base]) return TITLES[base];
