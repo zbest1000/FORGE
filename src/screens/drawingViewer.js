@@ -487,6 +487,7 @@ function sideColumn(dr, id, sheetId, markups, mode) {
   if (mode === "ifc") return ifcPanel(dr);
   return el("div", { class: "viewer-side" }, [
     miniMap(dr, sheetId, markups),
+    bookmarksCard(dr, sheetId),
     card(`Markups on this sheet (${markups.length})`, markupList(markups, dr.id)),
     crossLinks(dr),
     followCard(dr.id),
@@ -499,6 +500,57 @@ function sideColumn(dr, id, sheetId, markups, mode) {
       el("button", { class: "btn sm", onClick: () => navigate(`/ai?drawing=${dr.id}`) }, ["Open AI →"]),
     ])),
   ]);
+}
+
+function bookmarksCard(dr, sheetId) {
+  const key = SK(dr.id, "bookmarks");
+  let list;
+  try { list = JSON.parse(sessionStorage.getItem(key) || "[]"); } catch { list = []; }
+  const sheetList = list.filter(b => b.sheetId === sheetId);
+
+  const captureCurrent = () => {
+    let view; try { view = JSON.parse(sessionStorage.getItem(SK(dr.id, "view")) || "{}"); } catch { view = {}; }
+    const name = window.prompt("Bookmark name:", `View ${sheetList.length + 1}`);
+    if (!name) return;
+    const bookmark = {
+      id: "BM-" + Math.random().toString(36).slice(2, 8).toUpperCase(),
+      name,
+      sheetId,
+      view,
+      created_at: new Date().toISOString(),
+    };
+    list.push(bookmark);
+    sessionStorage.setItem(key, JSON.stringify(list));
+    audit("drawing.bookmark.create", bookmark.id, { drawingId: dr.id, sheetId });
+    renderDrawingViewer({ id: dr.id });
+  };
+
+  const goTo = (b) => {
+    if (b.sheetId !== sheetId) sessionStorage.setItem(SK(dr.id, "sheet"), b.sheetId);
+    sessionStorage.setItem(SK(dr.id, "view"), JSON.stringify(b.view || {}));
+    audit("drawing.bookmark.open", b.id, { drawingId: dr.id });
+    renderDrawingViewer({ id: dr.id });
+  };
+
+  const remove = (b) => {
+    const next = list.filter(x => x.id !== b.id);
+    sessionStorage.setItem(key, JSON.stringify(next));
+    audit("drawing.bookmark.delete", b.id, { drawingId: dr.id });
+    renderDrawingViewer({ id: dr.id });
+  };
+
+  return card("Snap-to-region bookmarks", el("div", { class: "stack" }, [
+    el("div", { class: "tiny muted" }, ["Capture the current zoom + pan as a named region. Click to snap back."]),
+    sheetList.length
+      ? el("div", { class: "stack" }, sheetList.map(b => el("div", { class: "activity-row" }, [
+          el("button", { class: "btn sm", onClick: () => goTo(b), "aria-label": `Snap to ${b.name}` }, ["📍"]),
+          el("span", { class: "small", style: { flex: 1 } }, [b.name]),
+          el("span", { class: "tiny muted mono" }, [`k=${(b.view?.k ?? 1).toFixed(2)}`]),
+          el("button", { class: "btn sm danger", onClick: () => remove(b), "aria-label": `Delete bookmark ${b.name}` }, ["×"]),
+        ])))
+      : el("div", { class: "muted tiny" }, ["No bookmarks for this sheet."]),
+    el("button", { class: "btn sm primary", onClick: captureCurrent }, ["+ Capture current view"]),
+  ]));
 }
 
 function miniMap(dr, sheetId, markups) {

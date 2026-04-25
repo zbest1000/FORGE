@@ -10,6 +10,7 @@ export const state = {
     role: "Engineer/Contributor",
     theme: "dark",
     dockVisible: true,
+    workspaceId: "WS-1",
     selectedTeamSpaceId: null,
     selectedChannelId: null,
     selectedProjectId: null,

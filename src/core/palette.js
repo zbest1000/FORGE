@@ -6,6 +6,7 @@ import { navigate } from "./router.js";
 import { SCREEN_ROUTES } from "./screens-registry.js";
 import { getServer } from "./i3x/client.js";
 import { vendor } from "./vendor.js";
+import { resolveGo } from "./go.js";
 
 let _fuseInstance = null;
 let _fuseEntries = [];
@@ -45,6 +46,11 @@ export function openPalette() {
     let matched;
     if (!q) {
       matched = allEntries.slice(0, 30);
+    } else if (q.toLowerCase().startsWith("/go ")) {
+      const route = resolveGo(q);
+      matched = route
+        ? [{ label: q, kind: "Go", meta: route, route }]
+        : [{ label: `No match for "${q.slice(4)}"`, kind: "Go", route: null }];
     } else if (_fuseInstance) {
       matched = _fuseInstance.search(q).map(r => r.item);
     } else {

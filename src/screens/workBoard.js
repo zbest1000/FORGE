@@ -52,6 +52,7 @@ export function renderWorkBoard({ id }) {
     view === "kanban"   ? kanbanView(items, batch, batchKey) :
     view === "table"    ? tableView(items, batch, batchKey) :
     view === "timeline" ? timelineView(items) :
+    view === "calendar" ? calendarView(items, id) :
     view === "deps"     ? dependencyView(items) :
     kanbanView(items, batch, batchKey),
     automationCard(project, id),
@@ -72,7 +73,7 @@ function header(project, view, filter, count, batch, viewKey, filterKey, batchKe
     el("div", { class: "row" }, [
       searchInput,
       el("div", { class: "row" },
-        ["kanban","table","timeline","deps"].map(v => el("button", {
+        ["kanban","table","timeline","calendar","deps"].map(v => el("button", {
           class: `btn sm ${view === v ? "primary" : ""}`,
           onClick: () => { sessionStorage.setItem(viewKey, v); renderWorkBoard({ id }); },
         }, [label(v)]))
@@ -82,7 +83,7 @@ function header(project, view, filter, count, batch, viewKey, filterKey, batchKe
   ]);
 }
 
-function label(v) { return ({ kanban: "Board", table: "Table", timeline: "Timeline", deps: "Dependencies" })[v] || v; }
+function label(v) { return ({ kanban: "Board", table: "Table", timeline: "Timeline", calendar: "Calendar", deps: "Dependencies" })[v] || v; }
 
 function filteredItems(projectId, filter) {
   const d = state.data;
@@ -294,6 +295,74 @@ function timelineView(items) {
   return card("Timeline", svg, { subtitle: "Today = dashed accent line. Bars colored by severity." });
 }
 
+// ---------- calendar (month grid by due date) ----------
+function calendarView(items, projectId) {
+  const monthKey = `board.cal.${projectId}`;
+  const cur = sessionStorage.getItem(monthKey);
+  const today = new Date();
+  const anchor = cur ? new Date(cur + "-01T00:00:00") : new Date(today.getFullYear(), today.getMonth(), 1);
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+
+  // Group items by ISO date.
+  const byDay = new Map();
+  for (const w of items) {
+    if (!w.due) continue;
+    const d = new Date(w.due);
+    if (d.getFullYear() !== year || d.getMonth() !== month) continue;
+    const k = d.toISOString().slice(0, 10);
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(w);
+  }
+
+  const monthLabel = anchor.toLocaleString(undefined, { month: "long", year: "numeric" });
+
+  const setMonth = (delta) => {
+    const next = new Date(year, month + delta, 1);
+    sessionStorage.setItem(monthKey, `${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,"0")}`);
+    renderWorkBoard({ id: projectId });
+  };
+
+  // First-of-month weekday (Mon=0 … Sun=6).
+  const first = new Date(year, month, 1);
+  const startCol = (first.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startCol; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
+  while (cells.length % 7) cells.push(null);
+
+  const headerRow = el("div", { class: "row spread", style: { marginBottom: "8px" } }, [
+    el("button", { class: "btn sm", onClick: () => setMonth(-1), "aria-label": "previous month" }, ["← Prev"]),
+    el("div", { class: "strong" }, [monthLabel]),
+    el("button", { class: "btn sm", onClick: () => setMonth(1), "aria-label": "next month" }, ["Next →"]),
+  ]);
+
+  const weekdayHeader = el("div", { class: "calendar-grid header" },
+    ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(n => el("div", { class: "calendar-cell head" }, [n]))
+  );
+
+  const grid = el("div", { class: "calendar-grid" }, cells.map(c => {
+    if (!c) return el("div", { class: "calendar-cell empty" });
+    const k = c.toISOString().slice(0, 10);
+    const list = byDay.get(k) || [];
+    const isToday = c.toDateString() === today.toDateString();
+    return el("div", { class: `calendar-cell ${isToday ? "today" : ""}` }, [
+      el("div", { class: "calendar-date" }, [String(c.getDate())]),
+      ...list.slice(0, 3).map(w => el("button", {
+        class: `calendar-pill sev-${w.severity || "low"}`,
+        title: w.title,
+        onClick: () => openItem(w.id),
+      }, [w.id + " · " + (w.title || "").slice(0, 18)])),
+      list.length > 3 ? el("div", { class: "tiny muted" }, ["+", String(list.length - 3), " more"]) : null,
+    ]);
+  }));
+
+  return card("Calendar", el("div", {}, [headerRow, weekdayHeader, grid]), {
+    subtitle: "Items plotted by due date. Click a pill to open. Spec §6.2.",
+  });
+}
+
 // ---------- dependency map ----------
 function dependencyView(items) {
   // Mermaid flowchart built from the blocked-by graph. Falls back to a
@@ -481,7 +550,7 @@ function diff(a, b) {
 
 function openNewItem(projectId) {
   const titleInput = input({ placeholder: "Short title" });
-  const typeSelect = select(["Task","Issue","Action","RFI","Punch","Defect","CAPA","Change"]);
+  const typeSelect = select(["Task","Issue","Action","RFI","NCR","Punch","Defect","CAPA","Change"]);
   const severitySelect = select(["low","medium","high","critical"], { value: "medium" });
   const assigneeSelect = select(state.data.users.map(u => ({ value: u.id, label: u.name })));
   modal({
