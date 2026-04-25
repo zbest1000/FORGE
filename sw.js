@@ -21,13 +21,15 @@ if (!self.workbox) {
   const { precaching, routing, strategies, expiration, backgroundSync } = workbox;
 
   // ---------- pre-cache the SPA shell ----------
+  const SHELL_REVISION = "enterprise-ux-v2";
+
   precaching.precacheAndRoute([
-    { url: "/",                       revision: "v1" },
-    { url: "/index.html",             revision: "v1" },
-    { url: "/styles.css",             revision: "v1" },
-    { url: "/app.js",                 revision: "v1" },
-    { url: "/manifest.webmanifest",   revision: "v1" },
-    { url: "/icon.svg",               revision: "v1" },
+    { url: "/",                       revision: SHELL_REVISION },
+    { url: "/index.html",             revision: SHELL_REVISION },
+    { url: "/styles.css",             revision: SHELL_REVISION },
+    { url: "/app.js",                 revision: SHELL_REVISION },
+    { url: "/manifest.webmanifest",   revision: SHELL_REVISION },
+    { url: "/icon.svg",               revision: SHELL_REVISION },
   ]);
 
   // ---------- static assets: stale-while-revalidate ----------
@@ -39,7 +41,7 @@ if (!self.workbox) {
        request.destination === "image"  ||
        url.pathname.startsWith("/src/")),
     new strategies.StaleWhileRevalidate({
-      cacheName: "forge-static",
+      cacheName: `forge-static-${SHELL_REVISION}`,
       plugins: [new expiration.ExpirationPlugin({ maxEntries: 200, maxAgeSeconds: 30 * 86400 })],
     })
   );

@@ -78,6 +78,12 @@ function matches(path, route) {
   const p = (path || "").split("?")[0];
   if (route === "/home") return p === "/home";
   if (route === "/hub")  return p === "/hub";
+  if (route === "/docs") return p === "/docs" || p.startsWith("/doc/") || p.startsWith("/compare/");
+  if (route === "/drawings") return p === "/drawings" || p.startsWith("/drawing/");
+  if (route === "/projects") return p === "/projects" || p.startsWith("/work-board/") || p === "/approvals";
+  if (route === "/assets") return p === "/assets" || p.startsWith("/asset/") || p === "/uns" || p === "/i3x";
+  if (route === "/incidents") return p === "/incidents" || p.startsWith("/incident/");
+  if (route === "/team-spaces") return p === "/team-spaces" || p.startsWith("/team-space/") || p.startsWith("/channel/");
   const base = route.split("/")[1];
   return p.startsWith("/" + base);
 }

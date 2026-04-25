@@ -166,9 +166,10 @@ button {
 }
 
 .rail-btn.active {
-  background: var(--elevated);
-  color: var(--accent);
+  background: var(--accent);
+  color: #0b1220;
   border-color: var(--accent);
+  box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 88%, white 12%);
 }
 
 .rail-btn .rail-icon {
@@ -835,7 +836,7 @@ button {
   border: 1px solid var(--border);
   border-left: 4px solid var(--info);
   border-radius: var(--radius-lg);
-  background: var(--surface);
+  background: var(--panel);
 }
 
 .revision-safety-banner.success {
@@ -854,6 +855,13 @@ button {
   color: var(--text-strong);
   font-size: 15px;
   font-weight: 700;
+}
+
+.revision-safety-state {
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .revision-safety-kicker {

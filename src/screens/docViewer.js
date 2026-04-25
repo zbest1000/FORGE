@@ -73,7 +73,7 @@ function revisionSafetyBanner(doc, rev) {
     : status === "IFC" || status === "Approved" ? "success"
     : status === "IFR" ? "info"
     : "warn";
-  const title = !isCurrent
+  const stateLabel = !isCurrent
     ? `Viewing historical revision ${rev.label}`
     : status === "Superseded"
       ? `Current pointer is superseded: Rev ${rev.label}`
@@ -92,7 +92,8 @@ function revisionSafetyBanner(doc, rev) {
   return el("section", { class: `revision-safety-banner ${variant}`, "aria-live": "polite" }, [
     el("div", { class: "revision-safety-main" }, [
       el("div", { class: "revision-safety-kicker" }, ["Document control"]),
-      el("div", { class: "revision-safety-title" }, [title]),
+      el("div", { class: "revision-safety-title" }, [doc.name]),
+      el("div", { class: "revision-safety-state" }, [stateLabel]),
       el("div", { class: "revision-safety-guidance" }, [guidance]),
     ]),
     el("div", { class: "revision-safety-actions" }, [
@@ -122,8 +123,6 @@ function metadataBar(doc, rev) {
     ]),
     el("div", { class: "row" }, [
       el("button", { class: "btn sm", onClick: () => followToggle(doc.id) }, [isFollowing(doc.id) ? "Unfollow" : "Follow"]),
-      el("button", { class: "btn sm", onClick: () => navigate(`/compare/${rev.id}/${pickOther(doc, rev)}`) }, ["Compare ⇄"]),
-      el("button", { class: "btn sm primary", disabled: !can("approve"), onClick: () => navigate("/approvals") }, ["Approvals →"]),
     ]),
   ]);
 }
