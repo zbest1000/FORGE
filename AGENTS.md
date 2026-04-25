@@ -10,6 +10,10 @@ client (see `README.md` and `docs/SERVER.md` for a feature overview).
   starting the app, run modes (the "feature flag" toggle between server and
   demo mode), capability/role bypass, env vars, and per-area test workflows
   (server routes, audit ledger, SPA, i3X, MQTT bridge, search, Docker).
+- **`.claude/skills/enterprise-ux-audit/SKILL.md`** — Enterprise UI/UX audit
+  skill. Use it when reviewing FORGE's information architecture, product
+  experience, accessibility, design system, or frontend component direction.
+  The baseline report lives at `docs/ENTERPRISE_UX_REDESIGN_AUDIT.md`.
 
 When you discover new testing tricks or runbook knowledge, update
 `.cursor/skills/runbook.md` in the same PR — see its **Updating this skill**
