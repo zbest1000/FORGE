@@ -28,11 +28,16 @@ FROM node:20-bookworm-slim
 ENV NODE_ENV=production
 WORKDIR /app
 
-# Runtime libs for native bindings + LibreDWG (libredwg-tools provides
-# `dwg2dxf`, GPL-3.0). It runs as a subprocess so its license affects
-# only its own binary, not FORGE's code.
+# Runtime libs for native bindings. `libredwg-tools` provides `dwg2dxf`
+# (GPL-3.0; runs as a subprocess so its license affects only its own
+# binary, not FORGE's code) but is not always available in the base
+# image's apt sources (e.g. Debian bookworm where it is still ITP).
+# Install it best-effort: when missing, the server falls back to a
+# "converter not installed" response (see server/converters/dwg.js).
 RUN apt-get update -qq \
- && apt-get install -y --no-install-recommends ca-certificates tini libredwg-tools \
+ && apt-get install -y --no-install-recommends ca-certificates tini \
+ && (apt-get install -y --no-install-recommends libredwg-tools \
+      || echo "WARN: libredwg-tools unavailable; DWG → DXF conversion will be disabled. Set FORGE_DWG2DXF to override.") \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /app/data && chown -R node:node /app
 
