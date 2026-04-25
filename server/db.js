@@ -19,7 +19,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -408,6 +408,11 @@ function migrate() {
       setVersion(2);
     }
 
+    // -- v4: review cycles, form submissions, commissioning, webhook
+    // deliveries (for retry+back-off), metrics roll-ups, model pins, RFI
+    // links, search-alert subscriptions, drawing ingestion records.
+    // (Defined below; declared first so v3 still applies in order.)
+
     // -- v3: API tokens + webhooks + MFA secrets --
     if (getVersion() < 3) {
       db.exec(`
@@ -447,6 +452,109 @@ function migrate() {
         );
       `);
       setVersion(3);
+    }
+
+    if (getVersion() < 4) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS review_cycles (
+          id TEXT PRIMARY KEY,
+          doc_id TEXT NOT NULL,
+          rev_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          reviewers TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL DEFAULT 'open',
+          due_ts TEXT,
+          notes TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          closed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_review_cycles_doc_rev ON review_cycles(doc_id, rev_id);
+
+        CREATE TABLE IF NOT EXISTS form_submissions (
+          id TEXT PRIMARY KEY,
+          form_id TEXT NOT NULL,
+          parent_kind TEXT,
+          parent_id TEXT,
+          submitter_id TEXT,
+          ts TEXT NOT NULL,
+          answers TEXT NOT NULL DEFAULT '{}',
+          signature TEXT,
+          signature_key_id TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS commissioning_checklists (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          system TEXT,
+          panel TEXT,
+          package TEXT,
+          items TEXT NOT NULL DEFAULT '[]',
+          completed TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS rfi_links (
+          rfi_id TEXT NOT NULL,
+          target_kind TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          relation TEXT,
+          PRIMARY KEY (rfi_id, target_kind, target_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS webhook_deliveries (
+          id TEXT PRIMARY KEY,
+          webhook_id TEXT NOT NULL,
+          event_id TEXT,
+          event_type TEXT,
+          attempt INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending',
+          last_error TEXT,
+          next_attempt_at TEXT,
+          delivered_at TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_wh_pending ON webhook_deliveries(status, next_attempt_at);
+
+        CREATE TABLE IF NOT EXISTS search_alerts (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          query TEXT NOT NULL,
+          last_run_at TEXT,
+          last_seen_ids TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS metrics_daily (
+          day TEXT NOT NULL,
+          metric TEXT NOT NULL,
+          value REAL NOT NULL,
+          PRIMARY KEY (day, metric)
+        );
+
+        CREATE TABLE IF NOT EXISTS model_pins (
+          id TEXT PRIMARY KEY,
+          drawing_id TEXT NOT NULL,
+          element_id TEXT NOT NULL,
+          author TEXT,
+          text TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS drawing_uploads (
+          id TEXT PRIMARY KEY,
+          drawing_id TEXT NOT NULL,
+          file_id TEXT NOT NULL,
+          parsed_metadata TEXT NOT NULL DEFAULT '{}',
+          revision_id TEXT,
+          reviewer_id TEXT,
+          created_at TEXT NOT NULL
+        );
+      `);
+      setVersion(4);
     }
   })();
 }

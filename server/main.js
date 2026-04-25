@@ -24,9 +24,12 @@ import i3xRoutes from "./routes/i3x.js";
 import fileRoutes from "./routes/files.js";
 import tokenRoutes from "./routes/tokens.js";
 import webhookRoutes from "./routes/webhooks.js";
+import extrasRoutes from "./routes/extras.js";
 
 import { startMqttBridge } from "./connectors/mqtt.js";
 import { startOpcuaBridge } from "./connectors/opcua.js";
+import { startAlertWorker } from "./alerts.js";
+import { startRollupWorker, readSeries, listDailySnapshot } from "./metrics-rollup.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -130,8 +133,17 @@ await app.register(i3xRoutes);
 await app.register(fileRoutes);
 await app.register(tokenRoutes);
 await app.register(webhookRoutes);
+await app.register(extrasRoutes);
 attachSSE(app);
 registerMetrics(app);
+
+// §19 success-metrics endpoints (live + historical).
+app.get("/api/metrics/series", async (req) => {
+  const metric = req.query?.metric || "wau";
+  const days = Math.min(60, Number(req.query?.days || 14));
+  return readSeries(metric, days);
+});
+app.get("/api/metrics/snapshot", async () => listDailySnapshot());
 
 // Serve the static client from the repo root.
 await app.register(fStatic, {
@@ -158,9 +170,11 @@ app.setNotFoundHandler((req, reply) => {
   return reply.type("text/html").send(fs.readFileSync(path.join(ROOT, "index.html")));
 });
 
-// Start optional ingress bridges.
+// Start optional ingress bridges + background workers.
 startMqttBridge(app.log);
 startOpcuaBridge(app.log);
+startAlertWorker(app.log);
+startRollupWorker(app.log);
 
 // Record boot in the audit ledger.
 audit({ actor: "system", action: "server.start", subject: "forge", detail: { host: HOST, port: PORT, pid: process.pid } });

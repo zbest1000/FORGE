@@ -16,6 +16,8 @@ function sign(secret, body) {
   return "sha256=" + crypto.createHmac("sha256", secret).update(body).digest("hex");
 }
 
+function safeParse(s) { try { return JSON.parse(s); } catch { return null; } }
+
 export function listWebhooks() {
   return db.prepare("SELECT id, name, url, events, enabled, last_success_at, last_error, last_error_at, created_at, created_by FROM webhooks ORDER BY created_at DESC").all()
     .map(r => ({ ...r, events: JSON.parse(r.events || "[]"), enabled: !!r.enabled }));
@@ -49,9 +51,9 @@ export function deleteWebhook(id, actor) {
 }
 
 /**
- * Dispatch an event to all matching webhooks. Fire-and-forget: we don't
- * await network calls from inside a SQLite transaction. Results land in
- * `last_success_at` / `last_error` for operator visibility.
+ * Dispatch an event to all matching webhooks. Persists a delivery row per
+ * matching webhook so a worker can retry with exponential back-off
+ * (spec §9.1 "retries"). Returns immediately.
  */
 export function dispatchEvent(eventType, payload) {
   const rows = db.prepare("SELECT * FROM webhooks WHERE enabled = 1").all();
@@ -61,36 +63,100 @@ export function dispatchEvent(eventType, payload) {
     if (!list.length || list.includes("*")) return true;
     return list.includes(eventType);
   };
-  const body = JSON.stringify({ id: uuid("WHD"), type: eventType, ts: new Date().toISOString(), payload });
+  const eventId = (payload && payload.event_id) || uuid("WHD");
   for (const row of rows) {
     if (!match(row.events)) continue;
-    const delivery = uuid("delivery").toLowerCase();
-    const signature = sign(row.secret, body);
-    send(row, eventType, delivery, signature, body);
+    const id = uuid("delivery").toLowerCase();
+    db.prepare(`INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, attempt, status, last_error, next_attempt_at, delivered_at, created_at)
+                VALUES (@id, @wh, @ev, @type, 0, 'pending', NULL, @now, NULL, @now)`)
+      .run({ id, wh: row.id, ev: eventId, type: eventType, now: now() });
+    // Cache the body on the delivery via a simple key-value workaround: we
+    // store on disk-by-event would over-engineer; instead reconstruct the
+    // body when sending using the audit log. For demo speed we keep the
+    // body inline in the audit detail.
+    audit({ actor: "webhooks", action: "webhook.queued", subject: row.id, detail: { deliveryId: id, eventType, body: payload } });
+  }
+  // Kick the worker if not already running.
+  ensureWorker();
+}
+
+const MAX_ATTEMPTS = 6;
+const BACKOFF_MS = [0, 5_000, 15_000, 60_000, 5*60_000, 30*60_000]; // 0s, 5s, 15s, 1m, 5m, 30m
+let _workerHandle = null;
+
+function ensureWorker() {
+  if (_workerHandle) return;
+  _workerHandle = setInterval(tick, 5_000);
+  if (typeof _workerHandle.unref === "function") _workerHandle.unref();
+}
+
+async function tick() {
+  // Pick up to 20 due deliveries in `pending` or `failed-retry` state.
+  const due = db.prepare(`
+    SELECT * FROM webhook_deliveries
+    WHERE status IN ('pending','failed-retry')
+      AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+    ORDER BY created_at
+    LIMIT 20
+  `).all(now());
+  if (!due.length) return;
+  for (const d of due) {
+    const wh = db.prepare("SELECT * FROM webhooks WHERE id = ?").get(d.webhook_id);
+    if (!wh || !wh.enabled) {
+      db.prepare("UPDATE webhook_deliveries SET status = 'cancelled' WHERE id = ?").run(d.id);
+      continue;
+    }
+    // Recover the body from the most recent matching audit entry.
+    // `audit_log.detail` is stored as JSON; once parsed, `body` is already
+    // an object (or null).
+    const audited = db.prepare("SELECT detail FROM audit_log WHERE action = 'webhook.queued' AND subject = ? AND json_extract(detail, '$.deliveryId') = ? ORDER BY seq DESC LIMIT 1").get(wh.id, d.id);
+    const detail = audited ? safeParse(audited.detail) : null;
+    const payload = detail?.body ?? {};
+    const wireBody = JSON.stringify({ id: uuid("WHD"), type: d.event_type, ts: new Date().toISOString(), payload });
+    const signature = sign(wh.secret, wireBody);
+    const attempt = d.attempt + 1;
+    try {
+      const ac = new AbortController();
+      const tmo = setTimeout(() => ac.abort(), 8000);
+      const res = await fetch(wh.url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-FORGE-Signature": signature,
+          "X-FORGE-Event": d.event_type,
+          "X-FORGE-Delivery": d.id,
+          "X-FORGE-Attempt": String(attempt),
+        },
+        body: wireBody,
+        signal: ac.signal,
+      });
+      clearTimeout(tmo);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      db.prepare("UPDATE webhook_deliveries SET status = 'delivered', delivered_at = ?, attempt = ?, last_error = NULL WHERE id = ?")
+        .run(now(), attempt, d.id);
+      db.prepare("UPDATE webhooks SET last_success_at = ?, last_error = NULL, last_error_at = NULL WHERE id = ?").run(now(), wh.id);
+      audit({ actor: "webhooks", action: "webhook.delivered", subject: wh.id, detail: { deliveryId: d.id, attempt, eventType: d.event_type } });
+    } catch (err) {
+      const errMsg = String(err?.message || err);
+      if (attempt >= MAX_ATTEMPTS) {
+        db.prepare("UPDATE webhook_deliveries SET status = 'failed', attempt = ?, last_error = ? WHERE id = ?").run(attempt, errMsg, d.id);
+        // Move to DLQ for manual inspection.
+        db.prepare("INSERT INTO dead_letters (id, ts, envelope, error, resolved) VALUES (?, ?, ?, ?, 0)")
+          .run(uuid("DLQ"), now(), JSON.stringify({ kind: "webhook", deliveryId: d.id, webhookId: wh.id, body: payload }), errMsg);
+        audit({ actor: "webhooks", action: "webhook.failed", subject: wh.id, detail: { deliveryId: d.id, attempt, error: errMsg } });
+      } else {
+        const wait = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
+        const next = new Date(Date.now() + wait).toISOString();
+        db.prepare("UPDATE webhook_deliveries SET status = 'failed-retry', attempt = ?, last_error = ?, next_attempt_at = ? WHERE id = ?")
+          .run(attempt, errMsg, next, d.id);
+        db.prepare("UPDATE webhooks SET last_error = ?, last_error_at = ? WHERE id = ?").run(errMsg, now(), wh.id);
+        audit({ actor: "webhooks", action: "webhook.retry", subject: wh.id, detail: { deliveryId: d.id, attempt, nextAttemptAt: next, error: errMsg } });
+      }
+    }
   }
 }
 
-async function send(row, eventType, delivery, signature, body) {
-  try {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 8000);
-    const res = await fetch(row.url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "X-FORGE-Signature": signature,
-        "X-FORGE-Event": eventType,
-        "X-FORGE-Delivery": delivery,
-      },
-      body,
-      signal: ac.signal,
-    });
-    clearTimeout(t);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    db.prepare("UPDATE webhooks SET last_success_at = ?, last_error = NULL, last_error_at = NULL WHERE id = ?").run(now(), row.id);
-    audit({ actor: "webhooks", action: "webhook.delivered", subject: row.id, detail: { eventType, delivery } });
-  } catch (err) {
-    db.prepare("UPDATE webhooks SET last_error = ?, last_error_at = ? WHERE id = ?").run(String(err?.message || err), now(), row.id);
-    audit({ actor: "webhooks", action: "webhook.failed", subject: row.id, detail: { eventType, delivery, error: String(err?.message || err) } });
-  }
+export function listDeliveries(webhookId, limit = 50) {
+  if (webhookId) return db.prepare("SELECT * FROM webhook_deliveries WHERE webhook_id = ? ORDER BY created_at DESC LIMIT ?").all(webhookId, limit);
+  return db.prepare("SELECT * FROM webhook_deliveries ORDER BY created_at DESC LIMIT ?").all(limit);
 }

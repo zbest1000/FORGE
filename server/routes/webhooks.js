@@ -1,7 +1,7 @@
 // Admin-only CRUD for webhooks.
 
 import { require_ } from "../auth.js";
-import { listWebhooks, createWebhook, toggleWebhook, deleteWebhook } from "../webhooks.js";
+import { listWebhooks, createWebhook, toggleWebhook, deleteWebhook, listDeliveries } from "../webhooks.js";
 
 export default async function webhookRoutes(fastify) {
   fastify.get("/api/webhooks", { preHandler: require_("admin.view") }, async () => listWebhooks());
@@ -22,5 +22,9 @@ export default async function webhookRoutes(fastify) {
   fastify.delete("/api/webhooks/:id", { preHandler: require_("admin.view") }, async (req, reply) => {
     deleteWebhook(req.params.id, req.user.id);
     return { ok: true };
+  });
+
+  fastify.get("/api/webhooks/:id/deliveries", { preHandler: require_("admin.view") }, async (req) => {
+    return listDeliveries(req.params.id, Number(req.query?.limit || 50));
   });
 }
