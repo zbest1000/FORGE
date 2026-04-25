@@ -124,19 +124,32 @@ function paperPage(doc, rev, page) {
     ...comments.map(c => commentPin(c)),
   ]);
 
-  // If the revision has a pdfUrl, render it with PDF.js (Mozilla, Apache 2.0).
-  // This replaces the synthetic paper with the real document when available.
-  if (rev.pdfUrl) {
-    const pdfHost = document.createElement("div");
-    pdfHost.className = "pdf-host";
-    pdfHost.style.minHeight = "420px";
-    pdfHost.textContent = "Loading PDF…";
+  // If the revision has an attached URL, pick the renderer by content kind.
+  const url = rev.pdfUrl || rev.assetUrl || null;
+  const kind = detectKind(url, rev.assetMime);
+  if (url && kind) {
+    const host = document.createElement("div");
+    host.className = "asset-host";
+    host.style.minHeight = "420px";
+    host.textContent = "Loading…";
     (async () => {
-      const pdf = await openPdf(rev.pdfUrl);
-      if (!pdf) { pdfHost.textContent = "PDF.js unavailable — showing placeholder."; return; }
-      await renderPage(pdf, Math.min(page, pdf.numPages), pdfHost);
+      try {
+        if (kind === "pdf") {
+          const pdf = await openPdf(url);
+          if (!pdf) { host.textContent = "PDF.js unavailable — showing placeholder."; return; }
+          await renderPage(pdf, Math.min(page, pdf.numPages), host);
+        } else if (kind === "image") {
+          host.replaceChildren(el("img", { src: url, alt: doc.name + " — page " + page, style: { maxWidth: "100%", border: "1px solid var(--border)", borderRadius: "6px", background: "#fff" } }));
+        } else if (kind === "csv") {
+          const text = await fetch(url).then(r => r.text()).catch(() => null);
+          if (!text) { host.textContent = "Failed to load CSV."; return; }
+          host.replaceChildren(renderCsvTable(text));
+        }
+      } catch (e) {
+        host.textContent = "Failed to render: " + e.message;
+      }
     })();
-    container.replaceChildren(pdfHost);
+    container.replaceChildren(host);
     for (const c of comments) container.append(commentPin(c));
   }
 
@@ -417,12 +430,78 @@ function convertCommentToIssue(c) {
 }
 
 function attachPdf(doc, rev) {
-  const url = window.prompt("PDF URL (must be CORS-enabled):", rev.pdfUrl || "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf");
+  const url = window.prompt(
+    "Attach a URL — supported: PDF (.pdf), image (.png/.jpg/.svg), spreadsheet (.csv).\nMust be CORS-enabled.",
+    rev.pdfUrl || rev.assetUrl || "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf"
+  );
   if (!url) return;
-  update(s => { const r = s.data.revisions.find(x => x.id === rev.id); if (r) r.pdfUrl = url; });
-  audit("revision.pdf.attach", rev.id, { url });
-  toast("PDF attached — re-rendering with PDF.js", "success");
+  const kind = detectKind(url);
+  update(s => {
+    const r = s.data.revisions.find(x => x.id === rev.id);
+    if (!r) return;
+    if (kind === "pdf") { r.pdfUrl = url; r.assetUrl = null; }
+    else { r.assetUrl = url; r.pdfUrl = null; r.assetMime = guessMime(url); }
+  });
+  audit("revision.asset.attach", rev.id, { url, kind: kind || "unknown" });
+  toast(`${kind ? kind.toUpperCase() : "Asset"} attached — re-rendering`, "success");
   renderDocViewer({ id: doc.id });
+}
+
+function detectKind(url, mime) {
+  if (!url) return null;
+  const u = String(url).toLowerCase();
+  if (mime?.startsWith("image/") || /\.(png|jpe?g|svg|webp|gif)(\?|#|$)/i.test(u)) return "image";
+  if (mime === "text/csv" || /\.csv(\?|#|$)/i.test(u)) return "csv";
+  if (mime?.includes("pdf") || /\.pdf(\?|#|$)/i.test(u)) return "pdf";
+  return null;
+}
+
+function guessMime(url) {
+  const u = url.toLowerCase();
+  if (u.endsWith(".png")) return "image/png";
+  if (u.endsWith(".jpg") || u.endsWith(".jpeg")) return "image/jpeg";
+  if (u.endsWith(".svg")) return "image/svg+xml";
+  if (u.endsWith(".csv")) return "text/csv";
+  if (u.endsWith(".pdf")) return "application/pdf";
+  return "application/octet-stream";
+}
+
+function renderCsvTable(text) {
+  // Simple, dependency-free CSV parser (handles quoted fields and embedded
+  // commas). Sufficient for read-only preview; for production use SheetJS.
+  const rows = parseCSV(text);
+  if (!rows.length) return el("div", { class: "muted" }, ["Empty CSV."]);
+  const headers = rows[0];
+  const body = rows.slice(1, 200);
+  return el("div", { style: { overflow: "auto", maxHeight: "60vh" } }, [
+    el("table", { class: "table" }, [
+      el("thead", {}, [el("tr", {}, headers.map(h => el("th", {}, [h])))]),
+      el("tbody", {}, body.map(r => el("tr", {}, headers.map((_, i) => el("td", {}, [r[i] ?? ""]))))),
+    ]),
+    rows.length > 200 ? el("div", { class: "tiny muted", style: { padding: "8px" } }, [`Showing 200 of ${rows.length - 1} rows.`]) : null,
+  ]);
+}
+
+function parseCSV(text) {
+  const out = [];
+  let row = [], field = "", inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else { inQ = false; }
+      } else { field += c; }
+    } else {
+      if (c === '"') inQ = true;
+      else if (c === ",") { row.push(field); field = ""; }
+      else if (c === "\n") { row.push(field); out.push(row); row = []; field = ""; }
+      else if (c === "\r") { /* ignore */ }
+      else { field += c; }
+    }
+  }
+  if (field || row.length) { row.push(field); out.push(row); }
+  return out.filter(r => r.length && (r.length > 1 || r[0] !== ""));
 }
 
 function draftTransmittal(doc, rev) {

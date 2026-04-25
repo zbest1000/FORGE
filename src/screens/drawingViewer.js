@@ -38,7 +38,7 @@ export function renderDrawingsIndex() {
 
 const SK = (drawingId, k) => `drawing.${drawingId}.${k}`;
 
-const TOOLS = ["pan", "measure", "arrow", "cloud", "highlight", "text", "stamp", "status", "pin"];
+const TOOLS = ["pan", "measure", "arrow", "callout", "cloud", "highlight", "text", "stamp", "status", "pin"];
 
 export function renderDrawingViewer({ id }) {
   const root = document.getElementById("screenContainer");
@@ -116,7 +116,7 @@ function toolbar(dr, sheetId, mode, tool, layers, compareWithId, overlayOpacity)
 
 function sep() { return el("span", { style: { width: "1px", height: "22px", background: "var(--border)", margin: "0 4px" } }); }
 function toolIcon(t) {
-  const map = { pan: "✋", measure: "📏", arrow: "➜", cloud: "☁", highlight: "▮", text: "T", stamp: "⛊", status: "●", pin: "📍" };
+  const map = { pan: "✋", measure: "📏", arrow: "➜", callout: "💬", cloud: "☁", highlight: "▮", text: "T", stamp: "⛊", status: "●", pin: "📍" };
   return map[t] || t;
 }
 
@@ -413,11 +413,36 @@ function renderMarkup(m) {
       line.setAttribute("stroke", "#ef4444"); line.setAttribute("stroke-width", 2);
       line.setAttribute("marker-end", "url(#arrow)");
       g.append(line);
-      // simple arrowhead
       const head = document.createElementNS(NS, "polygon");
       head.setAttribute("points", `${x},${y} ${x-10},${y-5} ${x-10},${y+5}`);
       head.setAttribute("fill", "#ef4444");
       g.append(head);
+      break;
+    }
+    case "callout": {
+      // Connector + bubble. Anchor (x,y) with bubble offset to upper-left.
+      const bx = x - 110, by = y - 70;
+      const bw = 160, bh = 40;
+      const conn = document.createElementNS(NS, "line");
+      conn.setAttribute("x1", x); conn.setAttribute("y1", y);
+      conn.setAttribute("x2", bx + bw); conn.setAttribute("y2", by + bh);
+      conn.setAttribute("stroke", "#0ea5e9"); conn.setAttribute("stroke-width", 1.5);
+      g.append(conn);
+      const dot = document.createElementNS(NS, "circle");
+      dot.setAttribute("cx", x); dot.setAttribute("cy", y); dot.setAttribute("r", 4);
+      dot.setAttribute("fill", "#0ea5e9");
+      g.append(dot);
+      const bubble = document.createElementNS(NS, "rect");
+      bubble.setAttribute("x", bx); bubble.setAttribute("y", by);
+      bubble.setAttribute("width", bw); bubble.setAttribute("height", bh);
+      bubble.setAttribute("rx", 6);
+      bubble.setAttribute("fill", "#fff"); bubble.setAttribute("stroke", "#0ea5e9"); bubble.setAttribute("stroke-width", 1.5);
+      g.append(bubble);
+      const tx = document.createElementNS(NS, "text");
+      tx.setAttribute("x", bx + 8); tx.setAttribute("y", by + 24);
+      tx.setAttribute("fill", "#0f172a"); tx.setAttribute("font-size", 12);
+      tx.textContent = (m.text || "Callout").slice(0, 22);
+      g.append(tx);
       break;
     }
     case "cloud": {

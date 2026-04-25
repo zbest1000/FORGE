@@ -24,8 +24,10 @@ export function renderRail() {
   const root = document.getElementById("farLeftRail");
   const path = state.route || "/home";
 
+  root.setAttribute("role", "navigation");
+  root.setAttribute("aria-label", "Primary navigation");
   mount(root, [
-    el("div", { class: "rail-logo", title: "FORGE" }, ["FORGE"]),
+    el("div", { class: "rail-logo", title: "FORGE", "aria-hidden": "true" }, ["FORGE"]),
     workspaceSwitcher(),
     ...ITEMS.map(item =>
       el("button", {

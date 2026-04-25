@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FORGE — Engineering Collaboration Platform</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#0ea5e9" />
 
     <!--
       Import map — third-party OSS loaded as ES modules via esm.sh.
@@ -38,20 +41,21 @@
     <link rel="stylesheet" href="https://esm.sh/uplot@1.6.31/dist/uPlot.min.css" onerror="this.remove()" />
   </head>
   <body class="theme-dark">
+    <a href="#screenContainer" class="skip-link">Skip to main content</a>
     <div id="app" class="app-shell">
-      <aside class="far-left-rail" id="farLeftRail"></aside>
-      <aside class="left-panel" id="leftPanel"></aside>
-      <main class="main-content">
+      <aside class="far-left-rail" id="farLeftRail" aria-label="Primary navigation"></aside>
+      <aside class="left-panel" id="leftPanel" aria-label="Workspace navigator"></aside>
+      <main class="main-content" aria-label="Main content">
         <header class="main-header" id="mainHeader"></header>
-        <section id="screenContainer" class="screen-container"></section>
+        <section id="screenContainer" class="screen-container" tabindex="-1"></section>
       </main>
-      <aside class="right-context-panel" id="contextPanel"></aside>
+      <aside class="right-context-panel" id="contextPanel" aria-label="Context panel"></aside>
     </div>
 
     <section id="operationsDock" class="operations-dock hidden"></section>
 
     <div id="modalRoot"></div>
-    <div id="toastRoot" class="toast-root"></div>
+    <div id="toastRoot" class="toast-root" role="status" aria-live="polite" aria-atomic="false"></div>
     <div id="paletteRoot"></div>
 
     <script type="module" src="app.js"></script>
