@@ -110,10 +110,33 @@ test("RFI links: add + list + delete", async () => {
   assert.equal(a.status, 200);
   const list = await req("/api/rfi/WI-RFI/links");
   assert.equal(list.body.length, 1);
+
+  // DELETE without query params must reject (previously returned ok with no
+  // rows touched, hiding caller bugs).
+  const badDel = await req("/api/rfi/WI-RFI/links", { method: "DELETE", headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(badDel.status, 400);
+  const stillThere = await req("/api/rfi/WI-RFI/links");
+  assert.equal(stillThere.body.length, 1);
+
   const del = await req("/api/rfi/WI-RFI/links?targetKind=drawing&targetId=DRW-1", { method: "DELETE", headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(del.status, 200);
+  assert.equal(del.body.removed, 1);
   const list2 = await req("/api/rfi/WI-RFI/links");
   assert.equal(list2.body.length, 0);
+});
+
+test("drawing ingest rejects when drawing has no parent document", async () => {
+  // Drawing inserted in fixtures has doc_id=DOC-1; a fresh drawing with no
+  // parent must NOT silently create a revision pointing at the drawing id.
+  const tsNow = new Date().toISOString();
+  db.prepare("INSERT INTO drawings (id, doc_id, team_space_id, project_id, name, discipline, sheets, acl, labels, created_at, updated_at) VALUES ('DRW-ORPH', NULL, NULL, NULL, 'Orphan', 'Process', '[]', '{}', '[]', ?, ?)").run(tsNow, tsNow);
+  db.prepare("INSERT INTO files (id, parent_kind, parent_id, name, mime, size, sha256, path, created_by, created_at) VALUES ('F-ING','drawing','DRW-ORPH','D-100-Rev-C.pdf','application/pdf',1,'h','/tmp/x','U-X',?)").run(tsNow);
+
+  const r = await req("/api/drawings/DRW-ORPH/ingest", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ fileId: "F-ING" }) });
+  assert.equal(r.status, 409);
+  // No revision created.
+  const orph = db.prepare("SELECT COUNT(*) AS n FROM revisions WHERE doc_id = ?").get("DRW-ORPH").n;
+  assert.equal(orph, 0);
 });
 
 test("model pin: create + list", async () => {
