@@ -18,6 +18,7 @@ import { can } from "../core/permissions.js";
 import { follow, unfollow, isFollowing } from "../core/subscriptions.js";
 import { impactOfRevision } from "../core/revisions.js";
 import { openPdf, renderPage } from "../core/pdf.js";
+import { parseCSV } from "../core/csv.js";
 
 export function renderDocsIndex() {
   const root = document.getElementById("screenContainer");
@@ -143,7 +144,8 @@ function paperPage(doc, rev, page) {
         } else if (kind === "csv") {
           const text = await fetch(url).then(r => r.text()).catch(() => null);
           if (!text) { host.textContent = "Failed to load CSV."; return; }
-          host.replaceChildren(renderCsvTable(text));
+          const parsed = await parseCSV(text);
+          host.replaceChildren(renderCsvTable(parsed));
         }
       } catch (e) {
         host.textContent = "Failed to render: " + e.message;
@@ -466,42 +468,17 @@ function guessMime(url) {
   return "application/octet-stream";
 }
 
-function renderCsvTable(text) {
-  // Simple, dependency-free CSV parser (handles quoted fields and embedded
-  // commas). Sufficient for read-only preview; for production use SheetJS.
-  const rows = parseCSV(text);
-  if (!rows.length) return el("div", { class: "muted" }, ["Empty CSV."]);
-  const headers = rows[0];
-  const body = rows.slice(1, 200);
+function renderCsvTable(parsed) {
+  const { headers = [], rows = [] } = parsed || {};
+  if (!headers.length && !rows.length) return el("div", { class: "muted" }, ["Empty CSV."]);
+  const body = rows.slice(0, 200);
   return el("div", { style: { overflow: "auto", maxHeight: "60vh" } }, [
     el("table", { class: "table" }, [
       el("thead", {}, [el("tr", {}, headers.map(h => el("th", {}, [h])))]),
       el("tbody", {}, body.map(r => el("tr", {}, headers.map((_, i) => el("td", {}, [r[i] ?? ""]))))),
     ]),
-    rows.length > 200 ? el("div", { class: "tiny muted", style: { padding: "8px" } }, [`Showing 200 of ${rows.length - 1} rows.`]) : null,
+    rows.length > 200 ? el("div", { class: "tiny muted", style: { padding: "8px" } }, [`Showing 200 of ${rows.length} rows.`]) : null,
   ]);
-}
-
-function parseCSV(text) {
-  const out = [];
-  let row = [], field = "", inQ = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQ) {
-      if (c === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; }
-        else { inQ = false; }
-      } else { field += c; }
-    } else {
-      if (c === '"') inQ = true;
-      else if (c === ",") { row.push(field); field = ""; }
-      else if (c === "\n") { row.push(field); out.push(row); row = []; field = ""; }
-      else if (c === "\r") { /* ignore */ }
-      else { field += c; }
-    }
-  }
-  if (field || row.length) { row.push(field); out.push(row); }
-  return out.filter(r => r.length && (r.length > 1 || r[0] !== ""));
 }
 
 function draftTransmittal(doc, rev) {

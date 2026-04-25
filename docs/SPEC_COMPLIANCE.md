@@ -116,7 +116,7 @@ score and a prioritized list of remaining gaps.
 | 7 | Approval routing + signatures | ✅ (HMAC signature) |
 | 8 | Linked transmittals and review cycles | ✅ Transmittals ✅; **review cycles as their own object** via `/api/review-cycles` |
 | 9 | Rich metadata (discipline/project/package/area/line/system/vendor/revision/approver/effective date) | ✅ |
-| 10 | File format support: PDF/image/spreadsheet/web records | ✅ PDF via PDF.js; image via `<img>`; CSV via in-process parser |
+| 10 | File format support: PDF/image/spreadsheet/web records | ✅ PDF via PDF.js; image via `<img>`; CSV via **PapaParse** |
 | 11 | CAD/model review layer | ◐ IFC decode via **web-ifc** + tree+metadata; **3D geometry view ○** |
 | 12 | Schematic/panel review mode | ◐ (discipline tag exists; **dedicated panel-review tools ○**) |
 | 13 | One-click issue/action creation from annotation | ✅ |
@@ -203,7 +203,7 @@ score and a prioritized list of remaining gaps.
 | Right panel shows contextual links | ✅ |
 | WCAG 2.2 AA contrast | ✅ Tokens pass AA; aria-modal/role/aria-label on dialogs, aria-live on toasts, aria-current on rail, focus-visible outlines, skip-to-main link |
 | Keyboard-first office operations | ✅ Modal focus trap (Tab/Shift-Tab) + Escape; focus returns to opener |
-| Field mode (glove targets, offline drafts) | ✅ Service worker pre-caches the SPA shell; offline `/api/*` writes queued in IndexedDB and replayed on reconnect; PWA manifest |
+| Field mode (glove targets, offline drafts) | ✅ Service worker built on **Workbox** (MIT): SPA shell pre-cache, NetworkFirst for `/api`+`/v1` reads, BackgroundSync queue replays offline `/api/*` writes for up to 24 h on reconnect |
 
 ## §13 Security
 
@@ -289,7 +289,7 @@ Phase 3 items are deferred and not part of this compliance table.
 | p95 < 200ms navigation | ✅ (measured in self-test; see AUDIT_LOG) |
 | Availability 99.9% | N/A for client prototype |
 | Scalability, telemetry bursts | ◐ (MQTT + OPC UA bridges ingest into event pipeline; stress at large scale not yet measured) |
-| Observability / tracing | ✅ trace_id in events and AI calls + Prometheus `/metrics` endpoint (`forge_http_requests_total`, latency histograms, `forge_audit_ledger_entries`, `forge_events_total`) |
+| Observability / tracing | ✅ trace_id in events and AI calls + Prometheus `/metrics` via **prom-client** (Node default metrics + custom counters/histograms/gauges) |
 | Backup / DR | ✅ `server/backup.js backup` / `restore` — SQLite `VACUUM INTO` + files/ tarball, `npm run backup` / `npm run restore` |
 
 ## §19 Success metrics

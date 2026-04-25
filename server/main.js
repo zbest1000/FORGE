@@ -16,7 +16,7 @@ import { audit } from "./audit.js";
 import { userById } from "./auth.js";
 import { resolveToken } from "./tokens.js";
 import { attachSSE } from "./sse.js";
-import { register as registerMetrics } from "./metrics.js";
+import { register_ as registerMetrics } from "./metrics.js";
 
 import mercurius from "mercurius";
 import { typeDefs } from "./graphql/schema.js";
@@ -66,12 +66,12 @@ await app.register(helmet, {
     directives: {
       defaultSrc: ["'self'"],
       baseUri: ["'self'"],
-      scriptSrc: ["'self'", "https://esm.sh", "'unsafe-inline'", "'unsafe-eval'"],
+      scriptSrc: ["'self'", "https://esm.sh", "https://storage.googleapis.com", "'unsafe-inline'", "'unsafe-eval'"],
       styleSrc:  ["'self'", "https://esm.sh", "'unsafe-inline'"],
       imgSrc:    ["'self'", "data:", "blob:", "https:"],
-      connectSrc:["'self'", "https://esm.sh", "https://api.i3x.dev", "ws:", "wss:"],
+      connectSrc:["'self'", "https://esm.sh", "https://storage.googleapis.com", "https://api.i3x.dev", "ws:", "wss:"],
       fontSrc:   ["'self'", "https:", "data:"],
-      workerSrc: ["'self'", "blob:", "https://esm.sh"],
+      workerSrc: ["'self'", "blob:", "https://esm.sh", "https://storage.googleapis.com"],
       frameAncestors: ["'none'"],
     },
   },

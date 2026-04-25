@@ -3,6 +3,22 @@
 Notable changes to FORGE. See `docs/AUDIT_LOG.md` for the detailed
 engineering log behind each change.
 
+## 0.5.1 — Engineering Philosophy + canonical OSS swaps
+
+### Added
+- `docs/ENGINEERING_PHILOSOPHY.md` — permanent rule + decision matrix +
+  per-concern OSS register + pre-flight checklist.
+- `CONTRIBUTING.md` — pre-flight checklist anchor for every PR.
+
+### Changed
+- **Prometheus metrics** swapped from hand-rolled to **prom-client**
+  (Apache-2.0). Adds Node process metrics for free.
+- **Service worker** swapped from hand-rolled to **Workbox** 7.1.0
+  (MIT). Cache strategies + BackgroundSync queue replace the custom
+  IDB queue.
+- **CSV parser** in doc viewer swapped to **PapaParse** 5.4.1 (MIT)
+  with a small offline fallback retained.
+
 ## 0.5.0 — n8n + GraphQL
 
 ### Added

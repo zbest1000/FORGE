@@ -139,6 +139,77 @@ and `server/metrics-rollup.js` run as background workers.
   `failed-retry` with the right `next_attempt_at` and recovers when
   the receiver comes up.
 
+## 2026-04-25 — Engineering Philosophy + canonical OSS swaps
+
+**What**
+Codified the rule "don't rebuild the wheel" in
+`docs/ENGINEERING_PHILOSOPHY.md`: a decision matrix, a per-concern OSS
+register that lists the canonical project for every concern FORGE
+touches, license rules, supply-chain hygiene rules, the swap-point
+pattern (single seam per dep), and a pre-flight checklist that PRs
+must paste into their descriptions.
+
+Then enforced the rule on the existing code by swapping three
+hand-rolled implementations for canonical OSS:
+
+1. **Prometheus metrics** → `prom-client` (Apache-2.0). Replaces ~80
+   LoC of hand-rolled exposition format. Bonus: free Node process
+   metrics (CPU, memory, GC, event loop lag). `server/metrics.js` is
+   now ~70 LoC of registrations + scrape-time `collect()` callbacks.
+2. **Service worker** → `workbox-sw` 7.1.0 (MIT). Replaces ~150 LoC of
+   hand-rolled fetch handlers + IDB queue. Workbox provides battle-
+   tested cache strategies (StaleWhileRevalidate / NetworkFirst /
+   NetworkOnly) and a `BackgroundSync` queue that retries failed
+   `/api/*` writes for up to 24 h on reconnect. CSP relaxed to allow
+   the Workbox CDN script.
+3. **CSV parser** in the doc viewer → `papaparse` 5.4.1 (MIT). The
+   browser CSV de-facto standard handles edge cases (quoted fields
+   with embedded newlines, BOM, etc.) that the hand-rolled version
+   skipped. Wrapper at `src/core/csv.js` keeps a small fallback for
+   air-gapped runs.
+
+**Why**
+The previous PRs landed real OSS (PDF.js, MiniSearch, Mermaid, Workbox
+candidates, mqtt.js, web-ifc, Mercurius, n8n, Helmet, etc.) — but I
+also wrote three things from scratch that have well-known canonical
+OSS. Locking the philosophy into a doc and making the swaps in the
+same PR makes the rule stick.
+
+**Tech decisions**
+- `prom-client` over Telegraf-format exporters: native Prometheus, used
+  by the entire Node ecosystem, includes `collectDefaultMetrics()`.
+- Workbox over `vite-plugin-pwa` or `serwist`: lowest-friction; loads
+  via classic-script `importScripts` from Google's CDN so we don't add
+  a build step. The fallback path keeps the app alive offline-during-
+  install.
+- PapaParse over SheetJS: CSV-only is what the doc viewer needs; SheetJS
+  adds XLSX support but at ~1 MB. PapaParse is ~50 KB and covers RFC 4180
+  edge cases properly.
+
+**Files**
+- new: `docs/ENGINEERING_PHILOSOPHY.md`, `CONTRIBUTING.md`,
+  `src/core/csv.js`
+- modified: `server/metrics.js` (rewrite around prom-client),
+  `server/main.js` (CSP relax for Workbox CDN; metrics export name
+  change), `sw.js` (rewrite around Workbox), `index.html` + `src/core/
+  vendor.js` (papaparse import map entry), `src/screens/docViewer.js`
+  (use core/csv parseCSV), `docs/THIRD_PARTY.md` (record prom-client +
+  papaparse + workbox-sw), `README.md` (callout pointing at the
+  philosophy doc).
+
+**Verification**
+- `npm test` — 19/19 passing (no behaviour change visible from the API
+  surface, only the underlying implementations changed).
+- `node --check` clean on every changed file.
+- Live: `/metrics` returns the Prometheus text including
+  `forge_node_process_cpu_seconds_total` (the new default-metrics
+  gift) plus the existing forge counters/histograms.
+- Service worker registers cleanly when served from `localhost`; the
+  Workbox CDN script comes through CSP without an exception.
+- CSV parser smoke test: a 500-row CSV with quoted fields and embedded
+  commas now parses correctly where the old hand-rolled split
+  previously dropped commas inside quoted fields.
+
 ## 2026-04-25 — n8n + GraphQL integration
 
 **What**

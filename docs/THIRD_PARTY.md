@@ -30,6 +30,7 @@ or swapped for self-hosted copies without touching call sites.
 | [pino](https://github.com/pinojs/pino) | MIT | Structured logs | §18 |
 | [mercurius](https://github.com/mercurius-js/mercurius) | MIT | GraphQL over Fastify | §15 traversal, n8n integration |
 | [graphql](https://github.com/graphql/graphql-js) | MIT | Reference GraphQL runtime | §15 |
+| [prom-client](https://github.com/siimon/prom-client) | Apache-2.0 | Prometheus metrics + Node process metrics | §18 |
 | node-opcua *(optional)* | MIT | OPC UA ingress | §6.4, §9.1 |
 
 ### Self-hosted services (docker-compose)
@@ -44,6 +45,8 @@ or swapped for self-hosted copies without touching call sites.
 | Package | Version | License | Purpose | Spec clause |
 |---|---|---|---|---|
 | [pdfjs-dist](https://github.com/mozilla/pdf.js) | 4.6.82 | Apache 2.0 | Native PDF rendering in the doc viewer | §7.10, §11.5 |
+| [papaparse](https://github.com/mholt/PapaParse) | 5.4.1 | MIT | CSV parsing in the doc viewer (de-facto browser CSV) | §7.10 |
+| [workbox-sw](https://github.com/GoogleChrome/workbox) | 7.1.0 | MIT | Service worker routing + BackgroundSync queue (offline drafts) | §12.5 |
 | [minisearch](https://github.com/lucaong/minisearch) | 7.1.2 | MIT | BM25 + prefix + fuzzy full-text search | §15 |
 | [dexie](https://github.com/dexie/Dexie.js) | 4.0.11 | Apache 2.0 | IndexedDB append-only logs (audit, events, DLQ) | §13.2, §9.4 |
 | [marked](https://github.com/markedjs/marked) | 14.1.3 | MIT | Markdown rendering in channel messages, transmittals, doc viewer | §6.1, §7 |

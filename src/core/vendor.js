@@ -59,6 +59,7 @@ export const vendor = {
   fuse:        () => load("fuse.js",      "fuse.js",     m => (m.default || m.Fuse || m)),
   dateFns:     () => load("date-fns",     "date-fns",    m => m),
   pdfjs:       () => load("pdfjs-dist",   "pdfjs-dist",  m => (m.GlobalWorkerOptions ? m : (m.default || m))),
+  papaparse:   () => load("papaparse",    "papaparse",   m => (m.default || m)),
 };
 
 /**
