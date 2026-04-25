@@ -1,7 +1,7 @@
 // Unified Namespace browser.
 // Shows the hierarchical instance graph with live values pulled from the i3X server.
 
-import { el, mount, card, badge, chip, toast } from "../core/ui.js";
+import { el, mount, card, badge, chip, toast, prompt } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { i3x, getServer } from "../core/i3x/client.js";
@@ -238,8 +238,8 @@ function sparkline(values) {
   return svg;
 }
 
-function writeValue(obj) {
-  const raw = window.prompt(`Write value for ${obj.name} (current unit: ${obj.attributes?.unit || "?"})`);
+async function writeValue(obj) {
+  const raw = await prompt({ title: `Write to ${obj.name}`, message: `Current unit: ${obj.attributes?.unit || "?"}`, placeholder: "value" });
   if (raw == null) return;
   let parsed = raw;
   if (obj.attributes?.dataType === "Boolean") parsed = /^(1|true|yes)$/i.test(raw);

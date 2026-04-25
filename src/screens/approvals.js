@@ -10,7 +10,7 @@
 //   * Object preview pane (spec layout: queue + preview)
 //   * Approver matrix enforcement via permissions.can()
 
-import { el, mount, card, badge, toast, modal, formRow, textarea, select } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, textarea, select, confirm } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -316,7 +316,12 @@ async function batchDecide(outcome) {
   const ids = JSON.parse(sessionStorage.getItem("approvals.batch") || "[]");
   if (!ids.length) return;
   if (!can("approve")) return;
-  const ok = window.confirm(`${outcome === "approved" ? "Approve" : "Reject"} ${ids.length} items?`);
+  const ok = await confirm({
+    title: outcome === "approved" ? "Approve items" : "Reject items",
+    message: `${outcome === "approved" ? "Approve" : "Reject"} ${ids.length} items?`,
+    confirmLabel: outcome === "approved" ? "Approve" : "Reject",
+    variant: outcome === "approved" ? "primary" : "danger",
+  });
   if (!ok) return;
   for (const id of ids) {
     const a = (state.data.approvals || []).find(x => x.id === id);

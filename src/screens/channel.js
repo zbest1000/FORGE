@@ -9,7 +9,7 @@
 //   * Follow/unfollow channel
 //   * Decision markers
 
-import { el, mount, card, badge, toast, chip, modal, formRow, textarea, select, input } from "../core/ui.js";
+import { el, mount, card, badge, toast, chip, modal, formRow, textarea, select, input, confirm, prompt } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -252,8 +252,8 @@ function jumpById(id, d) {
   toast("Object not found in this workspace", "warn");
 }
 
-function linkObject(composer) {
-  const val = window.prompt("Link an object — enter ID (DOC-1, AS-1, WI-101, REV-2-C, INC-4412):");
+async function linkObject(composer) {
+  const val = await prompt({ title: "Link an object", message: "Enter ID (DOC-1, AS-1, WI-101, REV-2-C, INC-4412):", placeholder: "DOC-1" });
   if (!val) return;
   composer.value += (composer.value ? " " : "") + `[${val.trim()}]`;
   composer.focus();
@@ -271,12 +271,14 @@ function addDecision(composer) {
   composer.focus();
 }
 
-function addMention(composer) {
+async function addMention(composer) {
   const users = state.data.users || [];
-  const choice = window.prompt(
-    "Mention which user?\n" + users.map(u => `  ${u.initials.padEnd(4)} ${u.name} — ${u.role}`).join("\n"),
-    users[0]?.initials || ""
-  );
+  const choice = await prompt({
+    title: "Mention user",
+    message: "Initials, name, or @handle.",
+    placeholder: users[0]?.initials || "",
+    defaultValue: users[0]?.initials || "",
+  });
   if (!choice) return;
   const u = resolveMention(choice, users);
   if (!u) { return; }
@@ -284,8 +286,8 @@ function addMention(composer) {
   composer.focus();
 }
 
-function addCodeBlock(composer) {
-  const lang = window.prompt("Language (e.g. js, py, sql, json):", "js") || "";
+async function addCodeBlock(composer) {
+  const lang = await prompt({ title: "Code block language", placeholder: "js, py, sql, json", defaultValue: "js" }) || "";
   const fenced = "\n```" + lang + "\n// your code\n```\n";
   composer.value += fenced;
   composer.focus();
@@ -298,9 +300,9 @@ function addDataBlock(composer) {
   composer.focus();
 }
 
-function convertToWorkItem(m) {
+async function convertToWorkItem(m) {
   if (!can("create")) { toast("No permission", "warn"); return; }
-  const title = window.prompt("Work item title:", (m.text || "").slice(0, 60));
+  const title = await prompt({ title: "New work item", message: "Title:", defaultValue: (m.text || "").slice(0, 60) });
   if (!title) return;
   const ch = (state.data.channels || []).find(c => c.id === m.channelId);
   const ts = (state.data.teamSpaces || []).find(t => t.id === ch.teamSpaceId);
@@ -319,9 +321,9 @@ function convertToWorkItem(m) {
   navigate(`/work-board/${project.id}`);
 }
 
-function escalateToIncident(m) {
+async function escalateToIncident(m) {
   if (!can("create")) { toast("No permission", "warn"); return; }
-  const title = window.prompt("Incident title:", (m.text || "").slice(0, 60));
+  const title = await prompt({ title: "Open incident", message: "Title:", defaultValue: (m.text || "").slice(0, 60) });
   if (!title) return;
   const ch = (state.data.channels || []).find(c => c.id === m.channelId);
   const id = "INC-" + Math.floor(Math.random() * 9000 + 1000);
@@ -360,8 +362,8 @@ function editMessage(m) {
   });
 }
 
-function deleteMessage(m) {
-  if (!window.confirm("Delete this message? It will be retained in the audit log.")) return;
+async function deleteMessage(m) {
+  if (!await confirm({ title: "Delete message", message: "Delete this message? It will be retained in the audit log.", confirmLabel: "Delete", variant: "danger" })) return;
   update(s => {
     const x = s.data.messages.find(y => y.id === m.id);
     if (!x) return;

@@ -10,7 +10,7 @@
 //   * Revision timeline with supersede chain markers
 //   * Approval banner + request-approval flow (delegated to /approvals)
 
-import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea } from "../core/ui.js";
+import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea, prompt } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -371,9 +371,9 @@ function askCard(doc, rev) {
 }
 
 // ---------- actions ----------
-function addCommentPin(docId, revId, page, presetX, presetY) {
+async function addCommentPin(docId, revId, page, presetX, presetY) {
   if (!can("create")) { toast("No permission", "warn"); return; }
-  const text = window.prompt("Regional comment:");
+  const text = await prompt({ title: "Regional comment", placeholder: "Comment text" });
   if (!text) return;
   const x = presetX != null ? presetX : 0.25 + Math.random() * 0.5;
   const y = presetY != null ? presetY : 0.15 + Math.random() * 0.6;
@@ -425,10 +425,10 @@ function openComment(c) {
   });
 }
 
-function convertCommentToIssue(c) {
+async function convertCommentToIssue(c) {
   if (!can("create")) return;
   const doc = getById("documents", c.docId);
-  const title = window.prompt("Issue title:", c.text.slice(0, 60));
+  const title = await prompt({ title: "Convert to issue", message: "Issue title:", defaultValue: c.text.slice(0, 60) });
   if (!title) return;
   const projectId = doc?.projectId || (state.data.projects || [])[0]?.id;
   const id = "WI-" + Math.floor(Math.random() * 900 + 100);
@@ -445,12 +445,13 @@ function convertCommentToIssue(c) {
   navigate(`/work-board/${projectId}`);
 }
 
-function attachPdf(doc, rev) {
-  const url = window.prompt(
-    "Attach a URL — supported: PDF, image (png/jpg/svg), CSV, " +
-    "and CAD (" + supportedExtensions().join(", ") + ").\nMust be CORS-enabled.",
-    rev.pdfUrl || rev.assetUrl || "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf"
-  );
+async function attachPdf(doc, rev) {
+  const url = await prompt({
+    title: "Attach asset URL",
+    message: "Supported: PDF, image, CSV, CAD (" + supportedExtensions().join(", ") + "). Must be CORS-enabled.",
+    defaultValue: rev.pdfUrl || rev.assetUrl || "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf",
+    placeholder: "https://...",
+  });
   if (!url) return;
   const cad = detectCad(url);
   const kind = cad ? cad.kind : detectKind(url);

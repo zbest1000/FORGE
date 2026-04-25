@@ -53,13 +53,38 @@ function hydrate() {
   }
 }
 
-function persist() {
+// Debounced persistence — bursts of `update()` calls (typing in an input,
+// dragging a kanban card, setInterval rerenders) coalesce into one write
+// instead of N writes of ~50 KB JSON.
+let _persistTimer = null;
+function persistNow() {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify({ ui: state.ui, data: state.data }));
   } catch (e) {
     console.warn("persist failed", e);
   }
 }
+function persist() {
+  if (_persistTimer) return;
+  // Use rIC where available so the write happens during idle time; fall back
+  // to a 250 ms timeout otherwise.
+  const schedule = window.requestIdleCallback || ((cb) => setTimeout(cb, 250));
+  _persistTimer = schedule(() => {
+    _persistTimer = null;
+    persistNow();
+  });
+}
+
+// Flush any pending write before the page unloads so a tab close doesn't
+// drop the latest mutation.
+window.addEventListener("beforeunload", () => {
+  if (_persistTimer) {
+    if (window.cancelIdleCallback && typeof _persistTimer === "number") {
+      try { window.cancelIdleCallback(_persistTimer); } catch {}
+    }
+    persistNow();
+  }
+});
 
 export function subscribe(fn) {
   listeners.add(fn);

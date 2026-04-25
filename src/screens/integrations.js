@@ -3,7 +3,7 @@
 // Surface: per-connector health, test connection, rotate credential,
 // live recent-events feed from core/events, DLQ browser with replay.
 
-import { el, mount, card, badge, toast, modal, formRow, input } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, input, confirm } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -68,9 +68,9 @@ function testConnection(i) {
   toast(`${i.name}: connection OK`, "success");
 }
 
-function rotateCred(i) {
+async function rotateCred(i) {
   if (!can("integration.write")) return;
-  if (!window.confirm(`Rotate credentials for ${i.name}? Existing sessions will be re-authenticated.`)) return;
+  if (!await confirm({ title: "Rotate credentials", message: `Rotate credentials for ${i.name}? Existing sessions will be re-authenticated.`, confirmLabel: "Rotate", variant: "danger" })) return;
   audit("integration.cred.rotate", i.id);
   toast(`${i.name}: credential rotated (demo)`, "success");
 }

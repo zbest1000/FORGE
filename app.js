@@ -11,8 +11,9 @@ import { initAuditLedger } from "./src/core/audit.js";
 import { buildIndex, scheduleRebuild } from "./src/core/search.js";
 import { installHotkeys } from "./src/core/hotkeys.js";
 import { probe, mode, getToken, login, logout, api } from "./src/core/api.js";
-import { canAccessRoute } from "./src/core/groups.js";
-import { el, mount } from "./src/core/ui.js";
+import { canAccessRoute, currentUserId, effectiveGroupIds } from "./src/core/groups.js";
+import { el, mount, installRowKeyboardHandlers } from "./src/core/ui.js";
+import { audit } from "./src/core/audit.js";
 
 import { renderRail } from "./src/shell/rail.js";
 import { renderLeftPanel } from "./src/shell/leftPanel.js";
@@ -94,6 +95,7 @@ function applyTheme() {
   if (!state.ui.showContextPanel) cls.push("hide-right-panel");
   if (!state.ui.showRail) cls.push("hide-rail");
   if (!state.ui.showHeader) cls.push("hide-header");
+  if (!state.ui.dockVisible) cls.push("dock-hidden");
   if (state.ui.portalId) cls.push("portal-mode", "portal-" + state.ui.portalId);
   document.body.className = cls.join(" ");
 }
@@ -159,6 +161,7 @@ async function boot() {
   setupRoutes();
   attachHotkeys();
   installHotkeys();
+  installRowKeyboardHandlers();
 
   subscribe(() => {
     applyTheme();
@@ -188,6 +191,15 @@ async function boot() {
 
     const route = (state.route || "").split("?")[0];
     if (!canAccessRoute(route)) {
+      // Record the denial in the audit ledger so a security reviewer can see
+      // who attempted to reach what. Includes the user's effective groups
+      // so the reviewer can act (grant access, revoke, etc.).
+      try {
+        audit("access.denied", route, {
+          userId: currentUserId(),
+          effectiveGroupIds: effectiveGroupIds(currentUserId()),
+        });
+      } catch { /* ledger may not be ready during boot */ }
       const root = document.getElementById("screenContainer");
       if (root) {
         mount(root, [

@@ -7,7 +7,7 @@
 //   * Publish test with QoS, retain flag
 //   * Namespace policy checker (naming convention validation)
 
-import { el, mount, card, badge, toast, input, select, formRow, modal, textarea } from "../core/ui.js";
+import { el, mount, card, badge, toast, input, select, formRow, modal, textarea, confirm } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { can } from "../core/permissions.js";
@@ -269,8 +269,8 @@ function editRule(ds) {
   });
 }
 
-function deleteRule(ds) {
-  if (!window.confirm(`Delete mapping for ${ds.endpoint}?`)) return;
+async function deleteRule(ds) {
+  if (!await confirm({ title: "Delete mapping", message: `Delete mapping for ${ds.endpoint}?`, confirmLabel: "Delete", variant: "danger" })) return;
   update(s => { s.data.dataSources = s.data.dataSources.filter(y => y.id !== ds.id); });
   audit("mqtt.mapping.delete", ds.endpoint);
 }

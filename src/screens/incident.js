@@ -9,7 +9,7 @@
 //   * Linked asset, channel, work items, docs, procedures in the side column
 //   * Postmortem export: JSON + audit-pack-style signed bundle
 
-import { el, mount, card, badge, toast, textarea, modal, formRow, select, input } from "../core/ui.js";
+import { el, mount, card, badge, toast, textarea, modal, formRow, select, input, prompt } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -254,8 +254,8 @@ function workItemsCard(inc, workItems) {
   ]));
 }
 
-function createActionItem(inc) {
-  const title = window.prompt("Action item title:");
+async function createActionItem(inc) {
+  const title = await prompt({ title: "Action item", message: "Title:" });
   if (!title) return;
   const project = (state.data.projects || [])[0];
   const id = "WI-" + Math.floor(Math.random()*900+100);
@@ -348,15 +348,15 @@ function renderMarkdown(inc, events, sig) {
   return lines.join("\n");
 }
 
-function changeSeverity(inc) {
-  const next = window.prompt("New severity (SEV-1..SEV-4):", inc.severity);
+async function changeSeverity(inc) {
+  const next = await prompt({ title: "Change severity", message: "New severity (SEV-1..SEV-4):", defaultValue: inc.severity });
   if (!next) return;
   update(s => { const i = s.data.incidents.find(x => x.id === inc.id); if (i) i.severity = next; });
   audit("incident.severity", inc.id, { to: next });
 }
 
-function changeStatus(inc) {
-  const next = window.prompt("New status (" + INCIDENT_STATUSES.join(" / ") + "):", inc.status);
+async function changeStatus(inc) {
+  const next = await prompt({ title: "Change status", message: "New status (" + INCIDENT_STATUSES.join(" / ") + "):", defaultValue: inc.status });
   if (!next) return;
   if (!canTransitionIncident(inc.status, next)) {
     toast(`Cannot transition incident from ${inc.status} → ${next}`, "warn");

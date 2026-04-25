@@ -35,6 +35,92 @@ export function clear(node) {
   while (node && node.firstChild) node.removeChild(node.firstChild);
 }
 
+// Selectors for "looks like a button but isn't" — applied uniformly via
+// a delegated handler installed by `installRowKeyboardHandlers()`. Keeping
+// this list central means screens don't have to repeat keyboard wiring.
+const ROW_BUTTON_SELECTOR = [
+  ".activity-row[onclick]",
+  ".activity-row.row-clickable",
+  ".tree-item",
+  ".dock-item",
+  ".kanban-card",
+  ".row-clickable",
+  ".chip.clickable",
+  ".palette-item",
+  ".revision-row",
+  ".uns-tree-item",
+].join(",");
+
+/**
+ * Install a single delegated keydown handler that turns any element matching
+ * `ROW_BUTTON_SELECTOR` into a keyboard-activatable button: focusable via
+ * Tab (we set tabindex on attach), Enter/Space dispatches a synthetic
+ * click. Idempotent — safe to call many times.
+ */
+let _rowKbInstalled = false;
+export function installRowKeyboardHandlers(rootDoc = document) {
+  if (_rowKbInstalled) return;
+  _rowKbInstalled = true;
+
+  // MutationObserver gives every newly-inserted row tabindex="0" + role.
+  const tag = (node) => {
+    if (!(node instanceof Element)) return;
+    const candidates = node.matches?.(ROW_BUTTON_SELECTOR)
+      ? [node]
+      : node.querySelectorAll?.(ROW_BUTTON_SELECTOR) || [];
+    candidates.forEach(c => {
+      if (c.tagName === "A" || c.tagName === "BUTTON") return;
+      if (!c.hasAttribute("tabindex")) c.setAttribute("tabindex", "0");
+      if (!c.hasAttribute("role")) c.setAttribute("role", "button");
+    });
+  };
+  tag(rootDoc.body);
+
+  const mo = new MutationObserver((muts) => {
+    for (const m of muts) {
+      m.addedNodes.forEach(tag);
+    }
+  });
+  mo.observe(rootDoc.body, { childList: true, subtree: true });
+
+  rootDoc.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    if (!target.matches(ROW_BUTTON_SELECTOR)) return;
+    // Skip if the focus is on a real button/input inside the row.
+    if (target !== rootDoc.activeElement) return;
+    e.preventDefault();
+    target.click();
+  });
+}
+
+/**
+ * Make a non-button element behave like a button for keyboard users.
+ * Adds `role="button"`, `tabindex="0"`, and Enter/Space activation. Pointer
+ * `onClick` is preserved verbatim. Use this when a real `<button>`/`<a>`
+ * isn't structurally possible (e.g. table rows, list rows in a tree).
+ */
+export function clickable(node, onActivate, opts = {}) {
+  if (!node || typeof onActivate !== "function") return node;
+  if (!node.hasAttribute("role")) node.setAttribute("role", "button");
+  if (!node.hasAttribute("tabindex")) node.setAttribute("tabindex", "0");
+  if (opts.label && !node.hasAttribute("aria-label")) node.setAttribute("aria-label", opts.label);
+  node.addEventListener("keydown", (e) => {
+    // Enter activates immediately; Space prevents page-scroll and acts on keyup.
+    if (e.key === "Enter") {
+      e.preventDefault();
+      onActivate(e);
+    } else if (e.key === " ") {
+      e.preventDefault();
+    }
+  });
+  node.addEventListener("keyup", (e) => {
+    if (e.key === " ") { e.preventDefault(); onActivate(e); }
+  });
+  return node;
+}
+
 export function mount(node, content) {
   clear(node);
   if (Array.isArray(content)) content.forEach(c => c && node.append(c));
@@ -52,6 +138,7 @@ export function chip(label, opts = {}) {
     { class: `chip${onClick ? " clickable" : ""}`, onClick },
     [kind ? el("span", { class: "chip-kind" }, [kind]) : null, label]
   );
+  if (onClick) clickable(node, onClick);
   return node;
 }
 
@@ -83,8 +170,8 @@ export function table({ columns, rows, onRowClick }) {
       el("tr", {}, columns.map(c => el("th", {}, [c.header || c.key]))),
     ]),
     el("tbody", {},
-      rows.map(row =>
-        el(
+      rows.map(row => {
+        const tr = el(
           "tr",
           {
             class: onRowClick ? "row-clickable" : "",
@@ -98,8 +185,10 @@ export function table({ columns, rows, onRowClick }) {
             else if (val != null) cell.append(document.createTextNode(String(val)));
             return cell;
           })
-        )
-      )
+        );
+        if (onRowClick) clickable(tr, () => onRowClick(row));
+        return tr;
+      })
     ),
   ]);
   return t;
@@ -168,9 +257,19 @@ export function modal({ title, body, actions }) {
 
   root.innerHTML = "";
   root.append(backdrop);
-  // Focus the first focusable element.
+  // Focus the first focusable element. Prefer body fields, then the primary
+  // footer button, and only fall back to the header Close button if the
+  // dialog has nothing else (which should be unusual).
   setTimeout(() => {
-    const first = backdrop.querySelector("button:not(.ghost), input, select, textarea, button");
+    const body = backdrop.querySelector(".modal-body");
+    const footer = backdrop.querySelector(".modal-footer");
+    const candidates = [
+      body && body.querySelector("input, select, textarea, button:not(.ghost), [tabindex]:not([tabindex='-1'])"),
+      footer && footer.querySelector("button.primary, button:not(.ghost), button"),
+      backdrop.querySelector("button:not(.ghost)"),
+      backdrop.querySelector("button"),
+    ].filter(Boolean);
+    const first = candidates[0];
     if (first) try { first.focus(); } catch {}
   }, 0);
   return { close };
@@ -189,10 +288,55 @@ export function confirm({ title = "Confirm", message, confirmLabel = "Confirm", 
   });
 }
 
-export function formRow(label, input) {
+/**
+ * Styled replacement for `window.prompt`. Resolves with the entered string,
+ * or `null` if the user cancels. Always returns a Promise.
+ */
+export function prompt({ title = "Enter value", message, defaultValue = "", placeholder = "", confirmLabel = "OK", inputType = "text" } = {}) {
+  return new Promise((resolve) => {
+    const inp = input({ value: defaultValue, placeholder, type: inputType });
+    let resolved = false;
+    const finish = (value) => {
+      if (resolved) return;
+      resolved = true;
+      resolve(value);
+    };
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        finish(inp.value);
+        // Close the modal — find the backdrop and clear it.
+        const root = document.getElementById("modalRoot");
+        if (root) root.innerHTML = "";
+      }
+    });
+    modal({
+      title,
+      body: el("div", { class: "stack" }, [
+        message ? el("p", { class: "muted" }, [message]) : null,
+        formRow(title, inp),
+      ]),
+      actions: [
+        { label: "Cancel", onClick: () => finish(null) },
+        { label: confirmLabel, variant: "primary", onClick: () => finish(inp.value) },
+      ],
+    });
+    setTimeout(() => { try { inp.focus(); inp.select?.(); } catch {} }, 0);
+  });
+}
+
+let _formRowSeq = 0;
+/**
+ * Pair a `<label>` with a control via id/htmlFor so clicking the label
+ * focuses the input and AT announces them as one. If the control already
+ * has an `id`, that id is reused; otherwise a unique one is generated.
+ */
+export function formRow(label, control) {
+  const id = control && control.id ? control.id : `fr-${++_formRowSeq}`;
+  if (control && !control.id) control.id = id;
   return el("div", { class: "form-row" }, [
-    el("label", {}, [label]),
-    input,
+    el("label", { htmlFor: id }, [label]),
+    control,
   ]);
 }
 

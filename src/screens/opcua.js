@@ -7,7 +7,7 @@
 //   * Write-node action gated to Integration Admin; confirmed via HMAC sig
 //   * Simulation: trigger state_change for a bound node → event pipeline
 
-import { el, mount, card, badge, toast, modal, formRow, input, select, textarea } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, input, select, textarea, prompt } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { can } from "../core/permissions.js";
@@ -145,10 +145,12 @@ function validate(node, transform) {
   toast(ok ? "Validation passed" : "Datatype incompatible with transform", ok ? "success" : "warn");
 }
 
-function simulate(nodeId, nodes) {
+async function simulate(nodeId, nodes) {
   const n = nodes.find(x => x.id === nodeId);
   if (!n) return;
-  const val = Number(window.prompt(`Value for ${n.id}:`, "101.2"));
+  const raw = await prompt({ title: `Simulate ${n.id}`, message: "Value:", defaultValue: "101.2" });
+  if (raw == null) return;
+  const val = Number(raw);
   if (Number.isNaN(val)) return;
   const env = ingest({
     event_type: "state_change",
@@ -165,7 +167,7 @@ async function writeNode(nodeId, nodes) {
   const n = nodes.find(x => x.id === nodeId);
   if (!n) return;
   if (!can("integration.write")) return;
-  const val = window.prompt(`WRITE to ${n.id} (must be reviewed):`, "0");
+  const val = await prompt({ title: `WRITE to ${n.id}`, message: "Will be reviewed.", defaultValue: "0" });
   if (val == null) return;
   const sig = await signHMAC(canonicalJSON({ nodeId: n.id, value: val, actor: state.ui.role, ts: new Date().toISOString() }));
   audit("opcua.write", n.id, { value: val, signature: sig.signature.slice(0, 12), keyId: sig.keyId });

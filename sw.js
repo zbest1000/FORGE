@@ -21,13 +21,20 @@ if (!self.workbox) {
   const { precaching, routing, strategies, expiration, backgroundSync } = workbox;
 
   // ---------- pre-cache the SPA shell ----------
+  // Bumped to v2 after the Hub/portals/audit-fix work. Includes the new
+  // top-level modules so first-paint offline still works after install.
   precaching.precacheAndRoute([
-    { url: "/",                       revision: "v1" },
-    { url: "/index.html",             revision: "v1" },
-    { url: "/styles.css",             revision: "v1" },
-    { url: "/app.js",                 revision: "v1" },
-    { url: "/manifest.webmanifest",   revision: "v1" },
-    { url: "/icon.svg",               revision: "v1" },
+    { url: "/",                       revision: "v2" },
+    { url: "/index.html",             revision: "v2" },
+    { url: "/styles.css",             revision: "v2" },
+    { url: "/app.js",                 revision: "v2" },
+    { url: "/manifest.webmanifest",   revision: "v2" },
+    { url: "/icon.svg",               revision: "v2" },
+    { url: "/src/screens/hub.js",     revision: "v2" },
+    { url: "/src/core/groups.js",     revision: "v2" },
+    { url: "/src/core/ui.js",         revision: "v2" },
+    { url: "/src/core/store.js",      revision: "v2" },
+    { url: "/src/core/router.js",     revision: "v2" },
   ]);
 
   // ---------- static assets: stale-while-revalidate ----------
