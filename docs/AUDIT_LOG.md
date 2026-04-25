@@ -62,7 +62,7 @@ The compliance matrix is kept up to date with every subsequent commit.
 
 ## 2026-04-24 — FORGE server (Fastify + SQLite + JWT) (cf75400)
 
-## 2026-04-25 — Production hardening
+## 2026-04-25 — Production hardening (bbf36ec)
 
 **What**
 Closed most of the remaining server-side gaps. The server is now
