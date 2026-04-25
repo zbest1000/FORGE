@@ -80,7 +80,7 @@ export const PORTALS = [
   },
   {
     id: "automation",
-    label: "Industrial Automation & DAQ",
+    label: "Industrial Operations Data",
     icon: "🛰",
     description: "i3X / Unified Namespace, MQTT, OPC UA, telemetry & assets.",
     accent: "#f59e0b",

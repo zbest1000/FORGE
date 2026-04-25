@@ -68,37 +68,41 @@ export function renderAssetDetail({ id }) {
       ]),
       el("div", { class: "row" }, [
         badge(a.status.toUpperCase(), statusVariant(a.status)),
-        badge(`DAQ ${a.daqStatus || "unknown"}`, dataVariant(a.daqStatus)),
-        badge(`Maint ${a.maintenanceStatus || "none"}`, maintenanceVariant(a.maintenanceStatus)),
+        badge(`Signals ${a.daqStatus || "unknown"}`, dataVariant(a.daqStatus)),
+        badge(`Service ${a.maintenanceStatus || "none"}`, maintenanceVariant(a.maintenanceStatus)),
         el("button", { class: "btn sm danger", disabled: !can("incident.respond"), onClick: () => openWarRoom(a) }, ["🚨 War room"]),
       ]),
     ]),
     el("div", { class: "card-grid" }, [
       kpi("Projects", linkedProjects.length, "", ""),
       kpi("Linked docs", linkedDocs.length, "", ""),
-      kpi("DAQ sources", dataSources.length, a.daqStatus || "", dataSources.some(ds => ds.status === "stale") ? "down" : "up"),
-      kpi("Maintenance", maintenance.length, a.maintenanceStatus || "", maintenance.some(m => ["open","due"].includes(m.status)) ? "down" : "up"),
+      kpi("Operations signals", dataSources.length, a.daqStatus || "", dataSources.some(ds => ds.status === "stale") ? "down" : "up"),
+      kpi("Service work", maintenance.length, a.maintenanceStatus || "", maintenance.some(m => ["open","due"].includes(m.status)) ? "down" : "up"),
       kpi("Open incidents", incidents.filter(i => i.status === "active").length, "", incidents.some(i => i.status === "active") ? "down" : "up"),
     ]),
 
-    card("Enterprise hierarchy", el("div", { class: "stack" }, [
+    card(`${d.organization?.name || "Enterprise"} hierarchy`, el("div", { class: "stack" }, [
       el("div", { class: "row wrap" }, [
-        chipText("Enterprise", d.organization?.name || "—"),
+        chipText("Organization", d.organization?.name || "—"),
         chipText("Site", site?.name || "—"),
         chipText("Location", loc?.path || loc?.name || a.hierarchy),
+        helpHint("Assets are mastered by organization, site, and location. Projects reference assets only while they affect work scope."),
       ]),
       linkedProjects.length
         ? el("div", { class: "row wrap" }, linkedProjects.map(p =>
             el("button", { class: "btn sm", onClick: () => navigate(`/work-board/${p.id}`) }, [`Project: ${p.name}`])
           ))
-        : el("div", { class: "tiny muted" }, ["No active project owns this asset. It remains visible through the enterprise asset hierarchy."]),
-    ]), { subtitle: "Assets are mastered by enterprise/site/location. Projects can reference them temporarily." }),
+        : el("div", { class: "row wrap" }, [
+            badge("No active project", "info"),
+            helpHint("This asset remains available through the organization and site hierarchy even when no project references it."),
+          ]),
+    ])),
 
     unsCard(a),
 
     el("div", { class: "two-col", style: { marginTop: "16px" } }, [
-      card("Telemetry (mock)", telemetry(a)),
-      card("DAQ / source health", daqPanel(dataSources), { subtitle: "Live, stale, simulated, and disconnected states should remain distinct." }),
+      card("Operations trend", telemetry(a)),
+      card("Signal health", signalHealthPanel(dataSources)),
     ]),
 
     el("div", { class: "two-col", style: { marginTop: "16px" } }, [
@@ -109,10 +113,10 @@ export function renderAssetDetail({ id }) {
           el("span", { class: "tiny muted" }, [doc.id]),
         ])
       ))),
-      card("Work and maintenance", workMaintenancePanel(tasks, maintenance), { subtitle: "Work items and CMMS-style maintenance orders linked to this asset." }),
+      card("Work and service", workMaintenancePanel(tasks, maintenance)),
     ]),
 
-    card("Asset timeline", assetTimeline(a, { tasks, maintenance, incidents, dataSources, linkedDocs })),
+    card("Asset activity", assetTimeline(a, { tasks, maintenance, incidents, dataSources, linkedDocs })),
 
     assignmentCard(a),
 
@@ -144,8 +148,8 @@ function chipText(kind, value) {
   return el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, [kind]), value || "—"]);
 }
 
-function daqPanel(dataSources) {
-  if (!dataSources.length) return el("div", { class: "muted tiny" }, ["No DAQ mappings yet."]);
+function signalHealthPanel(dataSources) {
+  if (!dataSources.length) return el("div", { class: "muted tiny" }, ["No signal mappings yet."]);
   return el("div", { class: "stack" }, dataSources.map(ds => el("div", { class: "activity-row" }, [
     badge(ds.status || ds.kind, dataVariant(ds.status || ds.quality)),
     el("span", { class: "mono tiny" }, [ds.endpoint]),
@@ -158,7 +162,7 @@ function workMaintenancePanel(tasks, maintenance) {
     ...tasks.map(w => ({ kind: w.type, text: `${w.id} · ${w.title}`, state: w.status, variant: w.severity === "high" ? "danger" : "info" })),
     ...maintenance.map(m => ({ kind: m.source, text: `${m.id} · ${m.title}`, state: `${m.status} · ${m.priority}`, variant: m.priority === "high" ? "danger" : "warn" })),
   ];
-  if (!rows.length) return el("div", { class: "muted tiny" }, ["No work or maintenance linked."]);
+  if (!rows.length) return el("div", { class: "muted tiny" }, ["No work or service linked."]);
   return el("div", { class: "stack" }, rows.map(r => el("div", { class: "activity-row" }, [
     badge(r.kind, "info"),
     el("span", {}, [r.text]),
@@ -170,9 +174,9 @@ function assetTimeline(asset, ctx) {
   const rows = [
     ...ctx.linkedDocs.map(doc => ({ ts: revisionTs(doc.currentRevisionId), kind: "Document", text: `${doc.name} current revision`, route: `/doc/${doc.id}` })),
     ...ctx.tasks.map(w => ({ ts: w.due, kind: w.type, text: `${w.id} · ${w.title}`, route: `/work-board/${w.projectId}` })),
-    ...ctx.maintenance.map(m => ({ ts: m.due, kind: "Maintenance", text: `${m.source} · ${m.title}`, route: null })),
+    ...ctx.maintenance.map(m => ({ ts: m.due, kind: "Service", text: `${m.source} · ${m.title}`, route: null })),
     ...ctx.incidents.flatMap(i => (i.timeline || []).map(t => ({ ts: t.ts, kind: "Incident", text: `${i.id} · ${t.text}`, route: `/incident/${i.id}` }))),
-    ...ctx.dataSources.map(ds => ({ ts: ds.lastSeen, kind: "DAQ", text: `${ds.endpoint} · ${ds.lastValue || ds.status}`, route: null })),
+    ...ctx.dataSources.map(ds => ({ ts: ds.lastSeen, kind: "Signal", text: `${ds.endpoint} · ${ds.lastValue || ds.status}`, route: null })),
   ].filter(r => r.ts).sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts)).slice(-10);
   if (!rows.length) return el("div", { class: "muted tiny" }, [`No timeline events for ${asset.id}.`]);
   return el("div", { class: "stack" }, rows.map(r => el(r.route ? "button" : "div", {

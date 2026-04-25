@@ -64,29 +64,33 @@ function projectContext(project, items) {
   const d = state.data;
   const site = locationById(project.siteId);
   const loc = locationById(project.locationId);
+  const orgName = d.organization?.name || "Enterprise";
   const projectAssets = linkedProjectAssets(project);
   const projectDocs = scopedProjectDocs(project, projectAssets);
   const dataSources = (d.dataSources || []).filter(ds => ds.projectId === project.id || projectAssets.some(a => a.id === ds.assetId));
   const maintenance = (d.maintenanceItems || []).filter(m => m.projectId === project.id || projectAssets.some(a => a.id === m.assetId));
   const incidents = (d.incidents || []).filter(i => projectAssets.some(a => a.id === i.assetId));
   return el("div", { class: "stack project-context", style: { marginBottom: "16px" } }, [
-    card("Enterprise context", el("div", { class: "stack" }, [
+    card(`${orgName} context`, el("div", { class: "stack" }, [
       el("div", { class: "row wrap" }, [
-        chipText("Enterprise", d.organization?.name || "—"),
+        chipText("Organization", orgName),
         chipText("Site", site?.name || "—"),
         chipText("Location", loc?.path || loc?.name || "—"),
-        chipText("Project assets", String(projectAssets.length)),
+        chipText("Referenced assets", String(projectAssets.length), "Assets remain mastered by site/location. This project references the assets it affects."),
       ]),
-      el("div", { class: "tiny muted" }, ["Assets live in the enterprise/site hierarchy; projects reference the assets they affect without owning the asset master."]),
     ])),
     el("div", { class: "three-col" }, [
       card(`Linked assets (${projectAssets.length})`, assetList(projectAssets)),
       card(`Documents (${projectDocs.length})`, documentList(projectDocs)),
-      card("DAQ / connector status", daqList(dataSources)),
+      card("Signal health", signalHealthList(dataSources), { actions: [
+        helpHint("Live operations signals from MQTT, OPC UA, ERP, or other connectors. Hover each status for source and quality."),
+      ]}),
     ]),
     el("div", { class: "two-col", style: { marginTop: "16px" } }, [
-      card(`Maintenance (${maintenance.length})`, maintenanceList(maintenance)),
-      card("Project timeline", projectTimeline(project, { items, projectDocs, projectAssets, maintenance, incidents, dataSources })),
+      card(`Service work (${maintenance.length})`, serviceWorkList(maintenance), { actions: [
+        helpHint("Service records can come from systems such as MaintainX, SAP PM, Fiix, UpKeep, or Maximo."),
+      ]}),
+      card("Project activity", projectTimeline(project, { items, projectDocs, projectAssets, maintenance, incidents, dataSources })),
     ]),
   ]);
 }
@@ -110,8 +114,20 @@ function scopedProjectDocs(project, assets) {
   );
 }
 
-function chipText(kind, value) {
-  return el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, [kind]), value || "—"]);
+function chipText(kind, value, help) {
+  return el("span", { class: "chip", title: help || "" }, [
+    el("span", { class: "chip-kind" }, [kind]),
+    value || "—",
+    help ? helpIcon(help) : null,
+  ]);
+}
+
+function helpIcon(text) {
+  return el("span", { class: "help-dot", title: text, "aria-label": text }, ["?"]);
+}
+
+function helpHint(text) {
+  return el("span", { class: "help-dot", title: text, "aria-label": text }, ["?"]);
 }
 
 function assetList(assets) {
@@ -138,16 +154,25 @@ function documentList(docs) {
   ])));
 }
 
-function daqList(sources) {
-  if (!sources.length) return el("div", { class: "muted tiny" }, ["No DAQ mappings linked to this project."]);
+function signalHealthList(sources) {
+  if (!sources.length) return el("div", { class: "muted tiny" }, ["No live operations signals linked."]);
   return el("div", { class: "stack" }, sources.map(ds => el("div", { class: "activity-row" }, [
-    badge(ds.status || ds.kind, dataVariant(ds.status || ds.quality)),
+    signalBadge(ds),
     el("span", { class: "mono tiny" }, [ds.endpoint]),
     el("span", { class: "tiny muted" }, [ds.lastValue || ds.kind]),
   ])));
 }
 
-function maintenanceList(items) {
+function signalBadge(ds) {
+  const label = ds.status === "live" ? "Live"
+    : ds.status === "stale" ? "Stale"
+    : ds.status === "not_connected" ? "Not connected"
+    : ds.status || ds.quality || ds.kind;
+  const title = `Source: ${ds.integrationId || "unknown"} · Quality: ${ds.quality || "unknown"} · Last seen: ${ds.lastSeen ? new Date(ds.lastSeen).toLocaleString() : "unknown"}`;
+  return el("span", { class: `badge ${dataVariant(ds.status || ds.quality)}`, title }, [label]);
+}
+
+function serviceWorkList(items) {
   if (!items.length) return el("div", { class: "muted tiny" }, ["No maintenance items linked."]);
   return el("div", { class: "stack" }, items.map(m => el("div", { class: "activity-row" }, [
     badge(m.source, "purple"),
@@ -160,9 +185,9 @@ function projectTimeline(project, ctx) {
   const rows = [
     ...ctx.projectDocs.map(doc => ({ ts: revisionTs(doc.currentRevisionId), kind: "Document", text: `${doc.name} current revision`, route: `/doc/${doc.id}` })),
     ...ctx.items.map(w => ({ ts: w.due, kind: w.type, text: `${w.id} · ${w.title}`, route: null })),
-    ...ctx.maintenance.map(m => ({ ts: m.due, kind: "Maintenance", text: `${m.source} · ${m.title}`, route: `/asset/${m.assetId}` })),
+    ...ctx.maintenance.map(m => ({ ts: m.due, kind: "Service", text: `${m.source} · ${m.title}`, route: `/asset/${m.assetId}` })),
     ...ctx.incidents.flatMap(i => (i.timeline || []).map(t => ({ ts: t.ts, kind: "Incident", text: `${i.id} · ${t.text}`, route: `/incident/${i.id}` }))),
-    ...ctx.dataSources.map(ds => ({ ts: ds.lastSeen, kind: "DAQ", text: `${ds.endpoint} · ${ds.lastValue || ds.status}`, route: ds.assetId ? `/asset/${ds.assetId}` : null })),
+    ...ctx.dataSources.map(ds => ({ ts: ds.lastSeen, kind: "Signal", text: `${ds.endpoint} · ${ds.lastValue || ds.status}`, route: ds.assetId ? `/asset/${ds.assetId}` : null })),
   ].filter(r => r.ts).sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts)).slice(-8);
   if (!rows.length) return el("div", { class: "muted tiny" }, ["No timeline events yet."]);
   return el("div", { class: "stack" }, rows.map(r => el(r.route ? "button" : "div", {
@@ -594,7 +619,7 @@ function automationCard(project, projectId) {
   const rules = [
     "Any ERP event → Task",
     "Alarm SEV-1/SEV-2 → Incident",
-    "OPC UA state_change → Asset timeline",
+    "OPC UA state_change → Asset activity",
     "Approved revision → auto-supersede prior IFC",
   ];
   return card("Automation rules (§6.2 / §9.3)", el("div", { class: "stack" }, [
