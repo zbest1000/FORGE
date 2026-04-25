@@ -13,6 +13,7 @@
 import { state, update } from "./store.js";
 import { audit } from "./audit.js";
 import { vendor } from "./vendor.js";
+import { semanticRerank } from "./semantic.js";
 
 const COLLECTIONS = [
   { name: "documents",  kind: "Document",  route: o => `/doc/${o.id}`,               fields: ["name", "discipline", "sensitivity", "labels"] },
@@ -110,8 +111,10 @@ export function query(q, { facets = {}, limit = 50 } = {}) {
     _lastEngine = _lastEngine === "none" ? "fallback" : _lastEngine;
   }
 
-  const hits = _miniSearch ? miniQuery(q, limit) : fallbackQuery(q, limit);
-  const filtered = hits.filter(h => passesFacets(h.doc, facets) && passesAcl(h.doc));
+  const rawHits = _miniSearch ? miniQuery(q, limit) : fallbackQuery(q, limit);
+  const ranked = q ? semanticRerank(q, rawHits, 0.35) : rawHits;
+  const filtered = ranked.filter(h => passesFacets(h.doc, facets) && passesAcl(h.doc));
+  const hits = filtered;
   const facetCounts = computeFacets(filtered.map(h => h.doc));
 
   return {

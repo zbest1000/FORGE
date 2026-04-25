@@ -5,6 +5,8 @@ import { db, now, uuid, jsonOrDefault } from "../db.js";
 import { audit } from "../audit.js";
 import { can, require_, listUsers, userById, CAPABILITIES } from "../auth.js";
 import { broadcast } from "../sse.js";
+import { canTransitionRevision, cascadeOnApprove } from "../../src/core/fsm/revision.js";
+import { canTransitionApproval } from "../../src/core/fsm/approval.js";
 
 function mapRowJson(row, fields) {
   const out = { ...row };
@@ -93,8 +95,9 @@ export default async function coreRoutes(fastify) {
     const { to, notes = "" } = req.body || {};
     const rev = db.prepare("SELECT * FROM revisions WHERE id = ?").get(req.params.id);
     if (!rev) return reply.code(404).send({ error: "not found" });
-    const ALLOWED = { Draft: ["IFR","Archived"], IFR: ["Approved","Rejected","Draft","Archived"], Approved: ["IFC","Rejected","Archived"], IFC: ["Superseded","Archived"], Rejected: ["Draft","Archived"], Superseded: [], Archived: [] };
-    if (!(ALLOWED[rev.status] || []).includes(to)) return reply.code(400).send({ error: `cannot transition ${rev.status} → ${to}` });
+    if (!canTransitionRevision(rev.status, to)) {
+      return reply.code(400).send({ error: `cannot transition ${rev.status} → ${to}` });
+    }
 
     db.transaction(() => {
       db.prepare("UPDATE revisions SET status = ?, updated_at = ? WHERE id = ?").run(to, now(), rev.id);
@@ -188,6 +191,9 @@ export default async function coreRoutes(fastify) {
     if (!["approved","rejected"].includes(outcome)) return reply.code(400).send({ error: "outcome must be approved|rejected" });
     const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
+    if (!canTransitionApproval(row.status, outcome)) {
+      return reply.code(400).send({ error: `cannot decide approval in status '${row.status}' → '${outcome}'` });
+    }
     const { signHMAC, canonicalJSON } = await import("../crypto.js");
     const payload = { approvalId: row.id, subject: { kind: row.subject_kind, id: row.subject_id }, outcome, notes, signer: req.user.id, ts: now() };
     const sig = await signHMAC(canonicalJSON(payload));
@@ -197,14 +203,14 @@ export default async function coreRoutes(fastify) {
       .run(outcome, notes, req.user.id, payload.ts, JSON.stringify(sig), JSON.stringify(chain), now(), row.id);
     audit({ actor: req.user.id, action: outcome === "approved" ? "approval.sign" : "approval.reject", subject: row.id, detail: { signature: sig.signature.slice(0, 12) } });
 
-    // Cascade: promote revision.
+    // Cascade: promote revision through the FSM-defined sequence
+    // (IFR → Approved → IFC). cascadeOnApprove() lives in
+    // src/core/fsm/revision.js so client + server agree.
     if (row.subject_kind === "Revision" && outcome === "approved") {
       const rev = db.prepare("SELECT * FROM revisions WHERE id = ?").get(row.subject_id);
       if (rev) {
-        let to = null;
-        if (rev.status === "IFR") to = "Approved";
-        else if (rev.status === "Approved") to = "IFC";
-        if (to) {
+        const to = cascadeOnApprove(rev.status);
+        if (to && canTransitionRevision(rev.status, to)) {
           // reuse transition logic via HTTP would be overkill; do it inline.
           db.prepare("UPDATE revisions SET status = ?, updated_at = ? WHERE id = ?").run(to, now(), rev.id);
           if (to === "IFC") {
@@ -248,19 +254,63 @@ export default async function coreRoutes(fastify) {
   // ---------- search ----------
   fastify.get("/api/search", async (req) => {
     const q = String(req.query.q || "").trim();
-    if (!q) return { hits: [] };
+    if (!q) return { hits: [], facets: { kind: {}, date: {}, revision: {} } };
     const esc = q.replace(/"/g, '""');
     const docs = db.prepare(`SELECT id, kind, title, body FROM fts_docs WHERE fts_docs MATCH ? ORDER BY rank LIMIT 25`).all(`"${esc}"*`);
     const msgs = db.prepare(`SELECT id, channel_id, text FROM fts_messages WHERE fts_messages MATCH ? ORDER BY rank LIMIT 25`).all(`"${esc}"*`);
     const wis  = db.prepare(`SELECT id, project_id, title, description, labels FROM fts_workitems WHERE fts_workitems MATCH ? ORDER BY rank LIMIT 25`).all(`"${esc}"*`);
     const ast  = db.prepare(`SELECT id, name, hierarchy, type FROM fts_assets WHERE fts_assets MATCH ? ORDER BY rank LIMIT 25`).all(`"${esc}"*`);
-    return {
-      hits: [
-        ...docs.map(r => ({ kind: r.kind || "Document", id: r.id, title: r.title, snippet: r.body?.slice(0, 160) })),
-        ...msgs.map(r => ({ kind: "Message", id: r.id, title: r.text?.slice(0, 80), route: `/channel/${r.channel_id}` })),
-        ...wis.map(r  => ({ kind: "WorkItem", id: r.id, title: r.title, snippet: r.description, route: `/work-board/${r.project_id}` })),
-        ...ast.map(r  => ({ kind: "Asset", id: r.id, title: r.name, snippet: r.hierarchy, route: `/asset/${r.id}` })),
-      ],
-    };
+
+    const hits = [
+      ...docs.map(r => {
+        if (r.kind === "Revision") {
+          const rev = db.prepare("SELECT label, status, created_at, doc_id FROM revisions WHERE id = ?").get(r.id);
+          return { kind: "Revision", id: r.id, title: r.title, snippet: r.body?.slice(0, 160), revision: rev?.label, status: rev?.status, route: rev ? `/doc/${rev.doc_id}` : `/docs`, date: rev?.created_at };
+        }
+        if (r.kind === "Document") {
+          const doc = db.prepare("SELECT created_at FROM documents WHERE id = ?").get(r.id);
+          return { kind: "Document", id: r.id, title: r.title, snippet: r.body?.slice(0, 160), date: doc?.created_at };
+        }
+        return { kind: r.kind || "Document", id: r.id, title: r.title, snippet: r.body?.slice(0, 160) };
+      }),
+      ...msgs.map(r => {
+        const m = db.prepare("SELECT ts FROM messages WHERE id = ?").get(r.id);
+        return { kind: "Message", id: r.id, title: r.text?.slice(0, 80), route: `/channel/${r.channel_id}`, date: m?.ts };
+      }),
+      ...wis.map(r  => {
+        const w = db.prepare("SELECT created_at FROM work_items WHERE id = ?").get(r.id);
+        return { kind: "WorkItem", id: r.id, title: r.title, snippet: r.description, route: `/work-board/${r.project_id}`, date: w?.created_at };
+      }),
+      ...ast.map(r  => {
+        const a = db.prepare("SELECT created_at FROM assets WHERE id = ?").get(r.id);
+        return { kind: "Asset", id: r.id, title: r.name, snippet: r.hierarchy, route: `/asset/${r.id}`, date: a?.created_at };
+      }),
+    ];
+
+    // Facet filters from query string.
+    const wantKind = (req.query.kind || "").split(",").map(s => s.trim()).filter(Boolean);
+    const wantRev = (req.query.revision || "").split(",").map(s => s.trim()).filter(Boolean);
+    const fromDate = req.query.from || null;
+    const toDate = req.query.to || null;
+
+    const filtered = hits.filter(h => {
+      if (wantKind.length && !wantKind.includes(h.kind)) return false;
+      if (wantRev.length && !(h.revision && wantRev.includes(h.revision))) return false;
+      if (fromDate && h.date && h.date < fromDate) return false;
+      if (toDate && h.date && h.date > toDate) return false;
+      return true;
+    });
+
+    const facets = { kind: {}, date: {}, revision: {} };
+    for (const h of hits) {
+      facets.kind[h.kind] = (facets.kind[h.kind] || 0) + 1;
+      if (h.date) {
+        const day = h.date.slice(0, 10);
+        facets.date[day] = (facets.date[day] || 0) + 1;
+      }
+      if (h.revision) facets.revision[h.revision] = (facets.revision[h.revision] || 0) + 1;
+    }
+
+    return { hits: filtered, facets };
   });
 }

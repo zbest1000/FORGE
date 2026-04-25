@@ -6,6 +6,15 @@ A secure, self-hostable engineering collaboration and execution platform.
 This repository contains the product specification plus an interactive
 client-side MVP prototype that exercises the full FORGE object model.
 
+## Engineering philosophy
+
+> **Don't rebuild the wheel.** This repo follows the rule codified in
+> `docs/ENGINEERING_PHILOSOPHY.md`: every concern is solved by a mature,
+> permissive-licensed open-source project first, with hand-rolled code
+> only when no fit exists or the surface needs redesigning around the
+> spec. The doc has the decision matrix, the per-concern OSS register,
+> and a pre-flight checklist that every PR is expected to use.
+
 ## What is in this repository
 
 - `PRODUCT_SPEC.md` — full product specification, UX architecture, and UI system.

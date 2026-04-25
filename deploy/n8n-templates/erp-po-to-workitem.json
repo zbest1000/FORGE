@@ -1,0 +1,39 @@
+{
+  "name": "ERP PO → FORGE Work Item",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "erp-po-created",
+        "options": { "responseMode": "onReceived" }
+      },
+      "id": "po-trigger",
+      "name": "ERP PO Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.FORGE_URL}}/graphql",
+        "method": "POST",
+        "headers": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.FORGE_API_TOKEN}}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "jsonBody": "={\n  \"query\": \"mutation($pid:ID!, $title:String!, $sev:String){ createWorkItem(projectId:$pid, type:\\\"Task\\\", title:$title, severity:$sev){ id status } }\",\n  \"variables\": {\n    \"pid\": $env.FORGE_PROJECT_ID,\n    \"title\": `PO ${$json.poNumber}: ${$json.subject || 'Vendor work'}`,\n    \"sev\": $json.priority >= 3 ? 'high' : 'medium'\n  }\n}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "forge-create-wi",
+      "name": "FORGE GraphQL: createWorkItem",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [560, 300]
+    }
+  ],
+  "connections": {
+    "ERP PO Webhook": { "main": [[{ "node": "FORGE GraphQL: createWorkItem", "type": "main", "index": 0 }]] }
+  }
+}

@@ -13,9 +13,46 @@ or swapped for self-hosted copies without touching call sites.
 
 ## Pinned versions
 
+### Server-side (Node, npm)
+
+| Package | License | Purpose | Spec clause |
+|---|---|---|---|
+| [fastify](https://github.com/fastify/fastify) | MIT | HTTP server | §1.1 |
+| [@fastify/jwt](https://github.com/fastify/fastify-jwt) | MIT | Bearer-token auth | §13.1 |
+| [@fastify/helmet](https://github.com/fastify/fastify-helmet) | MIT | Secure headers | §13 |
+| [@fastify/rate-limit](https://github.com/fastify/fastify-rate-limit) | MIT | Per-user/IP throttle | §13 |
+| [@fastify/multipart](https://github.com/fastify/fastify-multipart) | MIT | File uploads | §7 #10 |
+| [@fastify/static](https://github.com/fastify/fastify-static) | MIT | SPA static serving | §11 |
+| [@fastify/cors](https://github.com/fastify/fastify-cors) | MIT | CORS policy | §13 |
+| [bcryptjs](https://github.com/dcodeIO/bcrypt.js) | MIT | Password hashing | §13.1 |
+| [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | MIT | SQLite + WAL + FTS5 | §1.1, §15 |
+| [mqtt](https://github.com/mqttjs/MQTT.js) | MIT | MQTT bridge | §6.4, §9.1 |
+| [pino](https://github.com/pinojs/pino) | MIT | Structured logs | §18 |
+| [mercurius](https://github.com/mercurius-js/mercurius) | MIT | GraphQL over Fastify | §15 traversal, n8n integration |
+| [graphql](https://github.com/graphql/graphql-js) | MIT | Reference GraphQL runtime | §15 |
+| [prom-client](https://github.com/siimon/prom-client) | Apache-2.0 | Prometheus metrics + Node process metrics | §18 |
+| [xstate](https://github.com/statelyai/xstate) | MIT | Revision / approval / incident lifecycle state machines (one source of truth across client + REST + GraphQL) | §6.3, §11.13, §11.14 |
+| node-opcua *(optional)* | MIT | OPC UA ingress | §6.4, §9.1 |
+
+### Self-hosted services (docker-compose)
+
+| Image | License | Purpose |
+|---|---|---|
+| [n8nio/n8n](https://github.com/n8n-io/n8n) | **Sustainable Use License** (source-available; free for internal/business use) | Workflow automation engine — 400+ pre-built connectors covering spec §6.2 "Automation rules from integration events" |
+| [eclipse-mosquitto](https://github.com/eclipse/mosquitto) | EPL-2.0 / EDL-1.0 | MQTT broker dev sibling |
+| [LibreDWG](https://www.gnu.org/software/libredwg/) (`libredwg-tools`) | **GPL-3.0** (deployed-service exception — runs as a subprocess; FORGE code is not derived) | `dwg2dxf` CLI used by `server/converters/dwg.js` to convert DWG → DXF on the server |
+
+### Client-side (browser, ES module import map)
+
 | Package | Version | License | Purpose | Spec clause |
 |---|---|---|---|---|
 | [pdfjs-dist](https://github.com/mozilla/pdf.js) | 4.6.82 | Apache 2.0 | Native PDF rendering in the doc viewer | §7.10, §11.5 |
+| [papaparse](https://github.com/mholt/PapaParse) | 5.4.1 | MIT | CSV parsing in the doc viewer (de-facto browser CSV) | §7.10 |
+| [workbox-sw](https://github.com/GoogleChrome/workbox) | 7.1.0 | MIT | Service worker routing + BackgroundSync queue (offline drafts) | §12.5 |
+| [xstate](https://github.com/statelyai/xstate) | 5.30.0 | MIT | FSMs for revision / approval / incident lifecycles (loaded via import map for client) | §6.3, §11.13, §11.14 |
+| [three](https://github.com/mrdoob/three.js) | 0.169.0 | MIT | 3D engine shared by dxf-viewer + Online3DViewer | §8 |
+| [dxf-viewer](https://github.com/vagran/dxf-viewer) | 1.1.7 | MIT | DXF rendering (and the destination format for converted DWG) | §6.3, §8 |
+| [online-3d-viewer](https://github.com/kovacsv/Online3DViewer) | 0.16.0 | MIT | STEP / IGES / STL / OBJ / glTF / 3DM / 3DS / 3MF / FBX / DAE / PLY / BREP / OFF / VRML / IFC viewer (wraps three.js + occt-import-js) | §6.3, §7.11, §8 |
 | [minisearch](https://github.com/lucaong/minisearch) | 7.1.2 | MIT | BM25 + prefix + fuzzy full-text search | §15 |
 | [dexie](https://github.com/dexie/Dexie.js) | 4.0.11 | Apache 2.0 | IndexedDB append-only logs (audit, events, DLQ) | §13.2, §9.4 |
 | [marked](https://github.com/markedjs/marked) | 14.1.3 | MIT | Markdown rendering in channel messages, transmittals, doc viewer | §6.1, §7 |

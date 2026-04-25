@@ -16,6 +16,7 @@ import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { follow, unfollow, isFollowing, fanout } from "../core/subscriptions.js";
 import { renderMarkdown } from "../core/md.js";
+import { notifyMentions, highlightMentions, resolveMention } from "../core/mentions.js";
 
 export function renderChannel({ id }) {
   const root = document.getElementById("screenContainer");
@@ -54,6 +55,9 @@ export function renderChannel({ id }) {
               el("button", { class: "btn sm ghost", onClick: () => linkObject(composer) }, ["+ Link object"]),
               el("button", { class: "btn sm ghost", onClick: () => addChecklist(composer) }, ["+ Checklist"]),
               el("button", { class: "btn sm ghost", onClick: () => addDecision(composer) }, ["+ Decision"]),
+              el("button", { class: "btn sm ghost", onClick: () => addMention(composer) }, ["@ Mention"]),
+              el("button", { class: "btn sm ghost", onClick: () => addCodeBlock(composer) }, ["</> Code"]),
+              el("button", { class: "btn sm ghost", onClick: () => addDataBlock(composer) }, ["▦ Data"]),
             ]),
             el("button", {
               class: "btn sm primary",
@@ -92,7 +96,8 @@ export function renderChannel({ id }) {
     };
     update(s => { s.data.messages.push(msg); });
     audit("message.post", ch.id, { messageId: msg.id });
-    fanout(ch.id, "message", { kind: "mention", text: `New ${type} in #${ch.name}`, route: `/channel/${ch.id}` });
+    fanout(ch.id, "message", { kind: "channel", text: `New ${type} in #${ch.name}`, route: `/channel/${ch.id}` });
+    notifyMentions({ text: msg.text, subject: ch.id, route: `/channel/${ch.id}`, actorId: msg.authorId });
     toast("Message posted", "success");
   }
 }
@@ -207,6 +212,7 @@ function linkifyText(text, d) {
 }
 
 function upgradeTokens(root, d) {
+  // 1) [OBJ-ID] → object chip.
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const texts = [];
   while (walker.nextNode()) texts.push(walker.currentNode);
@@ -221,6 +227,13 @@ function upgradeTokens(root, d) {
     });
     node.parentNode.replaceChild(frag, node);
   }
+  // 2) @user → user chip.
+  highlightMentions(root, d.users || [], (u) =>
+    chip("@" + (u.name || u.id), {
+      kind: u.id,
+      onClick: () => alert(`User ${u.id}\n${u.name}\nRole: ${u.role}`),
+    })
+  );
 }
 
 function jumpById(id, d) {
@@ -255,6 +268,33 @@ function addDecision(composer) {
   composer.value = (composer.value ? composer.value + "\n" : "") + "Decision: ";
   const sel = document.getElementById("msgType");
   if (sel) sel.value = "decision";
+  composer.focus();
+}
+
+function addMention(composer) {
+  const users = state.data.users || [];
+  const choice = window.prompt(
+    "Mention which user?\n" + users.map(u => `  ${u.initials.padEnd(4)} ${u.name} — ${u.role}`).join("\n"),
+    users[0]?.initials || ""
+  );
+  if (!choice) return;
+  const u = resolveMention(choice, users);
+  if (!u) { return; }
+  composer.value += (composer.value ? " " : "") + `@${u.initials}`;
+  composer.focus();
+}
+
+function addCodeBlock(composer) {
+  const lang = window.prompt("Language (e.g. js, py, sql, json):", "js") || "";
+  const fenced = "\n```" + lang + "\n// your code\n```\n";
+  composer.value += fenced;
+  composer.focus();
+}
+
+function addDataBlock(composer) {
+  // GitHub-flavored markdown table that marked + DOMPurify will render.
+  const sample = "\n| key | value |\n| --- | --- |\n| sample | 1 |\n";
+  composer.value += sample;
   composer.focus();
 }
 

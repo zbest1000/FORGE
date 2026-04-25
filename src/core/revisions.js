@@ -16,20 +16,11 @@ import { state, update, getById } from "./store.js";
 import { audit } from "./audit.js";
 import { touch } from "./normalize.js";
 import { fanout } from "./subscriptions.js";
+import { canTransitionRevision, transitionRevisionState } from "./fsm/revision.js";
 
-const ALLOWED = {
-  Draft: ["IFR", "Archived"],
-  IFR: ["Approved", "Rejected", "Draft", "Archived"],
-  Approved: ["IFC", "Rejected", "Archived"],
-  IFC: ["Superseded", "Archived"],
-  Rejected: ["Draft", "Archived"],
-  Superseded: [],
-  Archived: [],
-};
-
-export function canTransition(fromStatus, toStatus) {
-  return (ALLOWED[fromStatus] || []).includes(toStatus);
-}
+// Re-export for backwards compatibility with screens/tests that imported
+// `canTransition` from this module historically.
+export const canTransition = canTransitionRevision;
 
 /**
  * Transition a revision. Returns the updated revision or throws an Error if
@@ -39,9 +30,9 @@ export function transition(revId, toStatus, meta = {}) {
   const rev = getById("revisions", revId);
   if (!rev) throw new Error(`revision ${revId} not found`);
   const from = rev.status;
-  if (!canTransition(from, toStatus)) {
-    throw new Error(`revision ${revId}: cannot transition ${from} → ${toStatus}`);
-  }
+  // Delegate the rule check to the xstate machine so the same answer
+  // applies on the server, in GraphQL, and on the client.
+  transitionRevisionState(from, toStatus);
 
   update(s => {
     const r = s.data.revisions.find(x => x.id === revId);

@@ -18,6 +18,15 @@ export function buildSeed() {
     region: "us-east",
   };
 
+  // Spec §5.1 calls for a workspace switcher. Seed a second workspace so the
+  // switcher has something to show; objects keep their default workspace_id
+  // and the switcher filters them client-side via state.ui.workspaceId.
+  const workspaces = [
+    workspace,
+    { id: "WS-2", orgId: "ORG-1", name: "Site 2 Build",   region: "us-east", icon: "🏗" },
+    { id: "WS-3", orgId: "ORG-1", name: "Lab — R&D",      region: "us-west", icon: "🧪" },
+  ];
+
   const users = [
     { id: "U-1", name: "J. Singh",      role: "Engineer/Contributor",  initials: "JS" },
     { id: "U-2", name: "R. Okafor",     role: "Reviewer/Approver",     initials: "RO" },
@@ -150,6 +159,9 @@ export function buildSeed() {
     { id: "AS-2", name: "Line A / Cell-1 / Feeder A1", type: "motor",      hierarchy: "North Plant > Line A > Cell-1 > Feeder A1", status: "warning", mqttTopics: ["line/a1/feeder/current"], opcuaNodes: ["ns=2;s=Feeder.A1.Current"], docIds: ["DOC-1"] },
     { id: "AS-3", name: "Site 2 / Package 3 / Utility Header", type: "piping", hierarchy: "Site 2 > Package 3 > Utility Header", status: "normal", mqttTopics: [], opcuaNodes: [], docIds: ["DOC-2"] },
     { id: "AS-4", name: "Site 1 / Boiler B-201", type: "boiler", hierarchy: "Site 1 > Utilities > Boiler B-201", status: "normal", mqttTopics: ["site1/utilities/boiler/steam"], opcuaNodes: ["ns=2;s=B201.Steam.P"], docIds: ["DOC-3"] },
+    // Spec §6.4 second hierarchy template: Site > Building > Floor > Room.
+    { id: "AS-5", name: "HQ / Building B / L3 / Server Room",   type: "facility_room",  hierarchy: "HQ > Building B > L3 > Server Room",   status: "normal",  mqttTopics: ["hq/b/3/server/temp"], opcuaNodes: [], docIds: [] },
+    { id: "AS-6", name: "HQ / Building B / L3 / Test Lab 3-12", type: "lab",            hierarchy: "HQ > Building B > L3 > Test Lab 3-12", status: "normal",  mqttTopics: ["hq/b/3/lab12/temp","hq/b/3/lab12/humidity"], opcuaNodes: [], docIds: [] },
   ];
 
   const workItems = [
@@ -233,6 +245,7 @@ export function buildSeed() {
   return {
     organization,
     workspace,
+    workspaces,
     users,
     teamSpaces,
     projects,

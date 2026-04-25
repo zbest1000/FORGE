@@ -21,6 +21,8 @@ import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { follow, isFollowing, unfollow } from "../core/subscriptions.js";
 import { vendor } from "../core/vendor.js";
+import { renderCad } from "../core/cad-viewer.js";
+import { detectCad, supportedExtensions } from "../core/cad.js";
 
 export function renderDrawingsIndex() {
   const root = document.getElementById("screenContainer");
@@ -38,7 +40,7 @@ export function renderDrawingsIndex() {
 
 const SK = (drawingId, k) => `drawing.${drawingId}.${k}`;
 
-const TOOLS = ["pan", "measure", "arrow", "cloud", "highlight", "text", "stamp", "status", "pin"];
+const TOOLS = ["pan", "measure", "arrow", "callout", "cloud", "highlight", "text", "stamp", "status", "pin"];
 
 export function renderDrawingViewer({ id }) {
   const root = document.getElementById("screenContainer");
@@ -110,13 +112,14 @@ function toolbar(dr, sheetId, mode, tool, layers, compareWithId, overlayOpacity)
     mode === "compare" ? compareSelector(dr, compareWithId, overlayOpacity) : null,
 
     el("span", { style: { flex: 1 } }),
+    el("button", { class: "btn sm", onClick: () => loadCadFile(dr) }, [dr.cadUrl ? "Reload CAD" : "Load CAD…"]),
     el("button", { class: "btn sm", onClick: () => exportSVG(id) }, ["Export SVG"]),
   ]);
 }
 
 function sep() { return el("span", { style: { width: "1px", height: "22px", background: "var(--border)", margin: "0 4px" } }); }
 function toolIcon(t) {
-  const map = { pan: "✋", measure: "📏", arrow: "➜", cloud: "☁", highlight: "▮", text: "T", stamp: "⛊", status: "●", pin: "📍" };
+  const map = { pan: "✋", measure: "📏", arrow: "➜", callout: "💬", cloud: "☁", highlight: "▮", text: "T", stamp: "⛊", status: "●", pin: "📍" };
   return map[t] || t;
 }
 
@@ -145,6 +148,18 @@ function canvasColumn(dr, sheetId, mode, tool, markups, layers, compareWithId, o
 function pageArea(dr, sheetId, mode, tool, markups, layers, compareWithId, overlayOpacity) {
   const id = dr.id;
   const viewState = loadViewState(id);
+
+  // If a CAD asset is attached, render that instead of the synthetic SVG
+  // sheet — DXF/STEP/IGES/STL/OBJ/glTF/IFC etc. The native markup palette
+  // still works for any kind, since the CAD viewer is hosted inside the
+  // same `viewer-page` container.
+  if (dr.cadUrl) {
+    const cadHost = el("div", { class: "viewer-page", style: { position: "relative", overflow: "hidden" } });
+    const innerHost = el("div", { style: { position: "absolute", inset: "0" } });
+    cadHost.append(innerHost);
+    renderCad(innerHost, { url: dr.cadUrl, name: dr.cadUrl }).catch(() => {});
+    return cadHost;
+  }
 
   const svg = buildSvg(dr, sheetId, markups, layers, compareWithId, overlayOpacity, viewState);
 
@@ -413,11 +428,36 @@ function renderMarkup(m) {
       line.setAttribute("stroke", "#ef4444"); line.setAttribute("stroke-width", 2);
       line.setAttribute("marker-end", "url(#arrow)");
       g.append(line);
-      // simple arrowhead
       const head = document.createElementNS(NS, "polygon");
       head.setAttribute("points", `${x},${y} ${x-10},${y-5} ${x-10},${y+5}`);
       head.setAttribute("fill", "#ef4444");
       g.append(head);
+      break;
+    }
+    case "callout": {
+      // Connector + bubble. Anchor (x,y) with bubble offset to upper-left.
+      const bx = x - 110, by = y - 70;
+      const bw = 160, bh = 40;
+      const conn = document.createElementNS(NS, "line");
+      conn.setAttribute("x1", x); conn.setAttribute("y1", y);
+      conn.setAttribute("x2", bx + bw); conn.setAttribute("y2", by + bh);
+      conn.setAttribute("stroke", "#0ea5e9"); conn.setAttribute("stroke-width", 1.5);
+      g.append(conn);
+      const dot = document.createElementNS(NS, "circle");
+      dot.setAttribute("cx", x); dot.setAttribute("cy", y); dot.setAttribute("r", 4);
+      dot.setAttribute("fill", "#0ea5e9");
+      g.append(dot);
+      const bubble = document.createElementNS(NS, "rect");
+      bubble.setAttribute("x", bx); bubble.setAttribute("y", by);
+      bubble.setAttribute("width", bw); bubble.setAttribute("height", bh);
+      bubble.setAttribute("rx", 6);
+      bubble.setAttribute("fill", "#fff"); bubble.setAttribute("stroke", "#0ea5e9"); bubble.setAttribute("stroke-width", 1.5);
+      g.append(bubble);
+      const tx = document.createElementNS(NS, "text");
+      tx.setAttribute("x", bx + 8); tx.setAttribute("y", by + 24);
+      tx.setAttribute("fill", "#0f172a"); tx.setAttribute("font-size", 12);
+      tx.textContent = (m.text || "Callout").slice(0, 22);
+      g.append(tx);
       break;
     }
     case "cloud": {
@@ -487,6 +527,7 @@ function sideColumn(dr, id, sheetId, markups, mode) {
   if (mode === "ifc") return ifcPanel(dr);
   return el("div", { class: "viewer-side" }, [
     miniMap(dr, sheetId, markups),
+    bookmarksCard(dr, sheetId),
     card(`Markups on this sheet (${markups.length})`, markupList(markups, dr.id)),
     crossLinks(dr),
     followCard(dr.id),
@@ -499,6 +540,57 @@ function sideColumn(dr, id, sheetId, markups, mode) {
       el("button", { class: "btn sm", onClick: () => navigate(`/ai?drawing=${dr.id}`) }, ["Open AI →"]),
     ])),
   ]);
+}
+
+function bookmarksCard(dr, sheetId) {
+  const key = SK(dr.id, "bookmarks");
+  let list;
+  try { list = JSON.parse(sessionStorage.getItem(key) || "[]"); } catch { list = []; }
+  const sheetList = list.filter(b => b.sheetId === sheetId);
+
+  const captureCurrent = () => {
+    let view; try { view = JSON.parse(sessionStorage.getItem(SK(dr.id, "view")) || "{}"); } catch { view = {}; }
+    const name = window.prompt("Bookmark name:", `View ${sheetList.length + 1}`);
+    if (!name) return;
+    const bookmark = {
+      id: "BM-" + Math.random().toString(36).slice(2, 8).toUpperCase(),
+      name,
+      sheetId,
+      view,
+      created_at: new Date().toISOString(),
+    };
+    list.push(bookmark);
+    sessionStorage.setItem(key, JSON.stringify(list));
+    audit("drawing.bookmark.create", bookmark.id, { drawingId: dr.id, sheetId });
+    renderDrawingViewer({ id: dr.id });
+  };
+
+  const goTo = (b) => {
+    if (b.sheetId !== sheetId) sessionStorage.setItem(SK(dr.id, "sheet"), b.sheetId);
+    sessionStorage.setItem(SK(dr.id, "view"), JSON.stringify(b.view || {}));
+    audit("drawing.bookmark.open", b.id, { drawingId: dr.id });
+    renderDrawingViewer({ id: dr.id });
+  };
+
+  const remove = (b) => {
+    const next = list.filter(x => x.id !== b.id);
+    sessionStorage.setItem(key, JSON.stringify(next));
+    audit("drawing.bookmark.delete", b.id, { drawingId: dr.id });
+    renderDrawingViewer({ id: dr.id });
+  };
+
+  return card("Snap-to-region bookmarks", el("div", { class: "stack" }, [
+    el("div", { class: "tiny muted" }, ["Capture the current zoom + pan as a named region. Click to snap back."]),
+    sheetList.length
+      ? el("div", { class: "stack" }, sheetList.map(b => el("div", { class: "activity-row" }, [
+          el("button", { class: "btn sm", onClick: () => goTo(b), "aria-label": `Snap to ${b.name}` }, ["📍"]),
+          el("span", { class: "small", style: { flex: 1 } }, [b.name]),
+          el("span", { class: "tiny muted mono" }, [`k=${(b.view?.k ?? 1).toFixed(2)}`]),
+          el("button", { class: "btn sm danger", onClick: () => remove(b), "aria-label": `Delete bookmark ${b.name}` }, ["×"]),
+        ])))
+      : el("div", { class: "muted tiny" }, ["No bookmarks for this sheet."]),
+    el("button", { class: "btn sm primary", onClick: captureCurrent }, ["+ Capture current view"]),
+  ]));
 }
 
 function miniMap(dr, sheetId, markups) {
@@ -566,6 +658,20 @@ function histogramMarkupTypes(markups) {
 }
 
 // ---------- IFC mode ----------
+async function loadCadFile(dr) {
+  const url = window.prompt(
+    "CAD file URL (CORS-enabled). Supported: " + supportedExtensions().join(", "),
+    dr.cadUrl || ""
+  );
+  if (!url) return;
+  const detected = detectCad(url);
+  if (!detected) { toast("Unsupported CAD format", "warn"); return; }
+  update(s => { const x = s.data.drawings.find(y => y.id === dr.id); if (x) { x.cadUrl = url; x.cadKind = detected.kind; } });
+  audit("drawing.cad.attach", dr.id, { url, kind: detected.kind });
+  toast(`Loading ${detected.name}…`, "info");
+  renderDrawingViewer({ id: dr.id });
+}
+
 async function loadIfcFile(dr) {
   const url = window.prompt("IFC file URL (CORS-enabled):", dr.ifcUrl || "");
   if (!url) return;

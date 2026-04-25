@@ -121,16 +121,37 @@ export function modal({ title, body, actions }) {
   const root = document.getElementById("modalRoot");
   if (!root) return { close: () => {} };
 
-  const close = () => { root.innerHTML = ""; };
+  const previouslyFocused = document.activeElement;
+  const close = () => {
+    root.innerHTML = "";
+    if (previouslyFocused && typeof previouslyFocused.focus === "function") {
+      try { previouslyFocused.focus(); } catch { /* noop */ }
+    }
+  };
 
   const backdrop = el("div", {
     class: "modal-backdrop",
     onClick: (e) => { if (e.target === backdrop) close(); },
+    onKeydown: (e) => {
+      if (e.key === "Escape") { e.preventDefault(); close(); return; }
+      if (e.key !== "Tab") return;
+      // Trap focus within the modal.
+      const focusables = backdrop.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
+      const first = focusables[0]; const last = focusables[focusables.length - 1];
+      if (!first) return;
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    },
   }, [
-    el("div", { class: "modal" }, [
+    el("div", {
+      class: "modal",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-label": title || "Dialog",
+    }, [
       el("div", { class: "modal-header" }, [
-        el("h3", {}, [title || ""]),
-        el("button", { class: "btn ghost sm", onClick: close }, ["Close"]),
+        el("h3", { id: "modal-title" }, [title || ""]),
+        el("button", { class: "btn ghost sm", onClick: close, "aria-label": "Close dialog" }, ["Close"]),
       ]),
       el("div", { class: "modal-body" }, [body]),
       actions && actions.length
@@ -147,6 +168,11 @@ export function modal({ title, body, actions }) {
 
   root.innerHTML = "";
   root.append(backdrop);
+  // Focus the first focusable element.
+  setTimeout(() => {
+    const first = backdrop.querySelector("button:not(.ghost), input, select, textarea, button");
+    if (first) try { first.focus(); } catch {}
+  }, 0);
   return { close };
 }
 

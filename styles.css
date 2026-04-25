@@ -180,6 +180,18 @@ button {
   flex: 1;
 }
 
+.rail-ws {
+  width: 44px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--elevated);
+  margin-bottom: var(--space-2);
+}
+.rail-ws-icon { font-size: 18px; }
+
 /* Left panel */
 .left-panel {
   padding: var(--space-3);
@@ -1400,6 +1412,76 @@ button {
 
 .mermaid-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
 .uplot { background: var(--surface); }
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+.calendar-grid.header { margin-bottom: 4px; }
+.calendar-cell {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.calendar-cell.head { background: transparent; border: none; min-height: auto; padding: 4px; font-size: 11px; color: var(--muted); text-transform: uppercase; }
+.calendar-cell.empty { background: transparent; border: 1px dashed var(--border); }
+.calendar-cell.today { border-color: var(--accent); }
+.calendar-date { font-size: 11px; color: var(--muted); }
+.calendar-pill {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border-radius: 4px;
+  border: none;
+  padding: 2px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  background: var(--accent);
+  color: #0b1220;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.calendar-pill.sev-high, .calendar-pill.sev-critical { background: var(--danger); color: #fff; }
+.calendar-pill.sev-medium { background: var(--warn); color: #0b1220; }
+.calendar-pill.sev-low { background: var(--accent); color: #0b1220; }
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  background: var(--accent);
+  color: #0b1220;
+  padding: 8px 12px;
+  border-radius: 6px;
+  z-index: 10000;
+}
+.skip-link:focus {
+  left: 12px;
+  top: 12px;
+  width: auto;
+  height: auto;
+  outline: 2px solid var(--accent-strong);
+}
+
+button:focus-visible,
+.btn:focus-visible,
+[role="menuitemradio"]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .mono { font-family: var(--font-mono); }
 .small { font-size: 12px; }
 .tiny { font-size: 11px; }

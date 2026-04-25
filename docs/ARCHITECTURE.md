@@ -22,15 +22,21 @@ model.
 │     │                                                   │
 │     ▼  fetch() → /api/*   (auto-detected via /health)   │
 ├──────────────────── Fastify server ─────────────────────┤
-│  /api/auth     JWT + bcrypt                             │
+│  /api/auth     JWT + bcrypt + API tokens (fgt_…)        │
 │  /api/*        CRUD: spaces/channels/messages/docs/     │
 │                     revisions/assets/work-items/        │
-│                     incidents/approvals/audit           │
-│  /api/search   SQLite FTS5                              │
+│                     incidents/approvals/audit/files/    │
+│                     review-cycles/forms/commissioning/  │
+│                     rfi-links/model-pins/webhooks       │
+│  /graphql      Mercurius — read+write, deep traversal   │
+│  /api/automations/n8n/*  Proxy to n8n workflow engine   │
+│  /api/search   SQLite FTS5 + facets                     │
 │  /api/events   Canonical envelope + rule engine + DLQ   │
 │  /api/audit    Hash-chained ledger + signed export pack │
+│  /api/ai/*     Provider-routed LLM gateway              │
 │  /api/events/stream  SSE firehose                       │
 │  /v1/*         CESMII i3X 1.0-Beta                      │
+│  /metrics      Prometheus text format                   │
 │  static        SPA client                               │
 │     │                                                   │
 │     ├── better-sqlite3  (WAL, FTS5)                     │

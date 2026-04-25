@@ -1,0 +1,43 @@
+{
+  "name": "MQTT Alarm → FORGE Incident",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "topics": "plant/+/alarm/#",
+        "options": {
+          "jsonParseBody": true,
+          "qos": 1
+        }
+      },
+      "id": "mqtt-trigger",
+      "name": "MQTT Trigger",
+      "type": "n8n-nodes-base.mqttTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": { "mqtt": { "name": "mqtt creds" } }
+    },
+    {
+      "parameters": {
+        "url": "={{$env.FORGE_URL}}/api/events/ingest",
+        "method": "POST",
+        "headers": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.FORGE_API_TOKEN}}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "jsonBody": "={\n  \"event_type\": \"alarm\",\n  \"severity\": ($json.severity || 'SEV-3'),\n  \"asset_ref\": $json.asset_ref || null,\n  \"payload\": $json,\n  \"dedupe_key\": `mqtt:${$json.topic || $node['MQTT Trigger'].json.topic}:${Date.now()}`\n}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "forge-ingest",
+      "name": "FORGE: ingest event",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 300]
+    }
+  ],
+  "connections": {
+    "MQTT Trigger": { "main": [[{ "node": "FORGE: ingest event", "type": "main", "index": 0 }]] }
+  }
+}

@@ -18,6 +18,9 @@ import { can } from "../core/permissions.js";
 import { follow, unfollow, isFollowing } from "../core/subscriptions.js";
 import { impactOfRevision } from "../core/revisions.js";
 import { openPdf, renderPage } from "../core/pdf.js";
+import { parseCSV } from "../core/csv.js";
+import { detectCad, supportedExtensions } from "../core/cad.js";
+import { renderCad } from "../core/cad-viewer.js";
 
 export function renderDocsIndex() {
   const root = document.getElementById("screenContainer");
@@ -124,19 +127,45 @@ function paperPage(doc, rev, page) {
     ...comments.map(c => commentPin(c)),
   ]);
 
-  // If the revision has a pdfUrl, render it with PDF.js (Mozilla, Apache 2.0).
-  // This replaces the synthetic paper with the real document when available.
-  if (rev.pdfUrl) {
-    const pdfHost = document.createElement("div");
-    pdfHost.className = "pdf-host";
-    pdfHost.style.minHeight = "420px";
-    pdfHost.textContent = "Loading PDF…";
+  // If the revision has an attached URL, pick the renderer by content kind.
+  // CAD formats (DWG/DXF/STEP/IGES/STL/OBJ/glTF/3DM/3DS/3MF/FBX/DAE/PLY/IFC/...)
+  // are routed to the unified CAD viewer; PDF/image/CSV stay on their
+  // existing renderers.
+  const url = rev.pdfUrl || rev.assetUrl || null;
+  const cadKind = detectCad(url, rev.assetMime);
+  if (url && cadKind && cadKind.viewer !== "image" && cadKind.viewer !== "pdf" && cadKind.viewer !== "csv") {
+    const host = document.createElement("div");
+    host.style.minHeight = "70vh";
+    container.replaceChildren(host);
+    renderCad(host, { url, name: url, mime: rev.assetMime }).catch(() => {});
+    for (const c of comments) container.append(commentPin(c));
+    return container;
+  }
+  const kind = detectKind(url, rev.assetMime);
+  if (url && kind) {
+    const host = document.createElement("div");
+    host.className = "asset-host";
+    host.style.minHeight = "420px";
+    host.textContent = "Loading…";
     (async () => {
-      const pdf = await openPdf(rev.pdfUrl);
-      if (!pdf) { pdfHost.textContent = "PDF.js unavailable — showing placeholder."; return; }
-      await renderPage(pdf, Math.min(page, pdf.numPages), pdfHost);
+      try {
+        if (kind === "pdf") {
+          const pdf = await openPdf(url);
+          if (!pdf) { host.textContent = "PDF.js unavailable — showing placeholder."; return; }
+          await renderPage(pdf, Math.min(page, pdf.numPages), host);
+        } else if (kind === "image") {
+          host.replaceChildren(el("img", { src: url, alt: doc.name + " — page " + page, style: { maxWidth: "100%", border: "1px solid var(--border)", borderRadius: "6px", background: "#fff" } }));
+        } else if (kind === "csv") {
+          const text = await fetch(url).then(r => r.text()).catch(() => null);
+          if (!text) { host.textContent = "Failed to load CSV."; return; }
+          const parsed = await parseCSV(text);
+          host.replaceChildren(renderCsvTable(parsed));
+        }
+      } catch (e) {
+        host.textContent = "Failed to render: " + e.message;
+      }
     })();
-    container.replaceChildren(pdfHost);
+    container.replaceChildren(host);
     for (const c of comments) container.append(commentPin(c));
   }
 
@@ -417,12 +446,55 @@ function convertCommentToIssue(c) {
 }
 
 function attachPdf(doc, rev) {
-  const url = window.prompt("PDF URL (must be CORS-enabled):", rev.pdfUrl || "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf");
+  const url = window.prompt(
+    "Attach a URL — supported: PDF, image (png/jpg/svg), CSV, " +
+    "and CAD (" + supportedExtensions().join(", ") + ").\nMust be CORS-enabled.",
+    rev.pdfUrl || rev.assetUrl || "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf"
+  );
   if (!url) return;
-  update(s => { const r = s.data.revisions.find(x => x.id === rev.id); if (r) r.pdfUrl = url; });
-  audit("revision.pdf.attach", rev.id, { url });
-  toast("PDF attached — re-rendering with PDF.js", "success");
+  const cad = detectCad(url);
+  const kind = cad ? cad.kind : detectKind(url);
+  update(s => {
+    const r = s.data.revisions.find(x => x.id === rev.id);
+    if (!r) return;
+    if (kind === "pdf") { r.pdfUrl = url; r.assetUrl = null; }
+    else { r.assetUrl = url; r.pdfUrl = null; r.assetMime = guessMime(url); }
+  });
+  audit("revision.asset.attach", rev.id, { url, kind: kind || "unknown" });
+  toast(`${kind ? kind.toUpperCase() : "Asset"} attached — re-rendering`, "success");
   renderDocViewer({ id: doc.id });
+}
+
+function detectKind(url, mime) {
+  if (!url) return null;
+  const u = String(url).toLowerCase();
+  if (mime?.startsWith("image/") || /\.(png|jpe?g|svg|webp|gif)(\?|#|$)/i.test(u)) return "image";
+  if (mime === "text/csv" || /\.csv(\?|#|$)/i.test(u)) return "csv";
+  if (mime?.includes("pdf") || /\.pdf(\?|#|$)/i.test(u)) return "pdf";
+  return null;
+}
+
+function guessMime(url) {
+  const u = url.toLowerCase();
+  if (u.endsWith(".png")) return "image/png";
+  if (u.endsWith(".jpg") || u.endsWith(".jpeg")) return "image/jpeg";
+  if (u.endsWith(".svg")) return "image/svg+xml";
+  if (u.endsWith(".csv")) return "text/csv";
+  if (u.endsWith(".pdf")) return "application/pdf";
+  return "application/octet-stream";
+}
+
+function renderCsvTable(parsed) {
+  const { headers = [], rows = [] } = parsed || {};
+  if (!headers.length && !rows.length) return el("div", { class: "muted" }, ["Empty CSV."]);
+  const body = rows.slice(0, 200);
+  return el("div", { style: { overflow: "auto", maxHeight: "60vh" } }, [
+    el("table", { class: "table" }, [
+      el("thead", {}, [el("tr", {}, headers.map(h => el("th", {}, [h])))]),
+      el("tbody", {}, body.map(r => el("tr", {}, headers.map((_, i) => el("td", {}, [r[i] ?? ""]))))),
+    ]),
+    rows.length > 200 ? el("div", { class: "tiny muted", style: { padding: "8px" } }, [`Showing 200 of ${rows.length} rows.`]) : null,
+  ]);
 }
 
 function draftTransmittal(doc, rev) {

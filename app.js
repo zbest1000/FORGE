@@ -167,6 +167,25 @@ async function boot() {
 
 window.forge = { mode, login, logout, api };
 
+// Field mode (spec §12.5): register the service worker so the SPA shell is
+// available offline and queued writes can be replayed when connectivity
+// returns. Localhost-friendly: only registers when served over http(s).
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").then(reg => {
+      console.info("[forge] service worker registered", reg.scope);
+      // Replay queue when we come back online.
+      window.addEventListener("online", () => reg.active?.postMessage({ type: "replay-queue" }));
+    }).catch(err => console.warn("[forge] sw register failed", err));
+
+    navigator.serviceWorker.addEventListener("message", (e) => {
+      const msg = e.data || {};
+      if (msg.type === "offline-queued") console.info("[forge] queued offline write", msg.id, msg.url);
+      if (msg.type === "offline-replayed") console.info("[forge] replayed", msg.id, "status", msg.status);
+    });
+  });
+}
+
 boot();
 
 // Self-test suite (console only). Run `__forgeSelfTest()` in DevTools.
