@@ -99,7 +99,7 @@ function normalize(raw, { source, source_type }) {
     severity: raw.severity || "info",
     event_type: raw.event_type || raw.type || "generic",
     payload: raw.payload || raw.body || raw,
-    trace_id: raw.trace_id || uuid("TRACE"),
+    trace_id: raw.trace_id || raw.traceparent || uuid("TRACE"),
     routing_policy: raw.routing_policy || "default",
     dedupe_key: raw.dedupe_key || null,
     auth_context: raw.auth_context || { actor: "system" },

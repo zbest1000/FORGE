@@ -11,6 +11,7 @@
 import crypto from "node:crypto";
 import { db, now, uuid } from "./db.js";
 import { audit } from "./audit.js";
+import { traceContextCarrier } from "./tracing.js";
 
 function sign(secret, body) {
   return "sha256=" + crypto.createHmac("sha256", secret).update(body).digest("hex");
@@ -126,6 +127,7 @@ async function tick() {
           "X-FORGE-Event": d.event_type,
           "X-FORGE-Delivery": d.id,
           "X-FORGE-Attempt": String(attempt),
+          ...traceContextCarrier({ traceId: payload?.trace_id }),
         },
         body: wireBody,
         signal: ac.signal,

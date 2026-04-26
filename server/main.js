@@ -10,6 +10,7 @@ import helmet from "@fastify/helmet";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
+import { initTracing } from "./tracing.js";
 
 import { db } from "./db.js";
 import { audit } from "./audit.js";
@@ -40,6 +41,8 @@ import { startMqttBridge } from "./connectors/mqtt.js";
 import { startOpcuaBridge } from "./connectors/opcua.js";
 import { startAlertWorker } from "./alerts.js";
 import { startRollupWorker, readSeries, listDailySnapshot } from "./metrics-rollup.js";
+
+initTracing("forge-api");
 import { startOutboxWorker } from "./outbox.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
