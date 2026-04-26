@@ -11,6 +11,35 @@
 > Codebase scope: `server/`, `src/core/`, `src/shell/`, `src/screens/`,
 > infra (`Dockerfile`, `docker-compose.yml`, `.github/workflows/*`).
 
+## Status (current branch)
+
+Tasks marked **DONE** in this branch (`cursor/enterprise-readiness-audit-603f`):
+
+| Task | Commit | Coverage |
+|---|---|---|
+| E1 Tenant scoping (REST + GraphQL) | `143f0e0` | `server/routes/core.js`, `server/graphql/resolvers.js`, `server/routes/files.js`, new `server/tenant.js` |
+| E3 Token scope enforcement | `ce3450d` | `server/auth.js`, `server/acl.js` |
+| E5 Webhook SSRF guard | `ce3450d` | `server/security/outbound.js`, `server/webhooks.js` |
+| E6 `crypto.randomUUID` | `ce3450d` | `server/db.js` |
+| E10 `?token=` only on SSE | `ce3450d` | `server/main.js` |
+| E12 Upload disposition + sniff | `ce3450d` | `server/routes/files.js` |
+| E15 Retention sweep worker | `f4436f0` | `server/retention.js`, `server/main.js` |
+| E16 OPC UA security in prod | `ce3450d` | `server/connectors/opcua.js` |
+| E17 Login lockout | `ce3450d` | `server/security/lockout.js`, `server/routes/auth.js` |
+| E19 Drop docs from container | `ce3450d` | `Dockerfile` |
+| GraphIQL opt-in + GraphQL depth | `ce3450d` | `server/main.js` |
+| Login.fail audit no-leak | `ce3450d` | `server/routes/auth.js` |
+| Legal-hold interlock on file delete | `f4436f0` | `server/routes/files.js` |
+| Pagination on list endpoints | `f4436f0` | `server/routes/core.js` |
+
+Test suite: 107/107 passing locally. New regression coverage:
+`tenant-isolation`, `outbound-url`, `lockout`, `webhook-ssrf`,
+`retention`, plus extensions to `routes.test.js` (token scope,
+audit redaction, lockout 429, pagination).
+
+Remaining tasks are tracked in the developer-ready list (Section E)
+and in the prioritized roadmap.
+
 ## A. Executive summary
 
 FORGE is structurally well laid out for an enterprise self-host: Fastify
