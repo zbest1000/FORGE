@@ -84,7 +84,25 @@ function trendsTab() {
     ]), { subtitle: "Add different chart views for an asset's live and historical data." }),
     el("div", { class: "two-col" }, [
       card("Asset DAQ history", el("div", { class: "stack" }, selectedPoints.map(pointTrend))),
-      card("Historian backends", el("div", { class: "stack" }, [
+      card("Historian backends", historianBackendsPanel(points), {
+        subtitle: "Production routing: cache locally, write/query configured external historians.",
+      }),
+    ]),
+    card("Asset historian charts", el("div", { class: "card-grid" }, selectedPoints.map(point => pointChart(point, chartType))), {
+      subtitle: "Each card renders the selected asset's historical samples with ECharts.",
+    }),
+  ]);
+}
+
+function historianBackendsPanel(points) {
+  const configured = new Set(points.map(p => p.historian || "sqlite"));
+  const backends = [
+    { id: "sqlite", label: "SQLite", role: "local/dev/demo/recent cache", active: true },
+    { id: "influxdb", label: "InfluxDB", role: "high-volume time-series trends", active: configured.has("influxdb") || configured.has("influx") },
+    { id: "timebase", label: "Timebase", role: "enterprise historian integration", active: configured.has("timebase") },
+    { id: "mssql", label: "SQL Server", role: "recipes, batch records, regulated relational history", active: configured.has("mssql") || configured.has("sqlserver") },
+  ];
+  return el("div", { class: "stack" }, [
         el("div", { class: "small" }, ["Local SQLite stores recent samples now; points carry a historian field so Timebase or another time-series backend can be selected without changing asset tags."]),
         ...Object.entries(groupBy(points, p => p.historian || "sqlite")).map(([name, rows]) =>
           el("div", { class: "activity-row" }, [
@@ -93,11 +111,10 @@ function trendsTab() {
             el("span", { class: "tiny muted" }, [rows.map(r => r.tag).slice(0, 2).join(", ")]),
           ])
         ),
-      ])),
-    ]),
-    card("Asset historian charts", el("div", { class: "card-grid" }, selectedPoints.map(point => pointChart(point, chartType))), {
-      subtitle: "Each card renders the selected asset's historical samples with ECharts.",
-    }),
+        ...backends.map(b => el("div", { class: "activity-row" }, [
+          badge(b.label, b.active ? "success" : ""),
+          el("span", { class: "tiny muted" }, [b.role]),
+        ])),
   ]);
 }
 

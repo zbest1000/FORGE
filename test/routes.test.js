@@ -218,6 +218,40 @@ test("historian points store samples and return trend summaries", async () => {
   assert.equal(trend.body.series[0].summary.avg, 42);
 });
 
+test("historian adapters expose configured backends and cache external points locally", async () => {
+  const backends = await req("/api/historian/backends", { headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(backends.status, 200);
+  assert.ok(backends.body.backends.find(b => b.name === "sqlite" && b.configured));
+  assert.ok(backends.body.backends.find(b => b.name === "influxdb" && b.configured === false));
+  assert.ok(backends.body.backends.find(b => b.name === "timebase" && b.configured === false));
+  assert.ok(backends.body.backends.find(b => b.name === "mssql" && b.configured === false));
+
+  const point = await req("/api/historian/points", {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ assetId: "AS-1", tag: "NP.LINEA.FEEDER_A1.INFLUX_READY", name: "Influx-ready current", unit: "A", historian: "influxdb" }),
+  });
+  assert.equal(point.status, 200);
+  assert.equal(point.body.historian, "influxdb");
+
+  const sample = await req("/api/historian/samples", {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ pointId: point.body.id, ts: "2026-04-26T01:00:00.000Z", value: 51.5 }),
+  });
+  assert.equal(sample.status, 200);
+  assert.equal(sample.body.backend.backend, "influxdb");
+  assert.equal(sample.body.backend.written, false);
+  assert.equal(sample.body.backend.reason, "not_configured");
+  assert.equal(sample.body.backend.cached, true);
+
+  const cached = await req(`/api/historian/samples?pointId=${point.body.id}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(cached.status, 200);
+  assert.equal(cached.body.backend, "sqlite");
+  assert.equal(cached.body.fallbackFrom, "influxdb");
+  assert.equal(cached.body.samples[0].value, 51.5);
+});
+
 test("recipes create versions and activate an approved version", async () => {
   const recipe = await req("/api/recipes", {
     method: "POST",

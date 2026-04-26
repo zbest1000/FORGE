@@ -4,6 +4,13 @@ import { db, now, uuid, jsonOrDefault } from "../db.js";
 import { audit } from "../audit.js";
 import { require_ } from "../auth.js";
 import { broadcast } from "../sse.js";
+import {
+  archiveRecipeEvent,
+  listHistorianBackends,
+  readHistorianSamples,
+  summaryFor,
+  writeHistorianSample,
+} from "../historians/index.js";
 
 function pointRow(row) {
   if (!row) return null;
@@ -11,10 +18,6 @@ function pointRow(row) {
     ...row,
     source: row.source_id ? db.prepare("SELECT * FROM data_sources WHERE id = ?").get(row.source_id) || null : null,
   };
-}
-
-function sampleRow(row) {
-  return { ...row, raw_payload: jsonOrDefault(row.raw_payload, {}) };
 }
 
 function recipeRow(row) {
@@ -34,6 +37,8 @@ function parseIso(value, fallback) {
 }
 
 export default async function operationsRoutes(fastify) {
+  fastify.get("/api/historian/backends", { preHandler: require_("view") }, async () => ({ backends: listHistorianBackends() }));
+
   fastify.get("/api/historian/points", { preHandler: require_("view") }, async (req) => {
     const assetId = req.query.assetId ? String(req.query.assetId) : null;
     const rows = assetId
@@ -66,10 +71,8 @@ export default async function operationsRoutes(fastify) {
     const limit = Math.min(5000, Number(req.query.limit || 500));
     const since = parseIso(req.query.since, "1970-01-01T00:00:00.000Z");
     const until = parseIso(req.query.until, "9999-12-31T23:59:59.999Z");
-    const rows = db.prepare(`SELECT * FROM historian_samples
-                             WHERE point_id = ? AND ts >= ? AND ts <= ?
-                             ORDER BY ts ASC LIMIT ?`).all(point.id, since, until, limit);
-    return { point: pointRow(point), samples: rows.map(sampleRow) };
+    const result = await readHistorianSamples(point, { since, until, limit });
+    return { point: pointRow(point), samples: result.samples, backend: result.backend, fallbackFrom: result.fallbackFrom || null };
   });
 
   fastify.post("/api/historian/samples", { preHandler: require_("integration.write") }, async (req, reply) => {
@@ -80,12 +83,10 @@ export default async function operationsRoutes(fastify) {
     if (!point) return reply.code(400).send({ error: "valid pointId or tag required" });
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return reply.code(400).send({ error: "numeric value required" });
-    const row = { id: uuid("HS"), pointId: point.id, ts: parseIso(ts, now()), value: numeric, quality, sourceType, rawPayload: JSON.stringify(rawPayload || {}) };
-    db.prepare(`INSERT INTO historian_samples (id, point_id, ts, value, quality, source_type, raw_payload)
-                VALUES (@id, @pointId, @ts, @value, @quality, @sourceType, @rawPayload)`).run(row);
+    const { sample, backend } = await writeHistorianSample(point, { ts: parseIso(ts, now()), value: numeric, quality, sourceType, rawPayload });
     audit({ actor: req.user.id, action: "historian.sample.ingest", subject: point.id, detail: { value: numeric, quality } });
-    broadcast("historian", { pointId: point.id, value: numeric, ts: row.ts });
-    return sampleRow(db.prepare("SELECT * FROM historian_samples WHERE id = ?").get(row.id));
+    broadcast("historian", { pointId: point.id, value: numeric, ts: sample.ts, backend });
+    return { ...sample, backend };
   });
 
   fastify.get("/api/historian/trends", { preHandler: require_("view") }, async (req, reply) => {
@@ -97,21 +98,19 @@ export default async function operationsRoutes(fastify) {
     const since = parseIso(req.query.since, new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
     const until = parseIso(req.query.until, now());
     const limit = Math.min(5000, Number(req.query.limit || 1000));
-    const series = points.map(id => {
+    const series = await Promise.all(points.map(id => {
       const point = db.prepare("SELECT * FROM historian_points WHERE id = ?").get(id);
       if (!point) return null;
-      const samples = db.prepare(`SELECT * FROM historian_samples WHERE point_id = ? AND ts >= ? AND ts <= ? ORDER BY ts ASC LIMIT ?`)
-        .all(id, since, until, limit).map(sampleRow);
-      const values = samples.map(s => Number(s.value)).filter(Number.isFinite);
-      const summary = values.length ? {
-        min: Math.min(...values),
-        max: Math.max(...values),
-        avg: values.reduce((a, b) => a + b, 0) / values.length,
-        count: values.length,
-      } : { min: null, max: null, avg: null, count: 0 };
-      return { point: pointRow(point), samples, summary };
-    }).filter(Boolean);
-    return { since, until, series };
+      return readHistorianSamples(point, { since, until, limit }).then(result => ({
+        point: pointRow(point),
+        samples: result.samples,
+        summary: summaryFor(result.samples),
+        backend: result.backend,
+        fallbackFrom: result.fallbackFrom || null,
+      }));
+    }));
+    const visibleSeries = series.filter(Boolean);
+    return { since, until, series: visibleSeries };
   });
 
   fastify.get("/api/recipes", { preHandler: require_("view") }, async (req) => {
@@ -135,6 +134,7 @@ export default async function operationsRoutes(fastify) {
                   VALUES (?, ?, 1, 'draft', ?, ?, ?, ?)`).run(versionId, id, JSON.stringify(parameters || {}), notes, req.user.id, ts);
     })();
     audit({ actor: req.user.id, action: "recipe.create", subject: id, detail: { assetId, name } });
+    await archiveRecipeEvent("recipe.create", db.prepare("SELECT * FROM recipes WHERE id = ?").get(id)).catch(() => null);
     broadcast("recipes", { id, assetId });
     return recipeRow(db.prepare("SELECT * FROM recipes WHERE id = ?").get(id));
   });
@@ -149,6 +149,7 @@ export default async function operationsRoutes(fastify) {
                 VALUES (?, ?, ?, 'draft', ?, ?, ?, ?)`).run(id, recipe.id, next, JSON.stringify(parameters || {}), notes, req.user.id, now());
     db.prepare("UPDATE recipes SET current_version_id = ?, status = 'draft', updated_at = ? WHERE id = ?").run(id, now(), recipe.id);
     audit({ actor: req.user.id, action: "recipe.version.create", subject: recipe.id, detail: { version: next } });
+    await archiveRecipeEvent("recipe.version.create", db.prepare("SELECT * FROM recipes WHERE id = ?").get(recipe.id), db.prepare("SELECT * FROM recipe_versions WHERE id = ?").get(id)).catch(() => null);
     broadcast("recipes", { id: recipe.id, version: next });
     return recipeRow(db.prepare("SELECT * FROM recipes WHERE id = ?").get(recipe.id));
   });
@@ -166,6 +167,7 @@ export default async function operationsRoutes(fastify) {
       db.prepare("UPDATE recipes SET status = 'active', current_version_id = ?, updated_at = ? WHERE id = ?").run(version.id, ts, recipe.id);
     })();
     audit({ actor: req.user.id, action: "recipe.activate", subject: recipe.id, detail: { version: version.version } });
+    await archiveRecipeEvent("recipe.activate", db.prepare("SELECT * FROM recipes WHERE id = ?").get(recipe.id), version).catch(() => null);
     broadcast("recipes", { id: recipe.id, activeVersionId: version.id });
     return recipeRow(db.prepare("SELECT * FROM recipes WHERE id = ?").get(recipe.id));
   });
@@ -211,18 +213,18 @@ export default async function operationsRoutes(fastify) {
     const value = raw * Number(reg.scale || 1);
     const quality = req.body?.quality || "Good";
     const ts = parseIso(req.body?.ts, now());
+    let historianResult = null;
     db.transaction(() => {
       db.prepare("UPDATE modbus_registers SET last_value = ?, last_quality = ?, last_seen = ?, updated_at = ? WHERE id = ?")
         .run(value, quality, ts, now(), reg.id);
       db.prepare("UPDATE modbus_devices SET status = 'connected', last_poll_at = ?, updated_at = ? WHERE id = ?").run(ts, now(), reg.device_id);
-      if (reg.point_id) {
-        db.prepare(`INSERT INTO historian_samples (id, point_id, ts, value, quality, source_type, raw_payload)
-                    VALUES (?, ?, ?, ?, ?, 'modbus_tcp', ?)`)
-          .run(uuid("HS"), reg.point_id, ts, value, quality, JSON.stringify({ rawValue: raw, registerId: reg.id }));
-      }
     })();
+    if (reg.point_id) {
+      const point = db.prepare("SELECT * FROM historian_points WHERE id = ?").get(reg.point_id);
+      if (point) historianResult = await writeHistorianSample(point, { ts, value, quality, sourceType: "modbus_tcp", rawPayload: { rawValue: raw, registerId: reg.id } });
+    }
     audit({ actor: req.user.id, action: "modbus.register.read", subject: reg.id, detail: { rawValue: raw, value, quality } });
-    broadcast("modbus", { id: reg.id, value, ts });
-    return modbusRegisterRow(db.prepare("SELECT * FROM modbus_registers WHERE id = ?").get(reg.id));
+    broadcast("modbus", { id: reg.id, value, ts, historian: historianResult?.backend || null });
+    return { ...modbusRegisterRow(db.prepare("SELECT * FROM modbus_registers WHERE id = ?").get(reg.id)), historian_backend: historianResult?.backend || null };
   });
 }
