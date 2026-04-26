@@ -93,7 +93,7 @@ function recipesTab() {
     card("Version parameters", el("div", { class: "stack" }, versions.map(v =>
       el("div", { class: "activity-row" }, [
         badge(`v${v.version}`, v.state === "active" ? "success" : v.state === "superseded" ? "" : "warn"),
-        el("span", { class: "tiny mono", style: { flex: 1 } }, [JSON.stringify(v.parameters)]),
+        el("span", { class: "tiny mono", style: { flex: 1, whiteSpace: "normal", overflowWrap: "anywhere" } }, [JSON.stringify(v.parameters)]),
         el("span", { class: "tiny muted" }, [v.notes || "No notes"]),
       ])
     ))),
