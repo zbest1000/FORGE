@@ -9,6 +9,9 @@
   },
   "scripts": {
     "dev": "node --watch server/main.js",
+    "dev:client": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
     "start": "node server/main.js",
     "seed": "node server/seed.js",
     "migrate": "node server/db.js --migrate-only",
@@ -35,5 +38,8 @@
   },
   "optionalDependencies": {
     "node-opcua": "^2.132.0"
+  },
+  "devDependencies": {
+    "vite": "^8.0.10"
   }
 }

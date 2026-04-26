@@ -13,13 +13,11 @@
 
 const enc = new TextEncoder();
 
-function getSubtle() {
+async function getSubtle() {
   if (typeof globalThis.crypto !== "undefined" && globalThis.crypto.subtle) {
     return globalThis.crypto.subtle;
   }
-  // Node fallback (only used by the self-test harness).
-  // eslint-disable-next-line global-require
-  return require("crypto").webcrypto.subtle;
+  throw new Error("Web Crypto subtle API is unavailable in this runtime.");
 }
 
 function toHex(buf) {
@@ -41,7 +39,8 @@ export function canonicalJSON(value) {
 
 export async function sha256Hex(input) {
   const data = typeof input === "string" ? enc.encode(input) : input;
-  const buf = await getSubtle().digest("SHA-256", data);
+  const subtle = await getSubtle();
+  const buf = await subtle.digest("SHA-256", data);
   return toHex(buf);
 }
 
@@ -52,7 +51,8 @@ let _hmacKeyId = null;
 export async function getSigningKey() {
   if (_hmacKey) return { key: _hmacKey, keyId: _hmacKeyId };
   const raw = enc.encode("forge-demo-tenant-key-please-rotate-in-production");
-  _hmacKey = await getSubtle().importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+  const subtle = await getSubtle();
+  _hmacKey = await subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
   _hmacKeyId = "key:forge-demo:v1";
   return { key: _hmacKey, keyId: _hmacKeyId };
 }
@@ -60,7 +60,8 @@ export async function getSigningKey() {
 export async function signHMAC(input) {
   const { key, keyId } = await getSigningKey();
   const data = typeof input === "string" ? enc.encode(input) : input;
-  const sig = await getSubtle().sign({ name: "HMAC" }, key, data);
+  const subtle = await getSubtle();
+  const sig = await subtle.sign({ name: "HMAC" }, key, data);
   return { keyId, alg: "HMAC-SHA256", signature: toHex(sig) };
 }
 
@@ -68,5 +69,6 @@ export async function verifyHMAC(input, signatureHex) {
   const { key } = await getSigningKey();
   const data = typeof input === "string" ? enc.encode(input) : input;
   const sigBytes = new Uint8Array(signatureHex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
-  return getSubtle().verify({ name: "HMAC" }, key, sigBytes, data);
+  const subtle = await getSubtle();
+  return subtle.verify({ name: "HMAC" }, key, sigBytes, data);
 }

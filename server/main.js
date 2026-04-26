@@ -40,6 +40,8 @@ import { startRollupWorker, readSeries, listDailySnapshot } from "./metrics-roll
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
+const DIST = path.join(ROOT, "dist");
+const CLIENT_ROOT = fs.existsSync(path.join(DIST, "index.html")) ? DIST : ROOT;
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const JWT_SECRET = process.env.FORGE_JWT_SECRET || "forge-dev-jwt-secret-please-rotate";
@@ -168,9 +170,10 @@ app.get("/api/metrics/series", async (req) => {
 });
 app.get("/api/metrics/snapshot", async () => listDailySnapshot());
 
-// Serve the static client from the repo root.
+// Serve the built client when `npm run build` has produced dist/.
+// In development, fall back to the source tree so `npm start` still works.
 await app.register(fStatic, {
-  root: ROOT,
+  root: CLIENT_ROOT,
   prefix: "/",
   // Keep /api and /v1 reserved.
   constraints: {},
@@ -190,7 +193,7 @@ app.setNotFoundHandler((req, reply) => {
   if (last.includes(".")) {
     return reply.code(404).send({ error: "not found", path: p });
   }
-  return reply.type("text/html").send(fs.readFileSync(path.join(ROOT, "index.html")));
+  return reply.type("text/html").send(fs.readFileSync(path.join(CLIENT_ROOT, "index.html")));
 });
 
 // Start optional ingress bridges + background workers.

@@ -14,6 +14,7 @@ If this is your first time in the repo, read **Quick start** and
 ```bash
 node --version          # require >=20 (engines field in package.json)
 npm install             # installs better-sqlite3 native binding (needs python3, make, g++)
+npm run build           # optional production SPA bundle in ./dist/
 npm run seed            # creates ./data/forge.db and demo users (idempotent)
 npm start               # Fastify on http://localhost:3000
 ```
@@ -43,8 +44,9 @@ is served**:
 
 | Mode | How to start | What runs |
 |---|---|---|
-| **Server mode** (recommended) | `npm start` (or `npm run dev` for `--watch`) | Fastify + SQLite + SPA on `:3000`. Client probes `/api/health`, sees a 200, and uses the real backend. |
-| **Demo mode** (client only) | `python3 -m http.server 8080` from repo root | SPA only. `/api/health` 404s, `src/core/api.js` flips `_mode = "demo"`, all data lives in `localStorage`. |
+| **Server mode** (recommended) | `npm start` (or `npm run dev` for `--watch`) | Fastify + SQLite + SPA on `:3000`. If `dist/index.html` exists, Fastify serves the Vite production bundle; otherwise it serves source modules from the repo root. Client probes `/api/health`, sees a 200, and uses the real backend. |
+| **Vite dev mode** | `npm run dev:client -- --host 0.0.0.0` | Vite serves the SPA on `:5173`; run `npm start` separately if you want server APIs. |
+| **Demo mode** (client only) | `python3 -m http.server 8080` from repo root or `npm run dev:client` without the server | SPA only. `/api/health` 404s, `src/core/api.js` flips `_mode = "demo"`, all data lives in `localStorage`. |
 
 How the toggle actually works (`src/core/api.js`, `app.js:147`):
 
@@ -186,7 +188,9 @@ hatch when chrome is fully hidden.
 ### 3. Browser SPA — shell, screens, store (`app.js`, `src/`)
 
 No build step. Edit a file, hard-reload the page. Modules are served directly
-from disk by either `npm start` or `python3 -m http.server`.
+from disk by either `npm start` or `python3 -m http.server` when `dist/` is
+absent. For production-style validation, run `npm run build` first; then
+`npm start` serves the hashed Vite bundle from `dist/`.
 
 **Smoke test in DevTools:**
 

@@ -18,7 +18,8 @@ client-side MVP prototype that exercises the full FORGE object model.
 ## What is in this repository
 
 - `PRODUCT_SPEC.md` — full product specification, UX architecture, and UI system.
-- `index.html`, `app.js`, `styles.css` — static entry points for the MVP prototype.
+- `index.html`, `app.js`, `styles.css` — browser entry points for the SPA.
+- `vite.config.js` — production build config; `npm run build` emits `dist/`.
 - `src/` — modular ES-module implementation:
   - `src/core/` — store (with `localStorage` persistence + audit log), router, permissions, UI atoms, command palette.
   - `src/core/i3x/` — **Unified Namespace + CESMII i3X 1.0-Beta compatible engine** (server, client, path helpers).
@@ -175,7 +176,10 @@ replaced with an HTTP `fetch()` against a real i3X server without touching the U
 
 ## Development notes
 
-- No build step. All modules are served directly.
+- Fast local development can still serve source modules directly through
+  `npm start`, but production should use `npm run build`.
+- When `dist/index.html` exists, `npm start` serves the built SPA from `dist/`.
+  Without `dist/`, it falls back to source-module serving from the repo root.
 - Data model is defined in `src/data/seed.js` and can be reset from the header.
 - State changes are reactive via a small pub/sub store (`src/core/store.js`); every mutation triggers re-render of the shell and the current screen.
 - Routes are hash-based (`#/doc/DOC-1`, `#/work-board/PRJ-1`, etc.) and support query strings (`#/search?q=valve`).
