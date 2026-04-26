@@ -41,7 +41,7 @@
     "@opentelemetry/sdk-node": "^0.215.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.3.0",
+    "better-sqlite3": "^12.9.0",
     "date-fns": "^4.1.0",
     "dexie": "^4.4.2",
     "dompurify": "^3.4.1",
