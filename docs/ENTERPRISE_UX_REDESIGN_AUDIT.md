@@ -1,284 +1,490 @@
 # FORGE Enterprise UI/UX Redesign Audit
 
+> Refreshed full-app UX analysis. The baseline audit drove Phase 1–4 of the
+> original roadmap to completion — role-aware left panel, revision safety
+> banner, work-board saved views and drawer, approval impact drawer, layered
+> asset tabs, admin settings sections, drawing mode toolbars. This refresh
+> grounds findings in the **current** code at `app.js`, `src/shell/*`,
+> `src/screens/*`, `src/core/ui.js`, `src/core/groups.js`, and `styles.css`,
+> and documents the next wave of improvements.
+
 ## A. Executive Summary
 
-FORGE is technically broad and credible, but the current UI reads as prototype-to-advanced-demo rather than enterprise-ready SaaS. The code already covers collaboration, documents, drawings, work, incidents, assets, MQTT, OPC UA, UNS/i3X, AI, admin, audit, and server APIs. The main gap is experience architecture: too many advanced capabilities are visible at once through a permanent rail, left tree, header controls, right context panel, dock, KPI grids, badges, and dense toolbars.
+FORGE has matured into a credible enterprise SPA: it now has a Hub launcher,
+portal-scoped rail filtering, group-based route gating (`src/core/groups.js`),
+a contextual left navigator, a document revision safety banner, a layered
+asset detail page, a signed approval drawer, a work-item drawer with saved
+views, and an admin settings shell. The shell continues to be a four-column
+desktop grid (`72px 260px 1fr 340px`) with focus / field / portal modes.
 
-The desired direction is a calmer enterprise product: role-based homes, simpler primary navigation, contextual secondary navigation, progressive disclosure for industrial/engineering depth, stronger document-control affordances, and a reusable design system layer.
+The remaining gap is **enterprise polish and consistency** rather than
+missing capability. The same patterns are reimplemented with subtle
+variation across screens (custom tabs in `assetDetail.js`, `workBoard.js`,
+and `admin.js`; bespoke tables in `docViewer.js`, `incident.js`, `erp.js`,
+`approvals.js`; `window.prompt`/`window.confirm` for ~28 destructive
+actions). The Hub still opens portals in separate browser tabs, the right
+context panel is still permanent rather than on-demand, the rail still
+mixes 12 items with emoji-led labels, and accessibility details (clickable
+`div`s as rows, color-only states, dense toolbars in the drawing viewer)
+need another pass.
+
+The most impactful next steps are: (1) consolidate shared primitives in
+`src/core/ui.js` (`Tabs`, `DataTable`, `EmptyState`, `Drawer`, `Confirm`,
+`StatusBadge`); (2) replace native `prompt/confirm` with FORGE modals;
+(3) make the right context panel on-demand; (4) add real role-based home
+variants; (5) tighten the Hub-to-workspace navigation model so
+discipline-specific portals don't fragment the user's workspace.
 
 ## B. Product Experience Diagnosis
 
-- FORGE currently exposes breadth before intent. `src/shell/rail.js` lists 15 primary destinations, `src/shell/leftPanel.js` simultaneously lists spaces, channels, projects, docs, drawings, and assets, `src/shell/contextPanel.js` always adds role and audit cards, and `src/shell/dock.js` adds another persistent operational surface.
-- Many screens use dashboard-like grids even when the task is workflow-driven. Examples include `src/screens/home.js`, `src/screens/assetDetail.js`, `src/screens/integrations.js`, `src/screens/mqtt.js`, `src/screens/opcua.js`, and `src/screens/dashboards.js`.
-- The frontend has good primitives, but not yet a product design system. `src/core/ui.js` provides `card`, `table`, `badge`, `modal`, and form helpers, while `styles.css` has tokens and component classes; screens still compose custom layouts, inline styles, emojis, hardcoded button labels, and bespoke side panels.
-- Enterprise risk is highest in revision/approval clarity, industrial write actions, AI source boundaries, and permission visibility. These exist in code, but they need clearer UX patterns before customers can safely adopt the product.
+- **Breadth before intent has improved but not been resolved.** `src/shell/rail.js`
+  now defaults to 12 destinations (Hub, Home, Work, Docs, Drawings, Assets,
+  Incidents, Teams, Inbox, AI, Integ, Admin) and is portal-filtered when
+  `state.ui.portalId` is set. It still renders Theme and Dock toggles inline
+  with navigation, and every primary item is icon-led with an emoji.
+- **Workflow defaults still don't change by role.** `src/screens/home.js`
+  shows the same KPI strip + priority queue + AI brief + recent revisions
+  for every role, with a single conditional ("integration health" vs
+  "engineering picks") gated on group membership. Field, executive, and
+  approver roles see the engineering manager's home.
+- **The right context panel and operations dock are always-on.**
+  `src/shell/contextPanel.js` always renders Role + route-context + Recent
+  audit; `src/shell/dock.js` always shows active incidents, integration
+  failures, and pending approvals at the bottom of the screen, taking
+  ~48 px of vertical real estate even on read-only browsing.
+- **Two distinct nav models compete.** Hub tiles open in **new tabs** with
+  `target="_blank"` (`src/screens/hub.js:55-71`). Inside a portal tab the
+  rail filters to that portal's items. This means a user can have
+  "Engineering" and "Industrial Operations Data" open in two browser tabs
+  with different rails, and yet the URL bar gives them no quick way to
+  switch portal scope on the same tab.
+- **Native browser dialogs are still load-bearing.** ~28 calls to
+  `window.prompt` or `window.confirm` in `src/screens/{drawingViewer,
+  channel,opcua,mqtt,docViewer,incident,workBoard,admin,erp,approvals,uns,
+  integrations}.js`. They have no consistent styling, no per-action audit
+  hint, and no way to validate input before commit.
+- **Patterns are reimplemented per screen.** Three custom tab strips
+  (`assetDetail.js:140`, `workBoard.js:127`, `admin.js:49`); bespoke
+  `<table>` in `docViewer.js`, `incident.js`, `approvals.js`, `erp.js`,
+  `admin.js` while `src/core/ui.js` exports a `table()` helper used only by
+  `inbox.js`; bespoke chip/help dot helpers redeclared in
+  `assetDetail.js:118-124` and `workBoard.js:157-171`.
+- **Accessibility regressions accumulate at the row level.** ~30 instances
+  of `class: "activity-row"` with `onClick` handlers across the screens
+  remain non-button, non-keyboard reachable — a partial improvement over
+  the baseline where some are now `<button>` (e.g. `assetDetail.js`'s
+  `documentList`) but most are still `<div>`.
 
 ## C. Application Map
 
-### Structure
+### Routes (`app.js:setupRoutes`)
 
-- Static SPA entry: `index.html`, `app.js`, `styles.css`.
-- Shell: `src/shell/rail.js`, `src/shell/header.js`, `src/shell/leftPanel.js`, `src/shell/contextPanel.js`, `src/shell/dock.js`.
-- Shared UI and state: `src/core/ui.js`, `src/core/router.js`, `src/core/store.js`, `src/core/palette.js`, `src/core/screens-registry.js`, `src/core/permissions.js`, `src/core/groups.js`, `src/core/api.js`.
-- Screens: `src/screens/home.js`, `inbox.js`, `search.js`, `teamSpaces.js`, `channel.js`, `workBoard.js`, `docViewer.js`, `revisionCompare.js`, `drawingViewer.js`, `assetDetail.js`, `incident.js`, `approvals.js`, `ai.js`, `integrations.js`, `mqtt.js`, `opcua.js`, `erp.js`, `uns.js`, `i3x.js`, `dashboards.js`, `admin.js`, `spec.js`.
-- Server/API: `server/main.js`, `server/routes/core.js`, `auth.js`, `ai.js`, `automations.js`, `cad.js`, `extras.js`, `files.js`, `i3x.js`, `tokens.js`, `webhooks.js`, plus `server/graphql/*`, `server/db.js`, `server/auth.js`, `server/acl.js`, `server/audit.js`, and connectors.
+`/hub`, `/home`, `/inbox`, `/search`, `/team-spaces`, `/team-space/:id`,
+`/channel/:id`, `/projects`, `/work-board/:id`, `/docs`, `/doc/:id`,
+`/compare/:left/:right`, `/drawings`, `/drawing/:id`, `/assets`,
+`/asset/:id`, `/incidents`, `/incident/:id`, `/approvals`, `/ai`,
+`/integrations`, `/integrations/{mqtt,opcua,erp}`, `/dashboards`, `/admin`,
+`/admin/:section`, `/spec`, `/uns`, `/i3x`. ~28 routes; the only
+restriction-gated routes (`canAccessRoute` in `src/core/groups.js`) are
+`/i3x`, `/uns`, `/integrations*`, `/admin*`.
 
-### Routes
+### Shell
 
-`app.js` registers `#/hub`, `#/home`, `#/inbox`, `#/search`, `#/team-spaces`, `#/team-space/:id`, `#/channel/:id`, `#/projects`, `#/work-board/:id`, `#/docs`, `#/doc/:id`, `#/compare/:left/:right`, `#/drawings`, `#/drawing/:id`, `#/assets`, `#/asset/:id`, `#/incidents`, `#/incident/:id`, `#/approvals`, `#/ai`, `#/integrations`, `#/integrations/mqtt`, `#/integrations/opcua`, `#/integrations/erp`, `#/dashboards`, `#/admin`, `#/spec`, `#/uns`, and `#/i3x`.
+`src/shell/rail.js` (primary nav, 12 items + 2 utility), `header.js` (titles
++ breadcrumb + search + view menu + role + reset + sign-in pill),
+`leftPanel.js` (route-aware contextual nav with quick actions and sections
+per domain), `contextPanel.js` (Role card + route detail card + Recent
+audit), `dock.js` (active alerts strip pinned to bottom).
 
-### Data and governance
+### Shared primitives (`src/core/ui.js`)
 
-- Roles and client capabilities live in `src/core/permissions.js`; portal/group visibility lives in `src/core/groups.js`.
-- Server capabilities, JWT/API-token auth, object ACL, ABAC hooks, signed approvals, audit packs, webhooks, and FTS search are implemented in `server/auth.js`, `server/acl.js`, `server/audit.js`, `server/routes/core.js`, `server/routes/tokens.js`, `server/routes/webhooks.js`, and `server/db.js`.
-- Demo seed objects come from `src/data/seed.js`; server seed and SQLite persistence come from `server/seed.js` and `server/db.js`.
+`el`, `mount`, `clear`, `card`, `badge`, `chip`, `kpi`, `table` (used
+once), `toast`, `modal`, `drawer`, `confirm` (used **zero times**),
+`formRow`, `input`, `select`, `textarea`. No `Tabs`, `DataTable`,
+`EmptyState`, `StatusBadge`, `SeverityBadge`, `RevisionBadge`,
+`PageHeader`, `Toolbar` primitives.
 
-## D. Current Strengths
+### Governance
 
-- Broad product coverage is already implemented: documents, revisions, drawings, assets, work, incidents, AI, admin, integrations, UNS, and i3X all have working screens.
-- Hash routes and direct object URLs make deep links easy in `app.js` and `src/core/router.js`.
-- Command palette and search are strong enterprise patterns through `src/core/palette.js`, `src/core/search.js`, and `src/screens/search.js`.
-- Auditability is a real product strength: client audit appears in `src/core/audit.js` and server hash-chain audit appears in `server/audit.js`.
-- Server architecture is credible for enterprise pilots: Fastify, SQLite WAL, JWT/API tokens, ACL, signed approvals, FTS, metrics, webhooks, GraphQL, MQTT, OPC UA, and i3X are documented in `docs/SERVER.md`.
-- Existing token variables in `styles.css` create a usable base for a formal design system.
+Client roles in `src/core/permissions.js` (10 roles), groups + portals +
+route gating in `src/core/groups.js`, server JWT/RBAC in
+`server/auth.js`, ACL in `server/acl.js`, hash-chain audit in
+`server/audit.js` and `src/core/audit.js`.
 
-## E. Major UX Problems
+## D. What's Already Been Done Since Baseline
 
-1. Navigation is too broad by default. `src/shell/rail.js` makes advanced industrial/API/admin areas first-class for everyone unless portal/group filters hide them.
-2. The left panel is a mixed object tree rather than contextual navigation. `src/shell/leftPanel.js` mixes team spaces, channels, projects, docs, drawings, and assets on every route.
-3. Permanent panels create overload. `contextPanel.js` and `dock.js` can help, but they are always present in the default 4-column shell from `styles.css`.
-4. Dense toolbars compete with safety-critical content. `drawingViewer.js`, `docViewer.js`, `workBoard.js`, `mqtt.js`, `opcua.js`, and `i3x.js` expose many controls at once.
-5. Role-based experience is incomplete. Roles gate actions, but home, navigation, defaults, dashboards, and density do not sufficiently change by role.
-6. Industrial data lacks layered defaults. `assetDetail.js`, `uns.js`, `mqtt.js`, and `opcua.js` expose live data, mappings, diagnostics, and write actions near regular browsing flows.
-7. Accessibility needs hardening. Buttons often rely on emoji/icon labels, custom clickable `div`s, dense badges, and visual color states; `styles.css` has limited responsive behavior below 900px.
+These baseline P1 tasks are now complete in code:
 
-## F. Screen-by-Screen Audit
+| Baseline task | Current state | Code |
+|---|---|---|
+| Make left panel route-aware | Domains: work / docs / drawings / assets / incidents / spaces / integrations / admin / home with quick actions and section trees. | `src/shell/leftPanel.js` |
+| Add document revision safety banner | Persistent banner with kicker, title, state label, guidance, status badge, and "Open current / Compare / Review approvals" actions. | `src/screens/docViewer.js:69-112`, `styles.css:.revision-safety-banner` |
+| Add work item drawer + saved views | `WorkItemDrawer` via `drawer()`; six saved views (`SAVED_VIEWS`); explicit batch toolbar; calendar + dependency views. | `src/screens/workBoard.js:270-310, 716-760` |
+| Layer asset detail | Tabs: Summary, Docs, Work, Signals, Activity; live VQT separated from summary. | `src/screens/assetDetail.js:126-150` |
+| Approval impact + signed decision drawer | `decideDrawer` shows impact preview + signature notes; HMAC chain-of-custody. | `src/screens/approvals.js:198-294` |
+| Split drawing toolbar by mode | `view / markup / compare / ifc` modes with mode-gated tool palette. | `src/screens/drawingViewer.js:69-117` |
+| Split admin into settings sections | Identity / Access / Integrations / Audit / Retention / System health tabs. | `src/screens/admin.js:34-46` |
+| Hub launcher + portal scoping | Hub tiles open portal tabs with `?portal=` scope; rail and header retint. | `src/screens/hub.js`, `src/shell/rail.js:25-34` |
+| Group-based gating | `canAccessRoute`, `canSeePortal`, `canSeeAsset`. Admin "Demo identity" switcher exists. | `src/core/groups.js`, `src/screens/admin.js:425-478` |
+| Field / focus / portal layout modes | View menu in header writes `state.ui.{showRail,showLeftPanel,showContextPanel,showHeader,focusMode,fieldMode}`; persistent in localStorage. | `src/shell/header.js:94-177`, `styles.css:.hide-*, .focus-mode, .field-mode` |
+| Demo simulation seam | `src/core/simulation.js` centralizes telemetry, briefs, IDs. | `src/core/simulation.js` |
 
-| Screen | Purpose | Current experience | UX issues | Recommended redesign | Related files/components | Priority | Effort |
-|---|---|---|---|---|---|---|---|
-| Hub | Portal launcher | Tile launcher opens portal-scoped tabs. | New-tab default fragments workspace continuity; portal labels are role-ish but not true role home. | Make Hub a workspace/role home selector with one active workspace, recent work, and role-specific start points. | `src/screens/hub.js`, `src/core/groups.js`, `src/shell/rail.js` | P1 | M |
-| Home | Workspace dashboard | KPI strip, priority queue, AI brief, recent revisions, integration health. | Same shape for most users; too KPI-heavy for engineers/field users. | Build role homes: executive exceptions, PM blockers, engineer review queue, field assigned work, admin health. | `src/screens/home.js`, `src/core/permissions.js` | P1 | M |
-| Inbox | Notifications | Central notification list. | Should become the universal triage surface with approvals, mentions, blocked work, incidents. | Add saved views: My approvals, Mentions, Assigned work, Incident actions, External requests. | `src/screens/inbox.js` | P2 | M |
-| Search | Global search | Search over seeded objects. | Search is good but not sufficiently promoted as navigation. | Promote global search and command palette as primary object discovery; add scoped filters and recent searches. | `src/screens/search.js`, `src/core/search.js`, `src/core/palette.js`, `src/shell/header.js` | P1 | S |
-| Team spaces/channels | Collaboration | Spaces, channels, messages, object chips. | Slack-like density can compete with structured work/document flows. | Separate discussion, decisions, files, linked work, and audit tabs; preserve object chips. | `src/screens/teamSpaces.js`, `src/screens/channel.js`, `src/core/mentions.js` | P2 | M |
-| Projects/work board | Work management | Kanban/table/timeline/calendar/deps plus batch tools and automation. | Too many views and bulk actions in header; item detail is modal-driven. | Use saved views, quiet board cards, right detail drawer, explicit bulk mode, dependency tab. | `src/screens/workBoard.js` | P1 | L |
-| Documents | Document control | Table index and rich viewer with metadata, timeline, approvals, comments, transmittals, impact, AI. | Viewer side pane has too many permanent cards; approval/revision safety needs stronger hierarchy. | Make current revision/approval state a banner; put metadata/history/comments/transmittals/audit in tabs or drawer. | `src/screens/docViewer.js`, `src/screens/revisionCompare.js`, `src/core/revisions.js` | P1 | L |
-| Drawings | Drawing review | Sheet tabs, modes, tools, layers, compare, CAD load, export, side column. | Toolbar resembles a technical tool palette; compare/markup/IFC are visible simultaneously. | Use a viewer shell with mode-specific toolbars, drawing status banner, issue drawer, revision compare entry point. | `src/screens/drawingViewer.js`, `src/core/cad-viewer.js`, `server/routes/cad.js` | P1 | L |
-| Assets | Industrial asset context | KPIs, UNS/i3X card, telemetry, mappings, docs, incidents, assignment, AI. | Operational, engineering, mapping, and AI content all appears together. | Use layered tabs: Summary, Documents, Drawings, Work, Incidents, Data mappings, Live values, Diagnostics, Audit. | `src/screens/assetDetail.js`, `src/screens/uns.js`, `src/core/i3x/*` | P1 | L |
-| Incidents | War room | Severity bar, alarms, timeline, composer, checklist, roster, linked cards, AI/export. | Better than many screens, but side cards and timeline can still feel chat-like. | Command layout: status header, current objective, owner/commander, actions, decisions, telemetry, timeline, postmortem. | `src/screens/incident.js`, `src/core/fsm/incident.js` | P1 | M |
-| Approvals | Review queue | Pending approval queue and decisions. | Needs more visible consequences and safer confirmation patterns. | Add approval detail page/drawer with affected revision, supersede risk, linked docs/drawings, signature preview. | `src/screens/approvals.js`, `server/routes/core.js` | P1 | M |
-| Integrations | Connector console | Connector cards, UNS binding, event feed, DLQ. | Good content, but setup/diagnostics/replay are mixed. | Separate Overview, Connectors, Mappings, Events, DLQ, Audit; add setup wizard and permission-gated write mode. | `src/screens/integrations.js`, `server/connectors/*`, `server/routes/automations.js` | P2 | L |
-| MQTT | Topic mapping | Broker connect, topic tree, payload inspector, mapping, policy, AI. | Advanced admin surface; publish/write actions need isolation. | Add Connect/Test wizard, read-only browser, mapping review flow, publish sandbox with strong warning. | `src/screens/mqtt.js`, `server/connectors/mqtt.js` | P2 | L |
-| OPC UA | Node mapping | Endpoint/session, node tree, mapping editor, simulate/write. | Privileged write action appears next to simulation. | Put write-node in a gated maintenance drawer with confirmation, signature, and audit preview. | `src/screens/opcua.js`, `server/connectors/opcua.js` | P1 | M |
-| UNS/i3X | Industrial data/API | Namespace tree, live values, raw API explorer, RapiDoc. | API explorer is developer/admin-heavy; default users need asset context first. | Keep `/i3x` admin/developer-only; make `/uns` a browse-and-context screen with live/stale/simulated distinctions. | `src/screens/uns.js`, `src/screens/i3x.js`, `src/core/i3x/*` | P2 | M |
-| AI workspace | Governed assistant | Thread, model selector, scope, suggested prompts, policy, log. | Citations exist, but source boundaries and unavailable-permission states need stronger UX. | Add scoped mode header, source selector, citation panel, confidence/limits, permission denial explainer, output templates. | `src/screens/ai.js`, `server/ai.js`, `server/routes/ai.js` | P1 | M |
-| Admin | Governance | SSO, retention, groups, RBAC, tokens, webhooks, n8n, metrics, audit, access review, policy. | Too many admin domains on one page. | Use settings IA: Org, Workspace, Identity, Security, Roles, Integrations, AI policy, Audit, Retention, System health. | `src/screens/admin.js`, `server/auth.js`, `server/acl.js`, `server/routes/tokens.js` | P1 | L |
-| Dashboards | Analytics | Dashboard cards and KPI grid. | Too abstract; repeats home KPI behavior. | Create role dashboard templates focused on exceptions, blockers, approvals, revision conflicts, integration health. | `src/screens/dashboards.js` | P2 | M |
+## E. Major UX Problems (refreshed)
 
-## G. Workflow Audit
+1. **Right context panel is permanent.** `src/shell/contextPanel.js` always
+   renders Role + route-context + audit. The grid track is `340px` even
+   on screens that already have rich detail (asset, incident, doc) — the
+   panel duplicates information rather than adding it.
+2. **Operations Dock is permanently visible at the bottom.**
+   `src/shell/dock.js` always shows incidents/integrations/approvals dots
+   (or "All systems nominal" when clean). The dock duplicates content
+   already on Home and the Inbox, and steals 48 px even when reading a
+   document.
+3. **Rail emoji icons hurt scannability.** `src/shell/rail.js:7-20` —
+   `🏛 🏠 ✓ 📑 📐 ⚙️ 🚨 🗂 📥 🤖 🔌 🛡`. Mixed visual weight, low contrast
+   in light theme, and emoji rendering varies across OSes (Linux
+   noto-emoji vs macOS Apple Color Emoji).
+4. **No real role-based home.** `src/screens/home.js` has the same five
+   KPIs, priority queue, AI brief, and recent revisions for everyone,
+   with one conditional card.
+5. **`window.prompt` / `window.confirm` for high-stakes actions.**
+   `drawingViewer.js` (text markup, stamp), `opcua.js:151,168` (write
+   value, write-node), `mqtt.js`, `incident.js:293,386,393` (action item,
+   change severity, change status), `docViewer.js:420,475,493` (regional
+   comment, convert to issue, attach url), `approvals.js:351`
+   (batch confirm), `admin.js:112` (revoke token), `uns.js:242` (write
+   value), `erp.js`, `channel.js`, `integrations.js:82` (rotate
+   credential).
+6. **Hub fragments workspace continuity.** `src/screens/hub.js:65-71`
+   force-opens every tile in a new tab via `window.open(href, "_blank")`.
+   No way to switch portal scope from the rail; tab management is on the
+   user.
+7. **Three different tab strips.** `src/screens/admin.js:49-58`,
+   `src/screens/workBoard.js:127-136`, `src/screens/assetDetail.js:140-150`
+   — same idea, three implementations, slightly different markup and
+   `aria-selected` handling. No `Tabs` primitive in `src/core/ui.js`.
+8. **Bespoke `<table>` everywhere.** `docViewer.js`, `incident.js`,
+   `approvals.js`, `admin.js`, `erp.js`, `assetDetail.js` all hand-roll
+   tables; the shared `table()` in `src/core/ui.js:80-106` is only used by
+   `src/screens/inbox.js`. Sortability, filterability, density, and bulk
+   selection are reinvented or skipped per screen.
+9. **`activity-row` divs as clickable rows.** ~30 occurrences across
+   screens; in many places (`home.js`, `incident.js`, `docViewer.js`,
+   `mqtt.js`, `i3x.js`, `uns.js`, `integrations.js`) they're `<div>` with
+   `onClick` and no `tabindex`/`role`/keyboard handler.
+10. **Drawing viewer toolbar is still very dense.**
+    `src/screens/drawingViewer.js:71-117` — sheet tabs + 4 modes + 10
+    tools + 3 zoom + 3 layer toggles + compare picker + Reload CAD +
+    Export SVG. Tools are emoji-led (`✋ 📏 ➜ 💬 ☁ ▮ T ⛊ ● 📍`).
+11. **No empty states.** Most "no data" branches use a literal
+    `el("div", { class: "muted tiny" }, ["…"])`. No reusable
+    `EmptyState` with icon + headline + next action + permission hint.
+12. **Color-only status across badges.** `badge(p.status, p.status ===
+    "active" ? "success" : "info")` is the dominant pattern. There is no
+    icon glyph or alphanumeric prefix on success/warn/danger badges, and
+    no formal severity / data-quality / revision token taxonomy enforced
+    via primitives.
+13. **Mobile / tablet layout still light.** `styles.css:1683-1701` has
+    breakpoints at 1280 px and 900 px only. Below 900 px the left panel
+    hides, but the rail stays at 72 px (icons + tiny labels) and the
+    operations dock continues to stretch full width over the bottom of
+    the screen. Field mode (`body.field-mode`) is declared but has **no**
+    CSS rules in `styles.css`.
+14. **Group-restricted routes always show the same generic forbidden
+    page.** `app.js:191-208` renders the same fallback for `/admin`,
+    `/integrations`, `/uns`, `/i3x`. There is no link to "Request
+    access", no "this is an admin route, ask your administrator to add
+    you to the IT group" guidance, no membership of the asking user.
+15. **Header search and command palette duplicate intent.** Both go to
+    `/search`; the palette (`⌘K`) is the richer entry point but the
+    header still keeps a 280-px search input on every page.
+16. **The "Reset" button is a top-level destructive control.**
+    `src/shell/header.js:85-89` — an `OK/Cancel` `confirm()` is the only
+    safety. Should be in admin/settings, not the global header.
+17. **No persistent breadcrumb-as-navigation.**
+    `src/shell/header.js:66-70` renders breadcrumbs as plain text
+    (`org / workspace / crumb`); none of the segments are clickable.
+18. **AI workspace under-communicates limits.** `src/screens/ai.js`
+    shows scope and citations, but offline/cold-start, retrieval-zero,
+    and "permission filtered N hits" feedback are missing. `welcome()`
+    is identical for every role and scope.
 
-| Workflow | Current flow | Friction | Missing states | Recommended flow | Required UI changes | Required code/component changes |
-|---|---|---|---|---|---|---|
-| Revision review/approval | Open doc, inspect side pane, compare, go to approvals. | Current/superseded/rejected risk is badge-heavy. | Superseded warning, approval consequence preview, blocked approval, rejected reason. | Document banner -> review drawer -> compare -> approve/reject with signature preview. | Banner, review drawer, safer confirmation. | `DocStatusBanner`, `ApprovalDecisionDrawer`, updates in `docViewer.js`, `approvals.js`. |
-| Drawing markup to issue | Open drawing, choose markup mode/tool, click canvas, create issue. | Too many tools visible; issue creation is tool-driven. | Draft markup, unresolved/resolved states, linked work item status. | Mode selector -> markup toolbar -> create issue drawer -> linked item appears in side panel. | Mode-specific toolbar, issue drawer, markup list. | Split `drawingViewer.js` into viewer shell, toolbar, markup layer, issue drawer. |
-| Work item management | Project board header switches views and creates items; modal edits. | Header overload; card metadata can become badge soup. | Saved filters, personal views, SLA rules, external/vendor view. | My Work / Project Work / Saved Views, with detail drawer and explicit bulk mode. | Saved view bar, item drawer, bulk mode toggle. | New shared `ViewToolbar`, `WorkItemDrawer`; refactor `workBoard.js`. |
-| Asset investigation | Open asset, see telemetry, mappings, docs, incidents, assignment, AI. | Live data and mappings appear by default. | Stale/disconnected/simulated state, diagnostics history, audit. | Asset summary first, then tabs for docs/drawings/work/incidents/data/diagnostics/audit. | Asset page tabs and data-state indicators. | `AssetTabs`, `TelemetryStateBadge`, `MappingTable`; refactor `assetDetail.js`. |
-| Incident response | Open incident, add timeline, checklist, roster, linked cards. | Actions and evidence compete with timeline. | Decision log, current objective, escalation state, postmortem state. | Command header -> active actions -> decision log -> evidence/timeline -> postmortem export. | Incident command template. | `IncidentCommandHeader`, `DecisionLog`, `IncidentActions`. |
-| Integration setup | Integration console to connector-specific pages. | Setup, mapping, diagnostics, and replay mixed. | Draft config, validation errors, credential saved/rotated states. | Connector overview -> setup wizard -> test -> mapping -> validate -> enable -> audit. | Wizard and connector health page. | `ConnectorHealthCard`, `IntegrationWizard`, `MappingValidator`. |
-| AI-assisted answer | Open AI, choose model, ask. | Scope and permission boundaries are understated. | Source unavailable, confidence/limits, stale index, no-citation warning. | Scoped AI mode with source selector, citation panel, limits, templates. | AI scope header and citation side panel. | `AIScopeHeader`, `CitationPanel`, server route response metadata. |
-| Admin governance | Single admin page with many cards. | Settings overload; dangerous actions near passive status. | Search settings, dirty state, audit preview, confirmation tiers. | Settings sections with left nav, searchable settings, danger zone. | Admin settings shell. | Split `admin.js` into settings modules and shared dangerous action pattern. |
+## F. Screen-by-Screen Audit (refreshed)
+
+| Screen | Current state (post-baseline work) | Remaining UX issues | Priority | Effort |
+|---|---|---|---|---|
+| Hub (`hub.js`) | Hero + grid of tiles + footer; portal tiles tinted by `accent`; opens new tab. | New-tab-by-default fragments work; hero is generic; no recent work or pinned items. | P1 | M |
+| Home (`home.js`) | KPI strip, priority queue, AI brief, recent revisions, integration health/picks. | Single home for every role; no saved views; AI brief auto-runs even with no relevant signals. | P1 | M |
+| Inbox (`inbox.js`) | Single notifications table, "Mark all read". Uses shared `table()`. | No saved views (mentions / approvals / assigned / incident actions); no unread indicator distinct from row read state; only one entry-point per row. | P2 | S |
+| Search (`search.js`) | Facet rail + saved searches + permission-filtered. | Header search input duplicates palette; no recent searches; no scope chips bound to current route. | P2 | S |
+| Team spaces / channels (`teamSpaces.js`, `channel.js`) | Card index + members + projects + docs; channel composer with chips, mentions, decision blocks. | Composer is dense; thread drawer is permanent; spaces detail is cards-and-rows. | P2 | M |
+| Projects / Work board (`workBoard.js`) | Saved views + filter + 5 view modes + batch bar + project context tabs + automation rules card + work item drawer. | Two header rows + project context tabs + batch bar = three competing toolbars; new-item modal still uses native form. | P1 | M |
+| Documents / Doc viewer (`docViewer.js`) | Revision safety banner + metadata bar + viewer toolbar + 8 side cards (metadata, timeline, approvals, comments, transmittals, impact, cross-links, ai-ask). | Side stack is very tall; metadata bar duplicates info already in banner + side card; ad-hoc table on `renderDocsIndex`. | P1 | M |
+| Drawings / Drawing viewer (`drawingViewer.js`) | Mode-gated toolbar; SVG canvas with svg-pan-zoom upgrade; CAD via three.js; markup palette. | Toolbar still has ~30 affordances on the row; emoji tool icons; markup creation uses `window.prompt`. | P1 | L |
+| Assets / Asset detail (`assetDetail.js`) | Header chips + 5 KPI cards + tabs (Summary/Docs/Work/Signals/Activity) + Assignment + AI brief. | Top still shows 5 KPIs *and* tabs *and* a War Room button; long single page; UNS card duplicates Signals tab. | P1 | M |
+| Incidents (`incident.js`) | Severity bar + command header KPIs + alarms strip + timeline + checklist + roster + linked + AI + export. | Three "header" surfaces stack (severity bar, command header, alarms); status/severity changes use `window.prompt`. | P1 | M |
+| Approvals (`approvals.js`) | Filter strip + batch + queue table + preview + decide drawer + impact + signed chain. | Decision drawer is excellent; queue table has no SLA-color sort; reject path is `prompt` for batch. | P2 | S |
+| Integrations (`integrations.js`) | Mapping lifecycle strip + connector cards + UNS binding + events + DLQ. | Lifecycle steps `connector-lifecycle` reference CSS classes that **don't exist** in `styles.css` — silently broken on light theme. Cred rotation uses `confirm()`. | P1 | S |
+| MQTT (`mqtt.js`) | Live broker + topic tree + payload inspector + mapping rules + namespace policy + AI taxonomy. | Publish dialog uses native modal; `disabled: !can("integration.write")` is the only guard for live publish. | P2 | M |
+| OPC UA (`opcua.js`) | Endpoint + node tree + mapping editor + simulate + write-node. | Privileged write-node is one click + `prompt`; no signature preview, no audit preview, no current-value display. | P1 | M |
+| ERP (`erp.js`) | Mapping matrix + conflict queue + backfill/writeback preview. | Conflict cards use `approval-card` class; no audit-of-merge preview; bespoke table. | P2 | M |
+| UNS / i3X (`uns.js`, `i3x.js`) | Tree + composition + live VQT + cross-links + RapiDoc explorer. | UNS write value uses `prompt`; sparkline duplicated (charts.js + inline); subscribe handle leaks across renders. | P2 | M |
+| AI (`ai.js`) | Thread + scope + model select + suggested prompts + policy + log. | No clear "permission-denied retrieval" state; `welcome()` is generic; model dropdown isn't permission-filtered. | P1 | M |
+| Admin (`admin.js`) | Tabs (Identity, Access, Integrations, Audit, Retention, Health); RBAC matrix; groups tree; tokens; webhooks; n8n; metrics. | Token-revoke uses `confirm()`; webhook delete uses `confirm()`; access review has no SLA; metrics is a `<pre>` block. | P2 | M |
+| Spec (`spec.js`), Dashboards (`dashboards.js`) | Static. | Dashboards is 5 KPIs + 1 grid; Spec is a static markdown render. | P3 | S |
+
+## G. Workflow Audit (refreshed)
+
+| Workflow | Today | Friction remaining | Recommended next change |
+|---|---|---|---|
+| Revision review and approval | Banner + drawer + signed decision implemented. | Compare entry is buried in the banner action; superseded interlock is a badge color rather than a blocked action. | Add a "Compare with current" jump in the banner when not current; lock approve/reject when revision is superseded. |
+| Drawing markup → issue | Mode-gated toolbar, click-to-place markup, "Convert to issue" via comment in doc viewer. | Markup itself uses `window.prompt` for text and stamp label; no "Create issue" right on the markup popover. | Replace prompts with a `MarkupComposer` modal that includes severity, link to asset, and "Create work item from markup". |
+| Work item lifecycle | Saved views + drawer + batch bar. | New-item modal lacks asset link, due date, labels chip-input; due date never collected on create. | Extend `openNewItem` with date + labels + linked asset/doc/drawing inputs; emit a creation event with traceable provenance. |
+| Asset investigation | Tabs implemented; Live values and Signals separated from Summary. | War Room button is one-click "create incident" with no severity / scope confirmation. | Convert War Room into a `CreateIncidentDrawer` requiring severity, blast radius and primary on-call. |
+| Incident command | Severity bar + command header + checklist + roster + AI + export. | Three header surfaces; status / severity transitions still use `window.prompt`. | Replace prompts with a `StateTransitionDrawer` that previews FSM-allowed transitions and signs the change. |
+| Integration setup → enable | Lifecycle strip + connector cards. | The lifecycle strip references CSS that doesn't exist; rotate-credential confirms inline; no setup wizard. | Either ship the missing `.connector-lifecycle*` CSS or remove the strip; replace `confirm()` with `IntegrationActionDrawer`. |
+| AI ask | Citations + scope + log. | No retrieval-zero state; no permission-denied source explanation; no "limits of this answer" disclaimer. | Add a `CitationPanel` and `RetrievalState` (filtered: N · denied: M · indexed: K) row above the assistant bubble. |
+| Admin governance | Settings sections + groups + tokens + webhooks + n8n + metrics + retention + audit. | Many destructive actions (revoke, delete, sign-off-all) gated only by `window.confirm`. | Consolidate into a single `dangerAction({ title, body, confirmLabel, cooldownMs })` primitive that records intent in the audit ledger. |
 
 ## H. Recommended Enterprise Information Architecture
 
-### Global
+Largely unchanged from baseline; the implemented portal model is correct.
+The remaining gap is **how a single-tab user can move between portals
+without losing context**:
 
-- Organization switcher and workspace switcher.
-- Global search and command palette.
-- Inbox/notifications.
-- User/profile, help, keyboard shortcuts.
-- Admin only for authorized roles.
+- Add a portal switcher to the rail logo (currently a static badge),
+  showing the current portal and a quick-switch popover.
+- Keep Hub tiles, but make them open in the **current tab** by default
+  (Cmd/Ctrl-click for new tab) so workspace continuity matches user
+  expectations (`src/screens/hub.js:53-71`).
+- Promote `workspaceSwitcher` from a single-icon control
+  (`src/shell/rail.js:91-108`) to a header-anchored organization /
+  workspace / portal breadcrumb.
 
-### Workspace primary navigation
+## I. Recommended Design System (refreshed)
 
-Use a shorter primary nav:
+Tokens already cover revision lifecycle (`--rev-*`) and semantic colors
+(`--success`, `--warn`, `--danger`, `--info`, `--purple`, `--accent`).
+Still missing:
 
-1. Home
-2. Work
-3. Documents
-4. Drawings
-5. Assets
-6. Incidents
-7. Team spaces
-8. Integrations
-9. AI
-10. Admin
+- **Severity tokens**: `--sev-1, --sev-2, --sev-3, --sev-4` mapped to
+  shape + color + icon; a `SeverityBadge` primitive consuming them.
+- **Data-quality tokens**: `--dq-live, --dq-stale, --dq-disconnected,
+  --dq-simulated, --dq-historical`. Today the variants are inferred via
+  `dataVariant()` helpers redeclared in `assetDetail.js` and
+  `workBoard.js`.
+- **Density**: `--density-comfortable`, `--density-compact`,
+  `--density-cozy` controlling table row height, badge padding, kpi
+  size; bound to a user preference.
+- **Field-mode CSS**: `body.field-mode` is set but has zero rules; add
+  larger touch targets (`.btn { min-height: 44px }`), high-contrast
+  incident actions, sticky bottom action bar, and offline / queued
+  indicators.
+- **Status badge taxonomy**: a `StatusBadge` that takes
+  `{ kind, value }` and chooses tone + icon centrally
+  (`StatusBadge({ kind: "revision", value: "IFR" })`).
 
-### Contextual secondary navigation
+Components to extract into `src/core/ui.js`:
 
-- Work: Boards, Tables, Calendar, Dependencies, Saved views.
-- Documents: Library, Reviews, Transmittals, Revisions, Audit.
-- Drawings: Library, Reviews, Markups, Issues, Models.
-- Assets: Summary, Documents, Drawings, Work, Incidents, Data, Diagnostics, Audit.
-- Integrations: Overview, Connectors, Mappings, Events, DLQ, Credentials, Audit.
-- Admin: Organization, Workspace, Identity, Security, Roles, Policies, AI, Integrations, Audit, Retention, System health.
+- `Tabs({ tabs, activeId, onPick, sessionKey })` — replaces three custom
+  implementations.
+- `DataTable({ columns, rows, density, sortable, selectable, emptyState })`
+  — replaces ~10 hand-rolled `<table>`s.
+- `EmptyState({ icon, title, body, primaryAction, permissionHint })` —
+  replaces ~25 `el("div", { class: "muted tiny" }, ["..."])` branches.
+- `PageHeader({ title, breadcrumbs, status, actions })` — replaces the
+  `row spread` pattern repeated in `workBoard.js`, `approvals.js`,
+  `assetDetail.js`, `uns.js`, `incident.js`.
+- `dangerAction({ title, body, confirmLabel })` returning a Promise —
+  replaces every `window.confirm`.
+- `prompt({ title, label, defaultValue, validate })` — replaces every
+  `window.prompt`.
+- `RailIcon({ glyph, label, active })` — formalizes rail buttons; allows
+  swapping emoji for SVG icons in one place.
 
-### Role-based defaults
+## J. Component Refactor Plan (refreshed)
 
-- Executive: exceptions, risk, overdue approvals, active incidents, program health.
-- Engineering manager: review queues, blockers, revision conflicts, team load.
-- Project manager: milestones, overdue work, RFIs/punch/CAPAs, dependencies.
-- Engineer: assigned work, review requests, recent docs/drawings, mentions.
-- Field technician/operator: assigned actions, procedures, asset status, incident actions.
-- Integration admin: connector health, mapping errors, DLQ, credentials, audit.
-- Admin/auditor: access review, audit ledger, retention, policy violations.
-- External vendor/client: scoped documents, markups, RFIs, transmittals, no internal telemetry by default.
+1. **Add `Tabs`, `DataTable`, `EmptyState`, `PageHeader`, `Confirm`,
+   `Prompt` to `src/core/ui.js`.** Replace per-screen implementations in
+   one PR each.
+2. **Convert clickable `<div class="activity-row">` to `<button>` or
+   add `role="button" tabindex="0"` + keydown handlers.** Mechanical
+   refactor; affects ~30 sites.
+3. **Make `right-context-panel` on-demand.**
+   - Add a "Details" button to `header.js` that toggles
+     `state.ui.contextOpen`.
+   - Default the panel to closed for users without route-specific context.
+   - Open it automatically when the user lands on a doc/drawing/asset/
+     incident the first time, then remember the choice in `localStorage`.
+4. **Add a portal switcher to the rail logo.** Replace the inline
+   workspace badge with a popover showing portal + workspace + org.
+5. **Replace dock with an unobtrusive notification button.** Move the
+   alert dots into a header bell with a dropdown; remove the always-on
+   bottom strip from `index.html` and `styles.css:.operations-dock`.
+6. **Normalize emoji rail icons.** Either commit to a single icon font
+   (lucide-static) or to a SVG sprite; remove emoji glyphs from
+   navigation and tools.
+7. **Drawing toolbar split.** Three rows: sheet tabs, mode selector,
+   tools (only when in markup mode). Tools become an icon palette with
+   tooltips; expose an "Issue from markup" affordance.
+8. **Document viewer side pane consolidation.** Collapse 8 side cards
+   into 4: Properties (metadata + timeline), Discussion (comments),
+   Distribution (transmittals + cross-links), Assist (impact + ai).
+9. **Asset detail header.** Drop the 5-KPI strip into the Summary tab;
+   keep the page header lean (name, hierarchy, status, owner, primary
+   action).
+10. **Hub flow.** Default tile click opens in the current tab; add
+    Cmd/Ctrl click for new tab; show "Last opened" / "Recent in this
+    portal" lists per tile.
 
-## I. Recommended Design System
+## K. Industrial and Engineering UX Recommendations (refreshed)
 
-### Principles
+- The `assetDetail` tabs separate live signals from summary — good.
+  Make the same separation apply to `workBoard` project context: the
+  Signals tab there is functionally identical and can share a
+  `SignalHealthList` component.
+- OPC UA write-node and MQTT publish should both gate behind a
+  `MaintenanceModeDrawer` that requires severity + reason + signature
+  preview + audit reference (currently only OPC UA write signs, and the
+  signature is hidden behind a toast).
+- `uns.js:241-249 writeValue` should also gate through that drawer.
+- The forbidden screen at `app.js:194-208` should explain *which* group
+  is required (already known via `ROUTE_GROUPS` in `groups.js`) and
+  surface a "Request access" button that creates a work item.
 
-- Quiet by default, explicit when risky.
-- Object-first pages: title, status, owner, primary next action, recent change.
-- One primary action per surface.
-- Details move into tabs, drawers, or expandable sections.
-- Industrial data is trustworthy, labeled, and layered.
+## L. Accessibility and Responsive Review (refreshed)
 
-### Tokens
+- `styles.css` has skip link, focus-visible rules, and aria attributes
+  on the rail / header — solid foundation.
+- Still failing: ~30 clickable `div`s as rows; emoji-only buttons in
+  drawing toolbar; tab markup is a `<button>` with `role="tab"` but no
+  `tabindex` management or roving focus.
+- `body.field-mode` has no CSS — touch-target sizing in field mode is
+  identical to desktop.
+- Below 900 px: rail and bottom dock both stay full-height/full-width;
+  no off-canvas drawer. The mobile screenshot at 700 px shows the rail
+  + dock taking ~24 % of vertical real estate.
+- Modals (`src/core/ui.js:120-177`) trap focus correctly. Drawer
+  (`drawer()`) does the same. **Both are good.** Replacing
+  `window.prompt`/`confirm` will inherit those wins.
+- Color-only state: badges use color + label, but the label is the
+  *value* (`pending`, `failed`) and the variant adds redundant
+  semantics; severity / quality / revision lack glyphs and are
+  indistinguishable to deuteranopic users.
 
-- Expand `styles.css` tokens into semantic groups: `--color-bg-page`, `--color-bg-surface`, `--color-text-primary`, `--color-text-secondary`, `--color-border-subtle`, `--color-action-primary`, `--color-focus-ring`.
-- Keep semantic state tokens: success, info, warning, danger.
-- Add explicit severity tokens: `sev-1`, `sev-2`, `sev-3`, `sev-4`.
-- Add data-quality tokens: live, stale, disconnected, simulated, historical.
-- Add revision tokens: draft, IFR, approved, IFC, superseded, rejected, archived.
+## M. Risk Register (refreshed)
 
-### Components
+| Risk | Severity | Where | Mitigation |
+|---|---|---|---|
+| `window.prompt`/`confirm` for industrial writes | High | `opcua.js`, `mqtt.js`, `uns.js` | Replace with `MaintenanceModeDrawer` that requires severity + reason + signature + audit preview. |
+| Permanent ops dock + context panel reduce focus | Medium | `dock.js`, `contextPanel.js`, `styles.css:.app-shell` | Make both on-demand. |
+| Emoji icons fail across OS / a11y | Medium | `rail.js`, `drawingViewer.js`, `header.js` | Switch to SVG sprite or icon font. |
+| Generic forbidden page | Medium | `app.js:194-208` | Add group/required-membership detail + request-access flow. |
+| `window.confirm` for token revoke / webhook delete | Medium | `admin.js:111, 165` | Replace with `dangerAction` primitive. |
+| Hub fragments workspace continuity | Medium | `hub.js:53-71` | Default to in-tab navigation; preserve cmd-click. |
+| Color-only severity/quality | Low/Medium | All badges | Add glyph + abbreviation; introduce sev/dq tokens. |
+| `connector-lifecycle*` CSS not defined | Low | `integrations.js:18` | Either author the styles or remove the strip. |
+| `body.field-mode` has no CSS | Medium for field users | `styles.css` | Add field-mode token overrides for touch + contrast. |
+| Mobile breakpoints stop at 900 px | Medium | `styles.css:1683-1701` | Add `<= 700px` shell with off-canvas rail. |
 
-- App shell: primary nav, workspace switcher, secondary nav, page header, details drawer.
-- Buttons: primary, secondary, tertiary, destructive, danger-confirm.
-- Tables: compact/comfortable density, sortable headers, saved filters, row actions, bulk mode.
-- Cards: summary card, exception card, object card, health card.
-- Badges/tags: use sparingly; severity and revision status get consistent shapes.
-- Drawers: object detail, approval decision, issue creation, mapping edit.
-- Modals: only blocking confirmations and short forms.
-- Empty/loading states: include next action and permission reason.
-- Command palette/search: global quick actions, object jump, recent searches.
-- Data visualization: no raw telemetry charts on home; use exceptions and trends.
-- Accessibility: visible focus rings, keyboard paths, aria labels, non-color labels.
-- Dark mode: keep, but light mode should be default enterprise presentation.
-- Field mode: tablet-friendly touch targets, offline/stale labels, high-contrast incident actions.
+## N. Prioritized Roadmap (refreshed)
 
-## J. Component Refactor Plan
+### Phase 5 — Primitive consolidation (current focus)
 
-- Extract `AppShell`, `PrimaryNav`, `SecondaryNav`, `PageHeader`, `ContextDrawer`, and `OperationsDock` from `src/shell/*`.
-- Replace `card`, `badge`, `table` with richer primitives in `src/core/ui.js`: `Page`, `Toolbar`, `Tabs`, `DataTable`, `StatusBadge`, `SeverityBadge`, `RevisionBadge`, `EmptyState`, `Drawer`.
-- Split large screens:
-  - `docViewer.js` -> document page, revision banner, metadata tab, comments tab, transmittals tab, approval drawer.
-  - `drawingViewer.js` -> viewer shell, mode toolbar, canvas, markup layer, layer panel, issue drawer.
-  - `workBoard.js` -> view toolbar, board, table, timeline, dependency map, item drawer, bulk bar.
-  - `assetDetail.js` -> asset header, summary, telemetry, mappings, incidents, assignment, audit.
-  - `admin.js` -> settings shell plus identity, roles, tokens, webhooks, automations, metrics, audit, retention modules.
-- Remove inline layout styles where possible and move them to tokenized CSS utilities in `styles.css`.
-- Replace clickable `div` rows with semantic `button` or accessible row patterns.
+- Add `Tabs`, `DataTable`, `EmptyState`, `PageHeader`, `Prompt`,
+  `Confirm`, `dangerAction` to `src/core/ui.js`.
+- Migrate first three screens (`docViewer`, `incident`, `approvals`).
+- Establish severity, data-quality, density tokens in `styles.css`.
 
-## K. Industrial and Engineering UX Recommendations
+### Phase 6 — Shell calm-down
 
-- Keep industrial credibility through precise terms, trace IDs, mappings, and audit trails, but default to summaries.
-- Asset summary should show status, owner, location/hierarchy, linked work, current incidents, and critical docs. Live values belong in a `Live values` tab.
-- Distinguish live, stale, disconnected, simulated, and historical data everywhere telemetry appears: `assetDetail.js`, `uns.js`, `mqtt.js`, `opcua.js`, and `integrations.js`.
-- MQTT/OPC UA publish/write actions must move into a permission-gated maintenance flow with explicit confirmation, affected endpoint, actor, signature/audit preview, and rollback/replay notes.
-- UNS and i3X should be admin/developer tools by default; normal engineering users should reach industrial data through assets, incidents, and drawings.
+- Right context panel becomes on-demand drawer.
+- Bottom ops dock becomes a header notification button.
+- Rail logo becomes a portal switcher; emoji icons replaced with SVG.
+- Hub click defaults to in-tab navigation.
 
-## L. Accessibility and Responsive Review
+### Phase 7 — Industrial safety polish
 
-- `styles.css` has responsive breakpoints at 1280px and 900px, but the four-panel desktop shell is still the default and many screens use two/three-column grids.
-- Add a mobile/tablet IA: primary nav collapses, left panel becomes drawer, context panel becomes details drawer, dock becomes notification sheet.
-- Add visible focus ring tokens and test keyboard use for command palette, modals, menus, boards, drawing tools, and tree rows.
-- Replace emoji-only or emoji-led controls with accessible labels in `rail.js`, `drawingViewer.js`, `assetDetail.js`, and integration screens.
-- Avoid color-only communication in badges, revision states, severity, live data quality, and integration health.
-- Introduce table captions or accessible labels for data tables in document, asset, incident, approval, and admin screens.
+- `MaintenanceModeDrawer` for OPC UA write, MQTT publish, UNS write.
+- `StateTransitionDrawer` for incident severity / status.
+- Markup-to-issue from drawing.
 
-## M. Risk Register
+### Phase 8 — Field & a11y
 
-| Risk | Location in code | User affected | Severity | Cause | Business impact | Recommended mitigation |
-|---|---|---|---|---|---|---|
-| Users act on superseded drawings/docs | `docViewer.js`, `drawingViewer.js`, `revisionCompare.js` | Engineers, field techs, vendors | High | Revision status is badge-heavy, not a blocking banner | Rework, safety incidents, contractual disputes | Add revision safety banner and superseded interlock. |
-| Accidental approval/rejection | `approvals.js`, `docViewer.js`, `server/routes/core.js` | Approvers, auditors | High | Decision context and consequence preview are limited | Compliance and quality failures | Approval drawer with linked impact, notes, signature preview. |
-| Accidental MQTT/OPC UA writes | `mqtt.js`, `opcua.js`, `uns.js`, `server/routes/i3x.js` | Integration admins, operators | Critical | Write actions near browse/simulate actions | Operational disruption | Gated maintenance mode, confirmation, audit preview, role check. |
-| Critical incident status hidden by clutter | `incident.js`, `dock.js`, `contextPanel.js` | Incident team, managers | High | Timeline/cards compete for attention | Slower response | Command header, current objective, active actions, decision log. |
-| Overwhelming first-use experience | `rail.js`, `leftPanel.js`, `home.js`, `styles.css` | All new users | High | Too many routes, panels, cards | Enterprise adoption friction | Simplify primary nav, role home, progressive disclosure. |
-| Permission model confusion | `permissions.js`, `groups.js`, `server/auth.js`, `server/acl.js` | Admins, external users | High | Client role dropdown, group portals, server RBAC/ACL differ | Trust and security concerns | Permission explainer, admin access model page, align client/server terminology. |
-| AI appears more authoritative than it is | `ai.js`, `server/ai.js` | Engineers, managers, auditors | Medium | Citations exist but limitations are quiet | Bad decisions from incomplete context | Citation panel, source selector, limitations and permission-denied states. |
-| Integration failures unclear | `integrations.js`, `mqtt.js`, `opcua.js`, `erp.js` | Integration admins | Medium | Health, events, DLQ, mappings mixed | Longer outage diagnosis | Connector health overview and diagnostics flow. |
-| Mobile/tablet field use poor | `styles.css`, shell files, viewer screens | Field techs, supervisors | High | Dense grid shell and small controls | Low field adoption | Tablet shell, larger touch targets, offline/stale states. |
-| Badge overload reduces signal | Most screens, `ui.js`, `styles.css` | All users | Medium | Badges used for many metadata types | Missed critical states | Badge taxonomy and severity/revision hierarchy rules. |
+- `body.field-mode` styles, off-canvas mobile shell, touch targets.
+- Replace clickable `<div class="activity-row">` with semantic markup
+  workspace-wide.
+- Roving tab focus on tabs + tools.
 
-## N. Prioritized Roadmap
+### Phase 9 — Role homes & guidance
 
-### Phase 1: Remove UX friction and visual overload
+- `Home` variants per role using existing groups.
+- "Request access" affordance on the forbidden page.
+- AI retrieval-state row + permission-denied explainer.
+- Saved-view inbox.
 
-- Reduce primary nav to core domains in `rail.js`.
-- Make left panel contextual instead of universal in `leftPanel.js`.
-- Convert context panel to on-demand details drawer.
-- Add revision/approval/incident safety banners.
-- Add role-based home variants in `home.js`.
+## O. Developer-Ready Task List (refreshed)
 
-### Phase 2: Establish enterprise design system
-
-- Formalize tokens in `styles.css`.
-- Expand `src/core/ui.js` primitives.
-- Add status, severity, revision, data-quality, empty-state, drawer, tabs, and data-table components.
-- Document usage rules beside the skill/report.
-
-### Phase 3: Redesign navigation and page templates
-
-- Add workspace/project/site context.
-- Add secondary navigation per domain.
-- Promote global search and command palette.
-- Add responsive tablet shell.
-
-### Phase 4: Redesign core workflows
-
-- Documents/revisions/approvals.
-- Drawing review and markup-to-issue.
-- Work item detail and saved views.
-- Incident command.
-
-### Phase 5: Improve industrial, integration, and AI experiences
-
-- Layer asset pages.
-- Separate integration setup, mapping, diagnostics, and DLQ.
-- Gate MQTT/OPC UA/i3X write actions.
-- Add governed AI scope/citation/limitations UX.
-
-### Phase 6: Enterprise polish and accessibility hardening
-
-- Keyboard test all flows.
-- Add tablet/field mode.
-- Reduce color-only status.
-- Add confirmation patterns for dangerous actions.
-- Review external/vendor and auditor experiences.
-
-## O. Developer-Ready Task List
-
-| Task | File/component | Why it matters | Suggested fix | Priority | Effort |
+| Task | File / component | Why it matters | Suggested fix | Priority | Effort |
 |---|---|---|---|---|---|
-| Add enterprise UX skill for agents | `.claude/skills/enterprise-ux-audit/SKILL.md`, `AGENTS.md` | Makes this audit repeatable for Claude/agents. | Keep the skill current and require code-grounded report updates. | P0 | S |
-| Simplify primary nav | `src/shell/rail.js` | Current 15-item rail overwhelms users. | Replace with core domains; move UNS/i3X/admin subroutes behind role/context menus. | P1 | M |
-| Make left panel route-aware | `src/shell/leftPanel.js` | Universal object tree creates clutter. | Render secondary nav for active domain; move global objects to search/palette. | P1 | M |
-| Convert right context panel to drawer | `src/shell/contextPanel.js`, `styles.css` | Permanent panel consumes attention. | Add details drawer opened by object/header actions. | P1 | M |
-| Create role home variants | `src/screens/home.js`, `src/core/permissions.js` | Different roles need different defaults. | Switch content by current role/group and show saved views/exceptions. | P1 | M |
-| Add document revision safety banner | `src/screens/docViewer.js`, `src/screens/revisionCompare.js` | Prevents acting on wrong revision. | Persistent banner with current/superseded/rejected state and compare/approval actions. | P1 | M |
-| Redesign approval decision flow | `src/screens/approvals.js`, `server/routes/core.js` | Approvals are high-risk compliance actions. | Detail drawer with impact, linked objects, notes, signature preview, confirm. | P1 | M |
-| Split drawing toolbar by mode | `src/screens/drawingViewer.js` | Current toolbar is too dense. | Mode selector plus mode-specific toolbar and issue drawer. | P1 | L |
-| Add work item drawer and saved views | `src/screens/workBoard.js` | Reduces board/header density. | Add `WorkItemDrawer`, saved filters, explicit bulk mode. | P1 | L |
-| Layer asset detail page | `src/screens/assetDetail.js` | Separates engineering context from live operations. | Add tabs: Summary, Docs, Drawings, Work, Incidents, Data, Diagnostics, Audit. | P1 | L |
-| Add data-quality badge taxonomy | `styles.css`, `src/core/ui.js`, `assetDetail.js`, `uns.js` | Live/stale/simulated/historical states must be clear. | Add `DataQualityBadge` and use it anywhere telemetry appears. | P1 | M |
-| Gate OPC UA write action | `src/screens/opcua.js` | Prevents accidental industrial writes. | Move write-node into maintenance drawer with confirmation and audit preview. | P1 | M |
-| Gate MQTT publish/test actions | `src/screens/mqtt.js` | Publish actions can affect brokers. | Add sandbox/test mode and privileged publish confirmation. | P2 | M |
-| Redesign incident command header | `src/screens/incident.js` | Incident teams need current state immediately. | Add commander, status, current objective, active actions, decision log. | P1 | M |
-| Split admin into settings sections | `src/screens/admin.js` | Single page is too dense for enterprise admins. | Create settings shell with Identity, Security, Roles, Audit, Retention, Integrations, AI. | P1 | L |
-| Add governed AI source panel | `src/screens/ai.js`, `server/routes/ai.js` | Prevents false authority. | Add source selector, citation panel, limitations, unavailable-permission states. | P1 | M |
-| Build reusable data table | `src/core/ui.js`, table-heavy screens | Tables need sorting, density, filters, bulk mode. | Add `DataTable` primitive and migrate docs/assets/incidents/admin. | P2 | L |
-| Add accessible focus and row semantics | `styles.css`, `src/core/ui.js`, `src/screens/*` | Keyboard and WCAG readiness. | Add focus tokens; replace clickable divs with buttons or keyboard handlers. | P1 | M |
-| Add tablet field shell | `styles.css`, shell files | Field technicians need usable tablet flows. | Collapse panels to drawers, increase touch targets, simplify incident/asset screens. | P2 | L |
-| Align client/server access terminology | `permissions.js`, `groups.js`, `server/auth.js`, `server/acl.js`, `admin.js` | Reduces permission trust gaps. | Add access model documentation screen and consistent labels. | P2 | M |
+| Add `Tabs` primitive | `src/core/ui.js` | Three custom tab strips diverge in markup and a11y. | `Tabs({ tabs, activeId, onPick, sessionKey, label })` returning role-correct tablist + tabpanel. | P1 | S |
+| Add `DataTable` primitive | `src/core/ui.js` | Hand-rolled `<table>` everywhere skips sorting, density, selection. | Sortable headers, optional checkboxes, density toggle, empty-state slot. | P1 | M |
+| Add `EmptyState` primitive | `src/core/ui.js` | "No data" branches are inconsistent and miss next actions. | `EmptyState({ icon, title, body, primary, permissionHint })`. | P1 | S |
+| Replace `window.prompt` / `confirm` | every screen using them | Browser-native dialogs hurt enterprise feel and skip audit context. | Add `prompt()` and `dangerAction()` modals; codemod call sites. | P1 | M |
+| Convert clickable `<div class="activity-row">` to `<button>` | ~30 sites | A11y / keyboard reachability. | Mechanical: change `el("div"...)` to `el("button"...)`; CSS already handles focus. | P1 | M |
+| Right context panel on-demand | `src/shell/contextPanel.js`, `src/shell/header.js`, `styles.css` | Permanent panel reduces focus and competes with rich detail. | Add toggle in header, default closed except on object pages, persist preference. | P1 | M |
+| Replace bottom dock with header notifications | `src/shell/dock.js`, `index.html`, `styles.css:.operations-dock` | Always-on horizontal strip is anti-calm. | Add a `NotificationBell` to the header that opens a popover with the same items. | P1 | M |
+| Add SVG icon set for the rail | `src/shell/rail.js`, new `src/core/icons.js` | Emoji icons render inconsistently and don't match enterprise aesthetics. | Bundle lucide-static SVGs and reference by name. | P1 | M |
+| Wire up `connector-lifecycle*` CSS or remove the strip | `src/screens/integrations.js`, `styles.css` | Markup references classes that don't exist, so the lifecycle visual is broken. | Either implement step UI or drop the block. | P1 | S |
+| `body.field-mode` styles | `styles.css` | Field mode toggle exists with no visual change. | Add larger touch targets, high-contrast incident actions, sticky bottom bar. | P1 | M |
+| `MaintenanceModeDrawer` | new component used by `opcua.js`, `mqtt.js`, `uns.js` | Privileged industrial writes still go through `prompt`. | Drawer with severity, reason, current value, signature preview, audit reference. | P1 | M |
+| `StateTransitionDrawer` | `src/screens/incident.js` | Incident severity/status changes use `prompt`. | Drawer that previews FSM-allowed transitions and signs the decision. | P1 | M |
+| `MarkupComposer` | `src/screens/drawingViewer.js` | Markup creation uses `prompt`; no link-to-issue affordance. | Composer modal with text, severity, asset link, and "create work item" toggle. | P1 | M |
+| Role-aware home | `src/screens/home.js` | Same KPI strip for every role. | Switch on `currentRole()` + groups; show approver queue / field tasks / ops health depending on role. | P1 | M |
+| Severity / data-quality tokens | `styles.css`, `src/core/ui.js` | Visual taxonomy is inconsistent across screens. | Add tokens + `SeverityBadge`, `DataQualityBadge`; migrate `assetDetail`, `incident`, `workBoard`. | P2 | M |
+| Hub default to in-tab navigation | `src/screens/hub.js` | New-tab default fragments work. | Plain click navigates; modifier keys still open in new tab. | P2 | S |
+| Forbidden page detail | `app.js:194-208`, `src/core/groups.js` | Generic message gives no remediation. | Show required group(s), current effective groups, "Request access" CTA. | P2 | S |
+| Portal switcher in rail logo | `src/shell/rail.js` | Workspace + portal switching is hidden today. | Replace logo with popover showing org / workspace / portal. | P2 | M |
+| Document viewer side pane consolidation | `src/screens/docViewer.js` | 8 side cards feel padded with low-priority content. | Merge into 4 collapsible sections (Properties, Discussion, Distribution, Assist). | P2 | M |
+| Drawing toolbar three-row layout | `src/screens/drawingViewer.js` | One ~30-button row is hard to scan. | Sheet tabs / mode selector / mode-bound tools; SVG icons; "issue from markup" affordance. | P2 | M |
+| Asset header lean-up | `src/screens/assetDetail.js` | Header has 5 KPIs + tabs + War Room button competing for attention. | Move KPIs into Summary tab; keep header to name + status + owner + primary action. | P2 | S |
+| Saved-view inbox | `src/screens/inbox.js` | Single mixed list. | Add Mentions / Approvals / Assigned / Incident actions / External requests views. | P2 | S |
+| AI retrieval-state row | `src/screens/ai.js` | No feedback when retrieval finds zero or is permission-filtered. | Add a row above the assistant bubble with `filtered: N · denied: M · indexed: K`. | P2 | S |
+| Mobile (≤700 px) shell | `styles.css` | Layout collapses but doesn't reorganize. | Off-canvas rail, bottom-sheet inbox, hidden context panel. | P2 | L |
+| Roving tab focus and `aria-controls` | new `Tabs` primitive + screens | Keyboard navigation between tabs is inconsistent. | Implement when consolidating tabs in P1. | P2 | S |
+| Drop / move "Reset" button from header | `src/shell/header.js:85-89` | Top-level destructive control with single OK/Cancel. | Move to admin > demo settings. | P2 | S |
+| Promote breadcrumbs to navigation | `src/shell/header.js:66-70` | Plain text segments. | Make org / workspace clickable; move portal chip into the breadcrumb. | P3 | S |
+| Static dashboards expansion | `src/screens/dashboards.js` | Currently 5 static KPI cards. | Bind to live event/metric snapshots; allow saved dashboards. | P3 | M |
+
+## P. Audit Methodology
+
+This refresh re-read every file listed in
+`.claude/skills/enterprise-ux-audit/SKILL.md`'s required-files section,
+ran the full server (`npm run build && npm start` against a tmp
+`FORGE_DATA_DIR`), signed in as `admin@forge.local`, and visited every
+route. Findings cite file paths and line ranges so that each task in
+the developer-ready list is grounded in code.
+
+Captured artifacts (under `/opt/cursor/artifacts/`):
+
+- `forge_hub.png`, `forge_home.png`, `forge_projects.png`,
+  `forge_work_board.png`, `forge_docs.png`, `forge_doc_viewer.png`,
+  `forge_drawings.png`, `forge_drawing_not_found.png`,
+  `forge_assets.png`, `forge_asset_restricted.png`,
+  `forge_incidents.png`, `forge_approvals.png`,
+  `forge_integrations_restricted.png`, `forge_mqtt_restricted.png`,
+  `forge_opcua_restricted.png`, `forge_uns.png`,
+  `forge_admin_restricted.png`, `forge_ai.png`, `forge_mobile_uns.png`.
+
+The "restricted" screenshots (Integrations / MQTT / OPC UA / Admin /
+specific assets) revealed an additional issue: the demo `admin@forge.local`
+user has the `Organization Owner` server role, which `groups.js`
+`isOrgOwner` keys off `state.ui.role` (the dropdown override). When the
+SPA boots before the server `/api/me` resolves, `state.ui.role` is
+seeded from the demo state, not from the server user, so portals appear
+restricted until the user manually switches the role. Treat that as an
+additional P1 fix:
+
+| Task | File / component | Why it matters | Suggested fix | Priority | Effort |
+|---|---|---|---|---|---|
+| Sync `state.ui.role` with server user on login | `app.js:214-228`, `src/core/groups.js` | After server login, the SPA still uses the demo dropdown role; gates can wrongly forbid the signed-in admin. | When `/api/me` resolves, set `state.ui.role` to the server user's role unless the user has manually overridden it. | P1 | S |
