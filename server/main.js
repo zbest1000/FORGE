@@ -32,6 +32,7 @@ import extrasRoutes from "./routes/extras.js";
 import aiRoutes from "./routes/ai.js";
 import automationRoutes from "./routes/automations.js";
 import cadRoutes from "./routes/cad.js";
+import { config } from "./config.js";
 
 import { startMqttBridge } from "./connectors/mqtt.js";
 import { startOpcuaBridge } from "./connectors/opcua.js";
@@ -42,14 +43,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const DIST = path.join(ROOT, "dist");
 const HAS_DIST = fs.existsSync(path.join(DIST, "index.html"));
-const ALLOW_SOURCE_CLIENT = process.env.FORGE_SERVE_SOURCE === "1";
+const ALLOW_SOURCE_CLIENT = config.serveSourceClient;
 if (!HAS_DIST && !ALLOW_SOURCE_CLIENT) {
   throw new Error("Startup requires a built SPA in ./dist. Run `npm run build`, or use `npm run dev` / FORGE_SERVE_SOURCE=1 for local source fallback.");
 }
 const CLIENT_ROOT = HAS_DIST ? DIST : ROOT;
-const PORT = Number(process.env.PORT || 3000);
-const HOST = process.env.HOST || "0.0.0.0";
-const JWT_SECRET = process.env.FORGE_JWT_SECRET || "forge-dev-jwt-secret-please-rotate";
+const PORT = config.port;
+const HOST = config.host;
+const JWT_SECRET = config.jwtSecret;
 
 const app = Fastify({
   logger: {
@@ -57,14 +58,14 @@ const app = Fastify({
       target: "pino/file",
       options: { destination: 1 },
     },
-    level: process.env.LOG_LEVEL || "info",
+    level: config.logLevel,
   },
   bodyLimit: 10 * 1024 * 1024,
   trustProxy: true,
 });
 
 await app.register(cors, {
-  origin: process.env.FORGE_CORS_ORIGIN ? process.env.FORGE_CORS_ORIGIN.split(",") : true,
+  origin: config.corsOrigin,
   credentials: true,
 });
 // Secure HTTP headers. Permissive CSP for the SPA (needs the ESM CDN for the
@@ -88,8 +89,8 @@ await app.register(helmet, {
 });
 await app.register(rateLimit, {
   global: true,
-  max: Number(process.env.FORGE_RATELIMIT_MAX || 600),
-  timeWindow: process.env.FORGE_RATELIMIT_WINDOW || "1 minute",
+  max: config.rateLimit.max,
+  timeWindow: config.rateLimit.timeWindow,
   // Don't rate-limit static assets; they're small + cached.
   skipOnError: true,
   allowList: (req) => {
