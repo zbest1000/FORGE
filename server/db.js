@@ -19,7 +19,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 6;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -555,6 +555,156 @@ function migrate() {
         );
       `);
       setVersion(4);
+    }
+
+    if (getVersion() < 5) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS outbox_events (
+          id TEXT PRIMARY KEY,
+          topic TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          aggregate_type TEXT,
+          aggregate_id TEXT,
+          payload TEXT NOT NULL DEFAULT '{}',
+          trace_id TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          next_attempt_at TEXT,
+          created_at TEXT NOT NULL,
+          published_at TEXT,
+          last_error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(status, next_attempt_at, created_at);
+
+        CREATE TABLE IF NOT EXISTS inbox_events (
+          id TEXT PRIMARY KEY,
+          source TEXT NOT NULL,
+          dedupe_key TEXT,
+          received_at TEXT NOT NULL,
+          processed_at TEXT,
+          status TEXT NOT NULL DEFAULT 'received',
+          UNIQUE(source, dedupe_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_inbox_status ON inbox_events(status, received_at);
+      `);
+      setVersion(5);
+    }
+
+    if (getVersion() < 6) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS processing_activities (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          controller TEXT,
+          processor TEXT,
+          purpose TEXT NOT NULL,
+          lawful_basis TEXT NOT NULL,
+          data_categories TEXT NOT NULL DEFAULT '[]',
+          data_subjects TEXT NOT NULL DEFAULT '[]',
+          recipients TEXT NOT NULL DEFAULT '[]',
+          retention_policy TEXT,
+          residency_region TEXT,
+          cross_border_transfers TEXT NOT NULL DEFAULT '[]',
+          safeguards TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS data_subject_requests (
+          id TEXT PRIMARY KEY,
+          subject_user_id TEXT,
+          subject_email TEXT,
+          request_type TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'open',
+          due_at TEXT,
+          notes TEXT,
+          export_json TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          completed_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS legal_holds (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          scope_kind TEXT NOT NULL,
+          scope_id TEXT,
+          reason TEXT NOT NULL,
+          custodian_user_ids TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL DEFAULT 'active',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          released_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS compliance_evidence (
+          id TEXT PRIMARY KEY,
+          framework TEXT NOT NULL,
+          control_id TEXT,
+          title TEXT NOT NULL,
+          description TEXT,
+          object_kind TEXT,
+          object_id TEXT,
+          evidence_uri TEXT,
+          collected_by TEXT,
+          collected_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS subprocessors (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          service TEXT,
+          region TEXT,
+          data_categories TEXT NOT NULL DEFAULT '[]',
+          transfer_mechanism TEXT,
+          risk_rating TEXT,
+          dpa_uri TEXT,
+          last_review_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS risk_register (
+          id TEXT PRIMARY KEY,
+          framework TEXT,
+          title TEXT NOT NULL,
+          category TEXT,
+          likelihood TEXT,
+          impact TEXT,
+          treatment TEXT,
+          owner_id TEXT,
+          status TEXT NOT NULL DEFAULT 'open',
+          due_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ai_system_inventory (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          provider TEXT,
+          model TEXT,
+          purpose TEXT,
+          risk_class TEXT NOT NULL DEFAULT 'limited',
+          data_categories TEXT NOT NULL DEFAULT '[]',
+          human_oversight TEXT,
+          evaluation_notes TEXT,
+          owner_id TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS regulatory_incidents (
+          id TEXT PRIMARY KEY,
+          incident_id TEXT,
+          regime TEXT NOT NULL,
+          severity TEXT,
+          report_deadline_at TEXT,
+          status TEXT NOT NULL DEFAULT 'draft',
+          report_json TEXT NOT NULL DEFAULT '{}',
+          submitted_at TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      setVersion(6);
     }
   })();
 }
