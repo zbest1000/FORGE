@@ -199,19 +199,30 @@ function modbusTab() {
         el("span", { class: "tiny muted" }, [device.lastPollAt ? new Date(device.lastPollAt).toLocaleString() : "Not polled"]),
       ])
     ))),
-    card("Register map", el("div", { class: "stack" }, (state.data.modbusRegisters || []).map(reg =>
-      el("div", { class: "activity-row" }, [
-        badge(`FC${reg.functionCode}`, "info"),
-        el("div", { class: "stack", style: { gap: "2px", flex: 1 } }, [
-          el("span", { class: "small" }, [reg.name]),
-          el("span", { class: "tiny muted mono" }, [`${reg.address} · ${reg.dataType} · scale ${reg.scale}`]),
-          reg.assetId ? el("button", { class: "btn ghost sm", onClick: () => navigate(`/asset/${reg.assetId}`) }, [assetName(reg.assetId)]) : null,
-        ]),
-        el("span", { class: "strong" }, [reg.lastValue == null ? "—" : `${reg.lastValue} ${reg.unit || ""}`.trim()]),
-        el("button", { class: "btn sm", onClick: () => simulateModbusRead(reg) }, ["Sim read"]),
-        el("button", { class: "btn sm primary", disabled: !can("integration.write"), onClick: () => simulateModbusWrite(reg) }, ["Write"]),
-      ])
-    ))),
+    card("Register map", el("div", { class: "stack" }, (state.data.modbusRegisters || []).map(modbusRegisterCard))),
+  ]);
+}
+
+function modbusRegisterCard(reg) {
+  const writeValue = input({
+    type: "number",
+    step: "any",
+    value: reg.lastValue == null ? "" : String(reg.lastValue),
+    placeholder: reg.unit ? `value (${reg.unit})` : "value",
+    style: { width: "110px" },
+    "aria-label": `Write value for ${reg.name}`,
+  });
+  return el("div", { class: "activity-row" }, [
+    badge(`FC${reg.functionCode}`, "info"),
+    el("div", { class: "stack", style: { gap: "2px", flex: 1 } }, [
+      el("span", { class: "small" }, [reg.name]),
+      el("span", { class: "tiny muted mono" }, [`${reg.address} · ${reg.dataType} · scale ${reg.scale}`]),
+      reg.assetId ? el("button", { class: "btn ghost sm", onClick: () => navigate(`/asset/${reg.assetId}`) }, [assetName(reg.assetId)]) : null,
+    ]),
+    el("span", { class: "strong" }, [reg.lastValue == null ? "—" : `${reg.lastValue} ${reg.unit || ""}`.trim()]),
+    el("button", { class: "btn sm", onClick: () => simulateModbusRead(reg) }, ["Sim read"]),
+    writeValue,
+    el("button", { class: "btn sm primary", disabled: !can("integration.write"), onClick: () => simulateModbusWrite(reg, writeValue.value) }, ["Write"]),
   ]);
 }
 
@@ -252,16 +263,9 @@ function simulateModbusRead(reg) {
   audit("modbus.register.read", reg.id, { rawValue: raw, value });
 }
 
-async function simulateModbusWrite(reg) {
-  const raw = await prompt({
-    title: `Write Modbus register ${reg.address}`,
-    label: `Value${reg.unit ? ` (${reg.unit})` : ""}`,
-    defaultValue: reg.lastValue == null ? "1" : String(reg.lastValue),
-    helpText: "Local demo writes are audited and update the mapped historian point. Server mode uses the Modbus write API.",
-    validate: v => Number.isNaN(Number(v)) ? "Must be a number" : null,
-  });
-  if (raw == null) return;
+async function simulateModbusWrite(reg, raw) {
   const value = Number(raw);
+  if (!Number.isFinite(value)) { toast("Enter a numeric write value", "warn"); return; }
   update(s => {
     const row = s.data.modbusRegisters.find(r => r.id === reg.id);
     if (!row) return;

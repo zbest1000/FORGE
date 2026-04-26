@@ -53,7 +53,7 @@ export function renderOPCUA() {
       ])),
     ]),
     card("Ignition tag provider", ignitionBrowser(ignitionTags), {
-      subtitle: "Browse Ignition-style tag paths and bind them to OPC UA nodes/assets.",
+      subtitle: "Browse leaf Ignition tag paths and bind them to FORGE assets through OPC UA nodes.",
     }),
   ]);
 }
@@ -118,14 +118,15 @@ function ignitionPathFromNode(nodeId) {
 
 function ignitionBrowser(tags) {
   if (!tags.length) return el("div", { class: "muted tiny" }, ["No Ignition tags discovered. Add OPC UA nodes with [provider] paths or configure the Ignition gateway tag export."]);
-  return el("div", { class: "stack" }, tags.map(tag => el("div", { class: "activity-row" }, [
+  const leafTags = tags.filter(tag => !tags.some(other => other !== tag && other.ignitionPath.startsWith(tag.ignitionPath + "/")));
+  return el("div", { class: "stack" }, leafTags.map(tag => el("div", { class: "activity-row" }, [
     badge("Ignition", "purple"),
     el("div", { class: "stack", style: { gap: "2px", flex: 1 } }, [
       el("span", { class: "small mono" }, [tag.ignitionPath]),
       el("span", { class: "tiny muted" }, [`OPC UA ${tag.id} · ${tag.dt} · ${tag.unit || "unitless"}`]),
     ]),
     tag.assetId ? badge(`→ ${tag.assetId}`, "accent") : badge("unmapped", "warn"),
-    el("button", { class: "btn sm", disabled: !can("integration.write"), onClick: () => bindIgnitionTag(tag) }, ["Bind tag"]),
+    el("button", { class: "btn sm", disabled: !can("integration.write"), onClick: () => bindIgnitionTag(tag) }, ["Bind to asset"]),
   ])));
 }
 
