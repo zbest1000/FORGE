@@ -19,7 +19,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -839,6 +839,98 @@ function migrate() {
         CREATE INDEX IF NOT EXISTS idx_external_links_forge ON external_object_links(forge_kind, forge_id);
       `);
       setVersion(7);
+    }
+
+    if (getVersion() < 8) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS historian_points (
+          id TEXT PRIMARY KEY,
+          asset_id TEXT NOT NULL,
+          source_id TEXT,
+          tag TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL,
+          unit TEXT,
+          data_type TEXT NOT NULL DEFAULT 'number',
+          historian TEXT NOT NULL DEFAULT 'sqlite',
+          retention_policy_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_historian_points_asset ON historian_points(asset_id);
+
+        CREATE TABLE IF NOT EXISTS historian_samples (
+          id TEXT PRIMARY KEY,
+          point_id TEXT NOT NULL,
+          ts TEXT NOT NULL,
+          value REAL NOT NULL,
+          quality TEXT NOT NULL DEFAULT 'Good',
+          source_type TEXT NOT NULL DEFAULT 'api',
+          raw_payload TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS idx_historian_samples_point_ts ON historian_samples(point_id, ts);
+
+        CREATE TABLE IF NOT EXISTS recipes (
+          id TEXT PRIMARY KEY,
+          asset_id TEXT,
+          name TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'draft',
+          current_version_id TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_recipes_asset ON recipes(asset_id, status);
+
+        CREATE TABLE IF NOT EXISTS recipe_versions (
+          id TEXT PRIMARY KEY,
+          recipe_id TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          state TEXT NOT NULL DEFAULT 'draft',
+          parameters TEXT NOT NULL DEFAULT '{}',
+          notes TEXT,
+          approved_by TEXT,
+          approved_at TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          UNIQUE(recipe_id, version)
+        );
+
+        CREATE TABLE IF NOT EXISTS modbus_devices (
+          id TEXT PRIMARY KEY,
+          integration_id TEXT,
+          name TEXT NOT NULL,
+          host TEXT NOT NULL,
+          port INTEGER NOT NULL DEFAULT 502,
+          unit_id INTEGER NOT NULL DEFAULT 1,
+          status TEXT NOT NULL DEFAULT 'configured',
+          last_poll_at TEXT,
+          config TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS modbus_registers (
+          id TEXT PRIMARY KEY,
+          device_id TEXT NOT NULL,
+          asset_id TEXT,
+          point_id TEXT,
+          name TEXT NOT NULL,
+          address INTEGER NOT NULL,
+          function_code INTEGER NOT NULL DEFAULT 3,
+          data_type TEXT NOT NULL DEFAULT 'float32',
+          scale REAL NOT NULL DEFAULT 1,
+          unit TEXT,
+          polling_ms INTEGER NOT NULL DEFAULT 1000,
+          last_value REAL,
+          last_quality TEXT,
+          last_seen TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_modbus_registers_device ON modbus_registers(device_id);
+        CREATE INDEX IF NOT EXISTS idx_modbus_registers_asset ON modbus_registers(asset_id);
+      `);
+      setVersion(8);
     }
   })();
 }

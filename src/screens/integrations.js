@@ -38,6 +38,7 @@ export function renderIntegrations() {
           el("button", { class: "btn sm", disabled: !can("integration.write"), onClick: () => rotateCred(i) }, ["Rotate cred"]),
           i.kind === "mqtt"  ? el("button", { class: "btn sm primary", onClick: () => navigate("/integrations/mqtt") }, ["MQTT browser →"]) : null,
           i.kind === "opcua" ? el("button", { class: "btn sm primary", onClick: () => navigate("/integrations/opcua") }, ["OPC UA browser →"]) : null,
+          i.kind === "modbus" ? el("button", { class: "btn sm primary", onClick: () => navigate("/operations") }, ["Historian & Modbus →"]) : null,
           i.kind === "erp"   ? el("button", { class: "btn sm primary", onClick: () => navigate("/integrations/erp") }, ["ERP mapping →"]) : null,
         ]),
       ]));

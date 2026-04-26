@@ -9,6 +9,7 @@ export const SCREEN_ROUTES = {
   "Docs": "/docs",
   "Drawings": "/drawings",
   "Assets": "/assets",
+  "Operations data": "/operations",
   "Dashboards": "/dashboards",
   "Integrations": "/integrations",
   "AI": "/ai",

@@ -268,6 +268,7 @@ export function buildSeed() {
   const integrations = [
     { id: "INT-MQTT", name: "MQTT Broker (EMQX-compatible)", kind: "mqtt",  status: "connected",  lastEvent: iso(-2), eventsPerMin: 148 },
     { id: "INT-OPCUA",name: "OPC UA — Site 1",               kind: "opcua", status: "degraded",   lastEvent: iso(-15),eventsPerMin: 12  },
+    { id: "INT-MODBUS", name: "Modbus TCP — Line A PLC",      kind: "modbus",status: "connected",  lastEvent: iso(-1), eventsPerMin: 60  },
     { id: "INT-ERP",  name: "ERP — SAP S/4",                 kind: "erp",   status: "connected",  lastEvent: iso(-30),eventsPerMin: 2   },
     { id: "INT-WEBH", name: "Webhook — Vendor A",            kind: "rest",  status: "failed",     lastEvent: iso(-180),eventsPerMin: 0  },
   ];
@@ -276,8 +277,50 @@ export function buildSeed() {
     { id: "DS-1", integrationId: "INT-MQTT", endpoint: "line/a1/#", assetId: "AS-1", projectId: "PRJ-1", kind: "topic", status: "live", quality: "Good", lastValue: "112.3 degC", lastSeen: iso(-2) },
     { id: "DS-2", integrationId: "INT-MQTT", endpoint: "line/a1/feeder/current", assetId: "AS-2", projectId: "PRJ-1", kind: "topic", status: "live", quality: "Good", lastValue: "112% FLA", lastSeen: iso(-5) },
     { id: "DS-3", integrationId: "INT-OPCUA", endpoint: "ns=2;s=HX01.Temp", assetId: "AS-1", projectId: "PRJ-1", kind: "node", status: "live", quality: "Uncertain", lastValue: "111.8 degC", lastSeen: iso(-4) },
+    { id: "DS-6", integrationId: "INT-MODBUS", endpoint: "10.20.4.12:502/unit/1/hr/40001", assetId: "AS-2", projectId: "PRJ-1", kind: "modbus_register", status: "live", quality: "Good", lastValue: "46.2 A", lastSeen: iso(-1) },
     { id: "DS-4", integrationId: "INT-ERP", endpoint: "PurchaseOrder", assetId: null, projectId: "PRJ-2", kind: "entity", status: "connected", quality: "Good", lastValue: "3 open POs", lastSeen: iso(-30)},
     { id: "DS-5", integrationId: "INT-OPCUA", endpoint: "ns=2;s=B201.Steam.P", assetId: "AS-4", projectId: "PRJ-3", kind: "node", status: "stale", quality: "GoodNoData", lastValue: "10.8 bar", lastSeen: iso(-180) },
+  ];
+
+  const historianPoints = [
+    { id: "HP-HX01-TEMP", assetId: "AS-1", sourceId: "DS-3", tag: "NP.LINEA.CELL3.HX01.TEMP", name: "HX-01 outlet temperature", unit: "degC", dataType: "number", historian: "sqlite" },
+    { id: "HP-FDR-A1-CURRENT", assetId: "AS-2", sourceId: "DS-6", tag: "NP.LINEA.CELL1.FEEDER_A1.CURRENT", name: "Feeder A1 phase current", unit: "A", dataType: "number", historian: "sqlite" },
+    { id: "HP-B201-STEAM-P", assetId: "AS-4", sourceId: "DS-5", tag: "S1.UTIL.B201.STEAM_PRESSURE", name: "Boiler B-201 steam pressure", unit: "bar", dataType: "number", historian: "sqlite" },
+  ];
+
+  const historianSamples = historianPoints.flatMap((point, pointIndex) =>
+    Array.from({ length: 12 }, (_, i) => {
+      const baseline = point.unit === "degC" ? 106 : point.unit === "A" ? 42 : 10.6;
+      return {
+        id: `HS-SEED-${pointIndex + 1}-${i + 1}`,
+        pointId: point.id,
+        ts: iso(-60 + i * 5),
+        value: Number((baseline + Math.sin(i / 2) * (point.unit === "A" ? 5 : 1.4) + pointIndex).toFixed(2)),
+        quality: i === 2 && point.unit === "bar" ? "Uncertain" : "Good",
+        sourceType: point.sourceId === "DS-6" ? "modbus_tcp" : point.sourceId === "DS-3" ? "opcua" : "mqtt",
+        rawPayload: { seed: true },
+      };
+    })
+  );
+
+  const recipes = [
+    { id: "RCP-LINEA-RAMP", assetId: "AS-2", name: "Line A feeder ramp-up", status: "active", currentVersionId: "RCV-LINEA-RAMP-2", createdBy: "U-1", createdAt: iso(-60 * 24 * 20), updatedAt: iso(-60 * 24 * 2) },
+    { id: "RCP-HX01-CIP", assetId: "AS-1", name: "HX-01 clean-in-place", status: "draft", currentVersionId: "RCV-HX01-CIP-1", createdBy: "U-3", createdAt: iso(-60 * 24 * 7), updatedAt: iso(-60 * 24 * 7) },
+  ];
+
+  const recipeVersions = [
+    { id: "RCV-LINEA-RAMP-1", recipeId: "RCP-LINEA-RAMP", version: 1, state: "superseded", parameters: { rampRateHzPerSec: 1.2, currentLimitA: 48, holdSeconds: 30 }, notes: "Initial FAT recipe.", approvedBy: "U-2", approvedAt: iso(-60 * 24 * 12), createdBy: "U-1", createdAt: iso(-60 * 24 * 20) },
+    { id: "RCV-LINEA-RAMP-2", recipeId: "RCP-LINEA-RAMP", version: 2, state: "active", parameters: { rampRateHzPerSec: 0.9, currentLimitA: 45, holdSeconds: 45 }, notes: "Reduced ramp after feeder current trend.", approvedBy: "U-2", approvedAt: iso(-60 * 24 * 2), createdBy: "U-1", createdAt: iso(-60 * 24 * 3) },
+    { id: "RCV-HX01-CIP-1", recipeId: "RCP-HX01-CIP", version: 1, state: "draft", parameters: { rinseMinutes: 12, causticPercent: 2.1, maxTempDegC: 78 }, notes: "Pending reliability review.", approvedBy: null, approvedAt: null, createdBy: "U-3", createdAt: iso(-60 * 24 * 7) },
+  ];
+
+  const modbusDevices = [
+    { id: "MBD-LINEA-PLC1", integrationId: "INT-MODBUS", name: "PLC-A1 Modbus gateway", host: "10.20.4.12", port: 502, unitId: 1, status: "connected", lastPollAt: iso(-1), config: { timeoutMs: 1500, byteOrder: "ABCD" } },
+  ];
+
+  const modbusRegisters = [
+    { id: "MBR-FDR-A1-CURRENT", deviceId: "MBD-LINEA-PLC1", assetId: "AS-2", pointId: "HP-FDR-A1-CURRENT", name: "Feeder A1 current", address: 40001, functionCode: 3, dataType: "float32", scale: 0.1, unit: "A", pollingMs: 1000, lastValue: 46.2, lastQuality: "Good", lastSeen: iso(-1) },
+    { id: "MBR-FDR-A1-RUN", deviceId: "MBD-LINEA-PLC1", assetId: "AS-2", pointId: null, name: "Feeder A1 running", address: 1, functionCode: 1, dataType: "bool", scale: 1, unit: null, pollingMs: 1000, lastValue: 1, lastQuality: "Good", lastSeen: iso(-1) },
   ];
 
   const dashboards = [
@@ -328,6 +371,12 @@ export function buildSeed() {
     forms,
     integrations,
     dataSources,
+    historianPoints,
+    historianSamples,
+    recipes,
+    recipeVersions,
+    modbusDevices,
+    modbusRegisters,
     dashboards,
     aiAgents,
     auditEvents,

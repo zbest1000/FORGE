@@ -39,6 +39,9 @@ db.prepare("INSERT INTO work_items (id, project_id, type, title, assignee_id, st
 db.prepare("INSERT INTO work_items (id, project_id, type, title, assignee_id, status, severity, blockers, labels, acl, created_at, updated_at) VALUES ('WI-SECRET','PRJ-1','Task','Secret','U-ADMIN','Open','high','[]','[]',?, ?, ?)")
   .run(JSON.stringify({ roles: ["Reviewer/Approver"], users: [], abac: {} }), now, now);
 db.prepare("INSERT INTO channels (id, team_space_id, name, kind, acl, created_at, updated_at) VALUES ('CH-1','TS-1','general','team','{}',?,?)").run(now, now);
+db.prepare("INSERT INTO assets (id, org_id, workspace_id, name, type, hierarchy, status, mqtt_topics, opcua_nodes, doc_ids, acl, labels, created_at, updated_at) VALUES ('AS-1','ORG-1','WS-1','Feeder A1','motor','North Plant > Line A > Feeder A1','normal','[]','[]','[]','{}','[]',?,?)").run(now, now);
+db.prepare("INSERT INTO integrations (id, name, kind, status, last_event, events_per_min, config) VALUES ('INT-MODBUS','Modbus TCP','modbus','connected',?,0,'{}')").run(now);
+db.prepare("INSERT INTO data_sources (id, integration_id, endpoint, asset_id, kind, unit, sampling, qos, retain) VALUES ('DS-1','INT-MODBUS','10.0.0.5:502/unit/1/hr/40001','AS-1','modbus_register','A','1s',1,0)").run();
 
 // Boot fastify in-process.
 const { default: Fastify } = await import("fastify");
@@ -64,6 +67,7 @@ app.addHook("onRequest", async (req) => {
 
 await app.register((await import("../server/routes/auth.js")).default);
 await app.register((await import("../server/routes/core.js")).default);
+await app.register((await import("../server/routes/operations.js")).default);
 await app.register((await import("../server/routes/files.js")).default);
 await app.register((await import("../server/routes/tokens.js")).default);
 
@@ -184,4 +188,93 @@ test("API token issuance, use, and revoke", async () => {
 
   const me2 = await req("/api/me", { headers: { authorization: `Bearer ${plain}` } });
   assert.equal(me2.status, 401);
+});
+
+test("historian points store samples and return trend summaries", async () => {
+  const point = await req("/api/historian/points", {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ assetId: "AS-1", sourceId: "DS-1", tag: "NP.LINEA.FEEDER_A1.CURRENT", name: "Feeder A1 current", unit: "A" }),
+  });
+  assert.equal(point.status, 200);
+  assert.equal(point.body.asset_id, "AS-1");
+
+  const first = await req("/api/historian/samples", {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ pointId: point.body.id, ts: "2026-04-26T00:00:00.000Z", value: 40.5, quality: "Good" }),
+  });
+  assert.equal(first.status, 200);
+  const second = await req("/api/historian/samples", {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ tag: "NP.LINEA.FEEDER_A1.CURRENT", ts: "2026-04-26T00:05:00.000Z", value: 43.5, quality: "Good" }),
+  });
+  assert.equal(second.status, 200);
+
+  const trend = await req(`/api/historian/trends?assetId=AS-1&since=2026-04-25T00:00:00.000Z`, { headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(trend.status, 200);
+  assert.equal(trend.body.series[0].summary.count, 2);
+  assert.equal(trend.body.series[0].summary.avg, 42);
+});
+
+test("recipes create versions and activate an approved version", async () => {
+  const recipe = await req("/api/recipes", {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ assetId: "AS-1", name: "Feeder startup", parameters: { rampRateHzPerSec: 1.1 }, notes: "initial" }),
+  });
+  assert.equal(recipe.status, 200);
+  assert.equal(recipe.body.versions.length, 1);
+
+  const versioned = await req(`/api/recipes/${recipe.body.id}/versions`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ parameters: { rampRateHzPerSec: 0.9 }, notes: "lower ramp from trend" }),
+  });
+  assert.equal(versioned.status, 200);
+  assert.equal(versioned.body.versions[0].version, 2);
+
+  const activated = await req(`/api/recipes/${recipe.body.id}/activate`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ versionId: versioned.body.current_version_id }),
+  });
+  assert.equal(activated.status, 200);
+  assert.equal(activated.body.status, "active");
+  assert.equal(activated.body.versions.find(v => v.id === activated.body.current_version_id).state, "active");
+});
+
+test("Modbus register reads update register state and append historian samples", async () => {
+  const point = await req("/api/historian/points", {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ assetId: "AS-1", tag: "NP.LINEA.FEEDER_A1.MODBUS_CURRENT", name: "Modbus current", unit: "A" }),
+  });
+  assert.equal(point.status, 200);
+  const device = await req("/api/modbus/devices", {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ name: "PLC-A1", host: "10.0.0.5", unitId: 1 }),
+  });
+  assert.equal(device.status, 200);
+  const register = await req("/api/modbus/registers", {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ deviceId: device.body.id, assetId: "AS-1", pointId: point.body.id, name: "Current", address: 40001, scale: 0.1, unit: "A" }),
+  });
+  assert.equal(register.status, 200);
+
+  const read = await req(`/api/modbus/registers/${register.body.id}/read`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ rawValue: 462, ts: "2026-04-26T00:10:00.000Z" }),
+  });
+  assert.equal(read.status, 200);
+  assert.equal(read.body.last_value, 46.2);
+
+  const samples = await req(`/api/historian/samples?pointId=${point.body.id}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(samples.status, 200);
+  assert.equal(samples.body.samples.length, 1);
+  assert.equal(samples.body.samples[0].source_type, "modbus_tcp");
 });

@@ -33,6 +33,7 @@ import { renderProjectsIndex, renderWorkBoard } from "./src/screens/workBoard.js
 import { renderDocsIndex, renderDocViewer } from "./src/screens/docViewer.js";
 import { renderApprovals } from "./src/screens/approvals.js";
 import { renderIntegrations } from "./src/screens/integrations.js";
+import { renderOperationsData } from "./src/screens/operations.js";
 import { renderAdmin } from "./src/screens/admin.js";
 
 // Heavy / specialist screens are lazy-loaded the first time the user
@@ -107,6 +108,7 @@ function setupRoutes() {
     lazy(() => import("./src/screens/incident.js"), "renderIncident", "Incident"));
 
   defineRoute("/approvals", renderApprovals);
+  defineRoute("/operations", renderOperationsData);
   defineRoute("/ai",
     lazy(() => import("./src/screens/ai.js"), "renderAI", "AI Workspace"));
 
