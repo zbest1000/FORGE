@@ -64,14 +64,15 @@ export function historianChart(samples, { title = "", unit = "", type = "line", 
           name: title || "value",
           type: seriesType,
           data,
-          symbolSize: type === "scatter" ? 8 : 4,
+          symbol: type === "scatter" ? "circle" : "none",
+          symbolSize: type === "scatter" ? 8 : 0,
           showSymbol: type === "scatter",
           smooth: type === "line" || type === "area",
           lineStyle: type === "scatter" ? { width: 0 } : undefined,
           areaStyle: type === "area" ? { opacity: 0.18 } : undefined,
           barMaxWidth: 18,
         }],
-      });
+      }, true);
       setTimeout(() => chart.resize(), 0);
     } catch { /* keep SVG fallback */ }
   })();
