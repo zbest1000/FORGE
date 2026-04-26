@@ -19,7 +19,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -592,6 +592,57 @@ function migrate() {
 
     if (getVersion() < 6) {
       db.exec(`
+        CREATE TABLE IF NOT EXISTS enterprise_systems (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          vendor TEXT,
+          base_url TEXT,
+          auth_type TEXT,
+          secret_ref TEXT,
+          status TEXT NOT NULL DEFAULT 'configured',
+          capabilities TEXT NOT NULL DEFAULT '[]',
+          owner_id TEXT,
+          config TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS connector_runs (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          status TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          stats TEXT NOT NULL DEFAULT '{}',
+          error TEXT,
+          requested_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_connector_runs_system ON connector_runs(system_id, started_at);
+
+        CREATE TABLE IF NOT EXISTS connector_mappings (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL,
+          source_kind TEXT NOT NULL,
+          target_kind TEXT NOT NULL,
+          transform TEXT NOT NULL DEFAULT '{}',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS external_object_links (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL,
+          external_kind TEXT NOT NULL,
+          external_id TEXT NOT NULL,
+          forge_kind TEXT NOT NULL,
+          forge_id TEXT NOT NULL,
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          UNIQUE(system_id, external_kind, external_id, forge_kind, forge_id)
+        );
+
         CREATE TABLE IF NOT EXISTS processing_activities (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
@@ -705,6 +756,89 @@ function migrate() {
         );
       `);
       setVersion(6);
+    }
+
+    if (getVersion() < 7) {
+      const addColumn = (table, columnSql) => {
+        try { db.prepare(`ALTER TABLE ${table} ADD COLUMN ${columnSql}`).run(); }
+        catch (err) {
+          if (!/duplicate column name/i.test(String(err?.message || err))) throw err;
+        }
+      };
+      addColumn("enterprise_systems", "category TEXT");
+      addColumn("enterprise_systems", "data_residency TEXT");
+      addColumn("enterprise_systems", "created_by TEXT");
+      addColumn("connector_runs", "run_type TEXT");
+      addColumn("connector_runs", "trace_id TEXT");
+      addColumn("connector_mappings", "source_object TEXT");
+      addColumn("connector_mappings", "created_by TEXT");
+      addColumn("external_object_links", "direction TEXT NOT NULL DEFAULT 'bidirectional'");
+      addColumn("external_object_links", "created_by TEXT");
+      addColumn("external_object_links", "updated_at TEXT");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS enterprise_systems (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          category TEXT NOT NULL,
+          vendor TEXT,
+          base_url TEXT,
+          auth_type TEXT NOT NULL DEFAULT 'none',
+          secret_ref TEXT,
+          capabilities TEXT NOT NULL DEFAULT '[]',
+          data_residency TEXT,
+          status TEXT NOT NULL DEFAULT 'configured',
+          owner_id TEXT,
+          config TEXT NOT NULL DEFAULT '{}',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_enterprise_systems_category ON enterprise_systems(category, status);
+
+        CREATE TABLE IF NOT EXISTS connector_runs (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL,
+          run_type TEXT NOT NULL,
+          status TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          requested_by TEXT,
+          trace_id TEXT,
+          stats TEXT NOT NULL DEFAULT '{}',
+          error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_connector_runs_system ON connector_runs(system_id, started_at);
+
+        CREATE TABLE IF NOT EXISTS connector_mappings (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL,
+          source_object TEXT NOT NULL,
+          target_kind TEXT NOT NULL,
+          transform TEXT NOT NULL DEFAULT '{}',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_connector_mappings_system ON connector_mappings(system_id, enabled);
+
+        CREATE TABLE IF NOT EXISTS external_object_links (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL,
+          external_kind TEXT NOT NULL,
+          external_id TEXT NOT NULL,
+          forge_kind TEXT NOT NULL,
+          forge_id TEXT NOT NULL,
+          direction TEXT NOT NULL DEFAULT 'bidirectional',
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(system_id, external_kind, external_id, forge_kind, forge_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_external_links_forge ON external_object_links(forge_kind, forge_id);
+      `);
+      setVersion(7);
     }
   })();
 }

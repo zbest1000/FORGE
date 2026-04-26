@@ -33,6 +33,7 @@ import aiRoutes from "./routes/ai.js";
 import automationRoutes from "./routes/automations.js";
 import cadRoutes from "./routes/cad.js";
 import complianceRoutes from "./routes/compliance.js";
+import enterpriseSystemRoutes from "./routes/enterprise-systems.js";
 import { config } from "./config.js";
 
 import { startMqttBridge } from "./connectors/mqtt.js";
@@ -167,6 +168,7 @@ await app.register(aiRoutes);
 await app.register(automationRoutes);
 await app.register(cadRoutes);
 await app.register(complianceRoutes);
+await app.register(enterpriseSystemRoutes);
 attachSSE(app);
 registerMetrics(app);
 
