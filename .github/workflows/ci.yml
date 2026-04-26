@@ -58,17 +58,31 @@ jobs:
           done
 
   # ---------------------------------------------------------------------------
-  # 2. Build + tests across supported Node versions.
+  # 2. Build + tests across supported Node versions and operating systems.
+  #    FORGE ships as a self-hosted server on Linux, macOS, and Windows in
+  #    addition to the container/cloud target, so we exercise all three.
   # ---------------------------------------------------------------------------
   test:
-    name: Test (Node ${{ matrix.node }})
-    runs-on: ubuntu-latest
+    name: Test (Node ${{ matrix.node }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     needs: lint
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         node: ["20.x", "22.x"]
+        # Trim the matrix: we only need Node 22 cross-platform for the
+        # forward-compat signal; Node 20 (LTS) is exercised on linux only
+        # for everyday signal. Adjust as the support window changes.
+        exclude:
+          - os: windows-latest
+            node: "20.x"
+          - os: macos-latest
+            node: "20.x"
+    env:
+      FORGE_TENANT_KEY: "ci-tenant-key-0123456789abcdef0123456789abcdef"
+      FORGE_JWT_SECRET: "ci-jwt-secret-0123456789abcdef0123456789abcdef"
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -82,14 +96,15 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        # Keep optional deps; @rolldown/binding-linux-x64-gnu is required by Vite 8.
+        # Keep optional deps; @rolldown/binding-* is required by Vite 8.
         run: npm ci --no-audit --no-fund
 
       - name: Generate CycloneDX SBOM
+        if: matrix.os == 'ubuntu-latest' && matrix.node == env.NODE_VERSION_DEFAULT
         run: npm run sbom
 
       - name: Upload SBOM
-        if: matrix.node == env.NODE_VERSION_DEFAULT
+        if: matrix.os == 'ubuntu-latest' && matrix.node == env.NODE_VERSION_DEFAULT
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sbom-cyclonedx
@@ -101,7 +116,7 @@ jobs:
         run: npm run build
 
       - name: Upload SPA build
-        if: matrix.node == env.NODE_VERSION_DEFAULT
+        if: matrix.os == 'ubuntu-latest' && matrix.node == env.NODE_VERSION_DEFAULT
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: spa-dist
@@ -113,16 +128,16 @@ jobs:
         run: node server/db.js --migrate-only
 
       - name: Run unit + integration tests
-        env:
-          FORGE_TENANT_KEY: "ci-tenant-key-0123456789abcdef0123456789abcdef"
-          FORGE_JWT_SECRET: "ci-jwt-secret-0123456789abcdef0123456789abcdef"
         run: npm test
 
       - name: Smoke built server
-        env:
-          FORGE_TENANT_KEY: "ci-tenant-key-0123456789abcdef0123456789abcdef"
-          FORGE_JWT_SECRET: "ci-jwt-secret-0123456789abcdef0123456789abcdef"
         run: npm run smoke:built
+
+      - name: License sign + verify roundtrip (cross-platform proof)
+        run: |
+          node scripts/license/issue.js --customer "CI ${{ matrix.os }}" --tier enterprise --term annual --seats 5 --dev-key > license.txt
+          node scripts/license/inspect.js --file license.txt --json
+        shell: bash
 
   # ---------------------------------------------------------------------------
   # 3. Production-only dependency audit. Non-blocking for advisories below

@@ -241,12 +241,17 @@ await app.register(fStatic, {
   prefix: "/",
   constraints: {},
   decorateReply: false,
+  // Disable @fastify/static's default Cache-Control (it would otherwise
+  // overwrite our setHeaders values with `public, max-age=0`).
+  cacheControl: false,
   setHeaders: (res, filePath) => {
     const isAsset = /[\\/]assets[\\/]/.test(filePath);
     if (isAsset) {
       res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
     } else if (/index\.html?$/i.test(filePath)) {
       res.setHeader("Cache-Control", "no-store, must-revalidate");
+    } else {
+      res.setHeader("Cache-Control", "public, max-age=300");
     }
   },
 });
