@@ -40,6 +40,7 @@ import { startMqttBridge } from "./connectors/mqtt.js";
 import { startOpcuaBridge } from "./connectors/opcua.js";
 import { startAlertWorker } from "./alerts.js";
 import { startRollupWorker, readSeries, listDailySnapshot } from "./metrics-rollup.js";
+import { startOutboxWorker } from "./outbox.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -210,6 +211,7 @@ startMqttBridge(app.log);
 startOpcuaBridge(app.log);
 startAlertWorker(app.log);
 startRollupWorker(app.log);
+startOutboxWorker(app.log);
 
 // Record boot in the audit ledger.
 audit({ actor: "system", action: "server.start", subject: "forge", detail: { host: HOST, port: PORT, pid: process.pid } });

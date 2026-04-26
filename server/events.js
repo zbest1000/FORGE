@@ -8,6 +8,7 @@ import { db, now, uuid } from "./db.js";
 import { audit } from "./audit.js";
 import { broadcast } from "./sse.js";
 import { dispatchEvent } from "./webhooks.js";
+import { enqueueOutbox } from "./outbox.js";
 
 const insertEvent = db.prepare(`
   INSERT INTO events (id, received_at, source, source_type, asset_ref, project_ref, object_refs,
@@ -65,6 +66,14 @@ export function ingest(raw, meta = {}) {
     routing_policy: env.routing_policy,
     dedupe_key: env.dedupe_key,
     auth_context: JSON.stringify(env.auth_context || {}),
+  });
+  enqueueOutbox({
+    topic: "events.ingested",
+    eventType: env.event_type,
+    aggregateType: "Event",
+    aggregateId: env.event_id,
+    payload: env,
+    traceId: env.trace_id,
   });
   try {
     route(env);
