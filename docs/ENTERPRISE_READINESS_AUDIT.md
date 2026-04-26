@@ -17,7 +17,8 @@ Tasks marked **DONE** in this branch (`cursor/enterprise-readiness-audit-603f`):
 
 | Task | Commit | Coverage |
 |---|---|---|
-| Refresh tokens + session revocation + sign-out-everywhere (B.1 #5) | (this commit) | `server/sessions.js` (new), `server/routes/auth.js`, `server/main.js`, `server/db.js` schema v8 |
+| Webhook payloads moved off the audit ledger (B.4 #11) | (this commit) | `server/webhooks.js`, `server/db.js` schema v9 |
+| Refresh tokens + session revocation + sign-out-everywhere (B.1 #5) | `8624a4b` | `server/sessions.js` (new), `server/routes/auth.js`, `server/main.js`, `server/db.js` schema v8 |
 | E4 MFA (TOTP + recovery codes + two-step login) | `1a3a027` | `server/mfa.js` (new), `server/routes/auth.js` |
 | E1 Tenant scoping (REST + GraphQL) | `143f0e0` | `server/routes/core.js`, `server/graphql/resolvers.js`, `server/routes/files.js`, new `server/tenant.js` |
 | E3 Token scope enforcement | `ce3450d` | `server/auth.js`, `server/acl.js` |

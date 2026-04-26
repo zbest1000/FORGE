@@ -20,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -877,6 +877,25 @@ function migrate() {
         CREATE INDEX IF NOT EXISTS idx_sessions_refresh ON sessions(refresh_hash);
       `);
       setVersion(8);
+    }
+
+    if (getVersion() < 9) {
+      // Webhook delivery payloads. Earlier versions parked the body on
+      // an `audit_log` row and re-read it via `json_extract` at delivery
+      // time — that bloated the immutable hash chain forever and would
+      // silently break if an audit-retention sweep ever pruned the
+      // referenced row. The body now lives in its own table, indexed by
+      // `delivery_id` so the dispatcher can fetch it with a primary-key
+      // lookup. Rows are deleted once a delivery reaches a terminal
+      // state (`delivered`, `failed`, `cancelled`).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS webhook_delivery_payloads (
+          delivery_id TEXT PRIMARY KEY REFERENCES webhook_deliveries(id) ON DELETE CASCADE,
+          body TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `);
+      setVersion(9);
     }
   })();
 }

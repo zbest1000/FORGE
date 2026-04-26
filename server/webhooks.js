@@ -20,6 +20,10 @@ function sign(secret, body) {
 
 function safeParse(s) { try { return JSON.parse(s); } catch { return null; } }
 
+const insertPayload = db.prepare("INSERT OR REPLACE INTO webhook_delivery_payloads (delivery_id, body, created_at) VALUES (?, ?, ?)");
+const selectPayload = db.prepare("SELECT body FROM webhook_delivery_payloads WHERE delivery_id = ?");
+const deletePayload = db.prepare("DELETE FROM webhook_delivery_payloads WHERE delivery_id = ?");
+
 export function listWebhooks() {
   return db.prepare("SELECT id, name, url, events, enabled, last_success_at, last_error, last_error_at, created_at, created_by FROM webhooks ORDER BY created_at DESC").all()
     .map(r => ({ ...r, events: JSON.parse(r.events || "[]"), enabled: !!r.enabled }));
@@ -76,14 +80,20 @@ export function dispatchEvent(eventType, payload) {
   for (const row of rows) {
     if (!match(row.events)) continue;
     const id = uuid("delivery").toLowerCase();
-    db.prepare(`INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, attempt, status, last_error, next_attempt_at, delivered_at, created_at)
-                VALUES (@id, @wh, @ev, @type, 0, 'pending', NULL, @now, NULL, @now)`)
-      .run({ id, wh: row.id, ev: eventId, type: eventType, now: now() });
-    // Cache the body on the delivery via a simple key-value workaround: we
-    // store on disk-by-event would over-engineer; instead reconstruct the
-    // body when sending using the audit log. For demo speed we keep the
-    // body inline in the audit detail.
-    audit({ actor: "webhooks", action: "webhook.queued", subject: row.id, detail: { deliveryId: id, eventType, body: payload } });
+    const ts = now();
+    // Persist the delivery + payload in one transaction so the worker
+    // can rely on the body being present whenever a delivery row is.
+    db.transaction(() => {
+      db.prepare(`INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, attempt, status, last_error, next_attempt_at, delivered_at, created_at)
+                  VALUES (@id, @wh, @ev, @type, 0, 'pending', NULL, @now, NULL, @now)`)
+        .run({ id, wh: row.id, ev: eventId, type: eventType, now: ts });
+      insertPayload.run(id, JSON.stringify(payload ?? {}), ts);
+    })();
+    // Audit the queueing event WITHOUT the body. The body lives in
+    // webhook_delivery_payloads; only summary metadata enters the
+    // immutable hash chain so it can be pruned on a normal retention
+    // schedule.
+    audit({ actor: "webhooks", action: "webhook.queued", subject: row.id, detail: { deliveryId: id, eventType, eventId } });
   }
   // Kick the worker if not already running.
   ensureWorker();
@@ -113,14 +123,15 @@ async function tick() {
     const wh = db.prepare("SELECT * FROM webhooks WHERE id = ?").get(d.webhook_id);
     if (!wh || !wh.enabled) {
       db.prepare("UPDATE webhook_deliveries SET status = 'cancelled' WHERE id = ?").run(d.id);
+      deletePayload.run(d.id);
       continue;
     }
-    // Recover the body from the most recent matching audit entry.
-    // `audit_log.detail` is stored as JSON; once parsed, `body` is already
-    // an object (or null).
-    const audited = db.prepare("SELECT detail FROM audit_log WHERE action = 'webhook.queued' AND subject = ? AND json_extract(detail, '$.deliveryId') = ? ORDER BY seq DESC LIMIT 1").get(wh.id, d.id);
-    const detail = audited ? safeParse(audited.detail) : null;
-    const payload = detail?.body ?? {};
+    // Recover the body from the dedicated payloads table. Falling back
+    // to an empty object keeps the dispatcher robust if the row was
+    // pruned out from underneath it (audit chain stays clean either
+    // way).
+    const stored = selectPayload.get(d.id);
+    const payload = stored ? (safeParse(stored.body) ?? {}) : {};
     const wireBody = JSON.stringify({ id: uuid("WHD"), type: d.event_type, ts: new Date().toISOString(), payload });
     const signature = sign(wh.secret, wireBody);
     const attempt = d.attempt + 1;
@@ -128,6 +139,7 @@ async function tick() {
     if (!validated.ok) {
       db.prepare("UPDATE webhook_deliveries SET status = 'failed', attempt = ?, last_error = ? WHERE id = ?")
         .run(attempt, `unsafe_url:${validated.reason}`, d.id);
+      deletePayload.run(d.id);
       audit({ actor: "webhooks", action: "webhook.failed", subject: wh.id, detail: { deliveryId: d.id, attempt, error: `unsafe_url:${validated.reason}` } });
       continue;
     }
@@ -152,14 +164,17 @@ async function tick() {
       db.prepare("UPDATE webhook_deliveries SET status = 'delivered', delivered_at = ?, attempt = ?, last_error = NULL WHERE id = ?")
         .run(now(), attempt, d.id);
       db.prepare("UPDATE webhooks SET last_success_at = ?, last_error = NULL, last_error_at = NULL WHERE id = ?").run(now(), wh.id);
+      deletePayload.run(d.id);
       audit({ actor: "webhooks", action: "webhook.delivered", subject: wh.id, detail: { deliveryId: d.id, attempt, eventType: d.event_type } });
     } catch (err) {
       const errMsg = String(err?.message || err);
       if (attempt >= MAX_ATTEMPTS) {
         db.prepare("UPDATE webhook_deliveries SET status = 'failed', attempt = ?, last_error = ? WHERE id = ?").run(attempt, errMsg, d.id);
-        // Move to DLQ for manual inspection.
+        // Move to DLQ for manual inspection. The payload table row is
+        // dropped because the body now lives on the DLQ envelope.
         db.prepare("INSERT INTO dead_letters (id, ts, envelope, error, resolved) VALUES (?, ?, ?, ?, 0)")
           .run(uuid("DLQ"), now(), JSON.stringify({ kind: "webhook", deliveryId: d.id, webhookId: wh.id, body: payload }), errMsg);
+        deletePayload.run(d.id);
         audit({ actor: "webhooks", action: "webhook.failed", subject: wh.id, detail: { deliveryId: d.id, attempt, error: errMsg } });
       } else {
         const wait = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
@@ -171,6 +186,15 @@ async function tick() {
       }
     }
   }
+}
+
+/**
+ * Drain due deliveries on demand. Used by tests and by anyone who wants
+ * synchronous delivery semantics; the periodic `setInterval` worker is
+ * the production driver.
+ */
+export async function processDueDeliveries() {
+  await tick();
 }
 
 export function listDeliveries(webhookId, limit = 50) {
