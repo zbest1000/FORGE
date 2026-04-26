@@ -2,78 +2,224 @@ name: ci
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main, "cursor/**" ]
+    branches: [main, "cursor/**"]
+  workflow_dispatch:
+  merge_group:
+
+# Least-privilege defaults; jobs opt in to elevated scopes as needed.
+permissions:
+  contents: read
+
+# Cancel in-flight runs for the same ref to save runners.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION_DEFAULT: "20.x"
+  FORCE_COLOR: "1"
+  HUSKY: "0"
 
 jobs:
-  test:
+  # ---------------------------------------------------------------------------
+  # 1. Lint / static checks. Fast feedback before heavier jobs.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Static checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          node-version: "20.x"
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION_DEFAULT }}
           cache: "npm"
 
-      - name: Install
-        run: npm install --omit=optional --no-audit --no-fund
+      - name: Install dependencies (with optional native bindings)
+        run: npm ci --no-audit --no-fund
 
-      - name: Dependency audit (production)
-        run: npm audit --omit=dev --audit-level=high
+      - name: Syntax check client + server modules
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in app.js \
+                   src/core/*.js src/core/i3x/*.js \
+                   src/shell/*.js src/screens/*.js src/data/*.js \
+                   server/*.js server/routes/*.js \
+                   server/connectors/*.js server/integrations/*.js; do
+            node --check "$f"
+          done
+
+  # ---------------------------------------------------------------------------
+  # 2. Build + tests across supported Node versions.
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20.x", "22.x"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: "npm"
+
+      - name: Install dependencies
+        # Keep optional deps; @rolldown/binding-linux-x64-gnu is required by Vite 8.
+        run: npm ci --no-audit --no-fund
 
       - name: Generate CycloneDX SBOM
         run: npm run sbom
 
-      - name: Syntax check client + server modules
-        run: |
-          for f in app.js src/core/*.js src/core/i3x/*.js src/shell/*.js src/screens/*.js src/data/*.js server/*.js server/routes/*.js server/connectors/*.js server/integrations/*.js; do
-            node --check "$f"
-          done
+      - name: Upload SBOM
+        if: matrix.node == env.NODE_VERSION_DEFAULT
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-cyclonedx
+          path: bom.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Build production SPA
         run: npm run build
 
+      - name: Upload SPA build
+        if: matrix.node == env.NODE_VERSION_DEFAULT
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: spa-dist
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Migrate schema (bare migration path)
         run: node server/db.js --migrate-only
 
-      - name: Run tests
+      - name: Run unit + integration tests
         env:
-          FORGE_TENANT_KEY: "ci-tenant-key"
-          FORGE_JWT_SECRET: "ci-jwt-secret"
+          FORGE_TENANT_KEY: "ci-tenant-key-0123456789abcdef0123456789abcdef"
+          FORGE_JWT_SECRET: "ci-jwt-secret-0123456789abcdef0123456789abcdef"
         run: npm test
 
       - name: Smoke built server
         env:
-          FORGE_TENANT_KEY: "ci-tenant-key"
-          FORGE_JWT_SECRET: "ci-jwt-secret"
+          FORGE_TENANT_KEY: "ci-tenant-key-0123456789abcdef0123456789abcdef"
+          FORGE_JWT_SECRET: "ci-jwt-secret-0123456789abcdef0123456789abcdef"
         run: npm run smoke:built
+
+  # ---------------------------------------------------------------------------
+  # 3. Production-only dependency audit. Non-blocking for advisories below
+  #    `high` so day-to-day PRs aren't held up by transitive dev advisories.
+  # ---------------------------------------------------------------------------
+  audit:
+    name: npm audit (production)
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION_DEFAULT }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  # ---------------------------------------------------------------------------
+  # 4. Container image build + smoke. Needs `test` to pass first.
+  # ---------------------------------------------------------------------------
   docker:
+    name: Docker image build + smoke
     runs-on: ubuntu-latest
     needs: test
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
-      - name: Build Docker image
-        run: docker build -t forge:ci .
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Build Docker image (load to local daemon)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          tags: forge:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Run container health check
         run: |
+          set -euo pipefail
           docker run -d --name forge-ci -p 3000:3000 \
             -e FORGE_JWT_SECRET=ci-jwt-secret-0123456789abcdef \
             -e FORGE_TENANT_KEY=ci-tenant-key-0123456789abcdef \
             -e FORGE_CORS_ORIGIN=http://localhost:3000 \
             forge:ci
-          for i in 1 2 3 4 5 6 7 8 9 10; do
-            if curl -sS http://localhost:3000/api/health >/dev/null; then
-              echo "ok"
+          ok=0
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+            if curl -fsS http://localhost:3000/api/health >/dev/null; then
+              ok=1
               break
             fi
             sleep 2
           done
-          docker logs forge-ci | tail -20
-          curl -sS http://localhost:3000/api/health
+          docker logs forge-ci | tail -50
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::health check never returned 200"
+            docker rm -f forge-ci
+            exit 1
+          fi
+          curl -fsS http://localhost:3000/api/health
           docker rm -f forge-ci
+
+  # ---------------------------------------------------------------------------
+  # 5. Aggregate gate. Branch protection should require this single check.
+  # ---------------------------------------------------------------------------
+  ci-success:
+    name: CI success
+    runs-on: ubuntu-latest
+    needs: [lint, test, audit, docker]
+    if: always()
+    steps:
+      - name: Verify all required jobs succeeded
+        run: |
+          if [ "${{ needs.lint.result }}" != "success" ] \
+             || [ "${{ needs.test.result }}" != "success" ] \
+             || [ "${{ needs.audit.result }}" != "success" ] \
+             || [ "${{ needs.docker.result }}" != "success" ]; then
+            echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }} audit=${{ needs.audit.result }} docker=${{ needs.docker.result }}"
+            exit 1
+          fi
+          echo "All required CI jobs passed."
