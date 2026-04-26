@@ -11,6 +11,7 @@ import { readSeries } from "../metrics-rollup.js";
 import { canTransitionRevision, cascadeOnApprove } from "../../src/core/fsm/revision.js";
 import { canTransitionApproval } from "../../src/core/fsm/approval.js";
 import { GraphQLError, GraphQLScalarType, Kind } from "graphql";
+import { allows, filterAllowed } from "../acl.js";
 
 const json = arr => (Array.isArray(arr) ? arr : jsonOrDefault(arr, []));
 const obj = v => (typeof v === "object" && v ? v : jsonOrDefault(v, {}));
@@ -31,6 +32,31 @@ function requireCap(ctx, capability) {
   const u = requireUser(ctx);
   if (!can(u, capability)) throw forbiddenError(capability);
   return u;
+}
+
+function requireAcl(ctx, row, capability = "view") {
+  const u = requireCap(ctx, capability);
+  if (!row) return null;
+  if (!allows(u, row.acl, capability)) throw forbiddenError(`${capability}:object`);
+  return row;
+}
+
+function aclList(ctx, rows, capability = "view") {
+  const u = requireCap(ctx, capability);
+  return filterAllowed(rows, u, capability);
+}
+
+function docForRevision(id) {
+  return db.prepare("SELECT d.* FROM documents d JOIN revisions r ON r.doc_id = d.id WHERE r.id = ?").get(id);
+}
+
+function subjectAclRow(approval) {
+  if (!approval) return null;
+  if (approval.subject_kind === "Revision") return docForRevision(approval.subject_id);
+  if (approval.subject_kind === "Document") return db.prepare("SELECT * FROM documents WHERE id = ?").get(approval.subject_id);
+  if (approval.subject_kind === "WorkItem") return db.prepare("SELECT * FROM work_items WHERE id = ?").get(approval.subject_id);
+  if (approval.subject_kind === "Incident") return db.prepare("SELECT * FROM incidents WHERE id = ?").get(approval.subject_id);
+  return approval;
 }
 
 const JSONScalar = new GraphQLScalarType({
@@ -75,38 +101,61 @@ export const resolvers = {
     me: (_, __, ctx) => ctx.user || null,
     organization: () => db.prepare("SELECT id, name, tenant_key AS tenantKey FROM organizations LIMIT 1").get(),
     workspaces: () => db.prepare("SELECT id, name, region FROM workspaces").all(),
-    teamSpaces: () => db.prepare("SELECT * FROM team_spaces").all(),
-    teamSpace: (_, { id }) => db.prepare("SELECT * FROM team_spaces WHERE id = ?").get(id),
-    projects: (_, { teamSpaceId }) => teamSpaceId
+    teamSpaces: (_, __, ctx) => aclList(ctx, db.prepare("SELECT * FROM team_spaces").all()),
+    teamSpace: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM team_spaces WHERE id = ?").get(id)),
+    projects: (_, { teamSpaceId }, ctx) => aclList(ctx, teamSpaceId
       ? db.prepare("SELECT * FROM projects WHERE team_space_id = ?").all(teamSpaceId)
-      : db.prepare("SELECT * FROM projects").all(),
-    project: (_, { id }) => db.prepare("SELECT * FROM projects WHERE id = ?").get(id),
-    channels: (_, { teamSpaceId }) => teamSpaceId
+      : db.prepare("SELECT * FROM projects").all()),
+    project: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM projects WHERE id = ?").get(id)),
+    channels: (_, { teamSpaceId }, ctx) => aclList(ctx, teamSpaceId
       ? db.prepare("SELECT * FROM channels WHERE team_space_id = ?").all(teamSpaceId)
-      : db.prepare("SELECT * FROM channels").all(),
-    channel: (_, { id }) => db.prepare("SELECT * FROM channels WHERE id = ?").get(id),
-    documents: () => db.prepare("SELECT * FROM documents").all(),
-    document: (_, { id }) => db.prepare("SELECT * FROM documents WHERE id = ?").get(id),
-    revision: (_, { id }) => db.prepare("SELECT * FROM revisions WHERE id = ?").get(id),
-    drawings: () => db.prepare("SELECT * FROM drawings").all(),
-    drawing: (_, { id }) => db.prepare("SELECT * FROM drawings WHERE id = ?").get(id),
-    assets: () => db.prepare("SELECT * FROM assets").all(),
-    asset: (_, { id }) => db.prepare("SELECT * FROM assets WHERE id = ?").get(id),
-    workItems: (_, { projectId }) => projectId
+      : db.prepare("SELECT * FROM channels").all()),
+    channel: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM channels WHERE id = ?").get(id)),
+    documents: (_, __, ctx) => aclList(ctx, db.prepare("SELECT * FROM documents").all()),
+    document: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM documents WHERE id = ?").get(id)),
+    revision: (_, { id }, ctx) => {
+      const rev = db.prepare("SELECT * FROM revisions WHERE id = ?").get(id);
+      if (!rev) return null;
+      requireAcl(ctx, docForRevision(id));
+      return rev;
+    },
+    drawings: (_, __, ctx) => aclList(ctx, db.prepare("SELECT * FROM drawings").all()),
+    drawing: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM drawings WHERE id = ?").get(id)),
+    assets: (_, __, ctx) => aclList(ctx, db.prepare("SELECT * FROM assets").all()),
+    asset: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM assets WHERE id = ?").get(id)),
+    workItems: (_, { projectId }, ctx) => aclList(ctx, projectId
       ? db.prepare("SELECT * FROM work_items WHERE project_id = ? ORDER BY created_at DESC").all(projectId)
-      : db.prepare("SELECT * FROM work_items ORDER BY created_at DESC").all(),
-    workItem: (_, { id }) => db.prepare("SELECT * FROM work_items WHERE id = ?").get(id),
-    incidents: () => db.prepare("SELECT * FROM incidents ORDER BY started_at DESC").all(),
-    incident: (_, { id }) => db.prepare("SELECT * FROM incidents WHERE id = ?").get(id),
-    approvals: (_, { status }) => status
+      : db.prepare("SELECT * FROM work_items ORDER BY created_at DESC").all()),
+    workItem: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM work_items WHERE id = ?").get(id)),
+    incidents: (_, __, ctx) => aclList(ctx, db.prepare("SELECT * FROM incidents ORDER BY started_at DESC").all()),
+    incident: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM incidents WHERE id = ?").get(id)),
+    approvals: (_, { status }, ctx) => {
+      const u = requireCap(ctx, "view");
+      const rows = status
       ? db.prepare("SELECT * FROM approvals WHERE status = ?").all(status)
-      : db.prepare("SELECT * FROM approvals").all(),
-    approval: (_, { id }) => db.prepare("SELECT * FROM approvals WHERE id = ?").get(id),
+      : db.prepare("SELECT * FROM approvals").all();
+      return rows.filter(a => allows(u, subjectAclRow(a)?.acl, "view"));
+    },
+    approval: (_, { id }, ctx) => {
+      const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(id);
+      if (!row) return null;
+      requireAcl(ctx, subjectAclRow(row));
+      return row;
+    },
 
-    audit: (_, { limit = 100 }) => db.prepare("SELECT * FROM audit_log ORDER BY seq DESC LIMIT ?").all(Math.min(500, limit)),
-    events: (_, { limit = 50 }) => db.prepare("SELECT * FROM events ORDER BY received_at DESC LIMIT ?").all(Math.min(500, limit)),
+    audit: (_, { limit = 100 }, ctx) => {
+      requireCap(ctx, "view");
+      return db.prepare("SELECT * FROM audit_log ORDER BY seq DESC LIMIT ?").all(Math.min(500, limit));
+    },
+    events: (_, { limit = 50 }, ctx) => {
+      requireCap(ctx, "integration.read");
+      return db.prepare("SELECT * FROM events ORDER BY received_at DESC LIMIT ?").all(Math.min(500, limit));
+    },
 
-    search: (_, args) => searchHits(args),
+    search: (_, args, ctx) => {
+      requireCap(ctx, "view");
+      return searchHits(args, ctx.user);
+    },
 
     metricsSeries: (_, { metric, days = 14 }) => readSeries(metric, Math.min(60, days)).map(p => ({ day: p.day, value: p.value })),
   },
@@ -114,6 +163,7 @@ export const resolvers = {
   Mutation: {
     createWorkItem: (_, { projectId, type, title, severity = "medium", assigneeId = null, due = null }, ctx) => {
       requireCap(ctx, "create");
+      requireAcl(ctx, db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId), "create");
       const id = uuid("WI");
       db.prepare(`INSERT INTO work_items (id, project_id, type, title, description, assignee_id, status, severity, due, blockers, labels, acl, created_at, updated_at)
                   VALUES (@id, @pid, @type, @title, '', @assignee, 'Open', @sev, @due, '[]', '[]', '{}', @ts, @ts)`)
@@ -126,6 +176,7 @@ export const resolvers = {
       requireCap(ctx, "edit");
       const row = db.prepare("SELECT * FROM work_items WHERE id = ?").get(args.id);
       if (!row) throw new GraphQLError("not found", { extensions: { http: { status: 404 } } });
+      requireAcl(ctx, row, "edit");
       const sets = [];
       const params = { id: row.id, now: now() };
       const map = { status: "status", severity: "severity", title: "title", description: "description" };
@@ -144,6 +195,7 @@ export const resolvers = {
       requireCap(ctx, "create");
       const ch = db.prepare("SELECT * FROM channels WHERE id = ?").get(channelId);
       if (!ch) throw new GraphQLError("channel not found", { extensions: { http: { status: 404 } } });
+      requireAcl(ctx, ch, "create");
       const id = uuid("M");
       const ts = now();
       db.prepare(`INSERT INTO messages (id, channel_id, author_id, ts, type, text, attachments, edits, deleted)
@@ -157,6 +209,7 @@ export const resolvers = {
       requireCap(ctx, "approve");
       const rev = db.prepare("SELECT * FROM revisions WHERE id = ?").get(id);
       if (!rev) throw new GraphQLError("not found", { extensions: { http: { status: 404 } } });
+      requireAcl(ctx, docForRevision(id), "approve");
       if (!canTransitionRevision(rev.status, to))
         throw new GraphQLError(`cannot transition ${rev.status} → ${to}`, { extensions: { http: { status: 400 } } });
       db.transaction(() => {
@@ -176,6 +229,7 @@ export const resolvers = {
         throw new GraphQLError("outcome must be approved|rejected", { extensions: { http: { status: 400 } } });
       const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(id);
       if (!row) throw new GraphQLError("not found", { extensions: { http: { status: 404 } } });
+      requireAcl(ctx, subjectAclRow(row), "approve");
       if (!canTransitionApproval(row.status, outcome))
         throw new GraphQLError(`cannot decide approval in status '${row.status}'`, { extensions: { http: { status: 400 } } });
       const payload = { approvalId: row.id, subject: { kind: row.subject_kind, id: row.subject_id }, outcome, notes, signer: ctx.user.id, ts: now() };
