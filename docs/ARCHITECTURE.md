@@ -99,14 +99,11 @@ All OSS runs through `src/core/vendor.js`, which caches import promises
 and exposes `vendorStatus()` for a UI badge. Failures are non-fatal and
 switch the caller to its fallback path.
 
-**Third-party open-source integration**. An ES-module import map in
-`index.html` pulls 13 OSS packages at runtime from `esm.sh`: MiniSearch,
-Dexie, marked, DOMPurify, Mermaid, svg-pan-zoom, µPlot, MQTT.js, web-ifc,
-Fuse.js, date-fns, PDF.js, and RapiDoc. See `docs/THIRD_PARTY.md` for
-pinned versions and licenses. Every integration is loaded through
-`src/core/vendor.js` which caches the promise and lets callers fall back to
-the hand-rolled implementation on failure, so the prototype still runs fully
-offline with a local server.
+**Third-party open-source integration**. Enterprise builds bundle browser
+dependencies with Vite from npm. `src/core/vendor.js` is the single seam for
+optional/heavy browser libraries and keeps fallback behavior centralized. The
+import map in `index.html` remains a source-serving development fallback only;
+release artifacts should not depend on the CDN for normal operation.
 
 ## 3. Module map
 

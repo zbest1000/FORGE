@@ -27,6 +27,9 @@ jobs:
             node --check "$f"
           done
 
+      - name: Build production SPA
+        run: npm run build
+
       - name: Migrate schema (bare migration path)
         run: node server/db.js --migrate-only
 
@@ -36,24 +39,11 @@ jobs:
           FORGE_JWT_SECRET: "ci-jwt-secret"
         run: npm test
 
-      - name: Boot server and probe /api/health
+      - name: Smoke built server
         env:
           FORGE_TENANT_KEY: "ci-tenant-key"
           FORGE_JWT_SECRET: "ci-jwt-secret"
-        run: |
-          npm run seed
-          node server/main.js &
-          SERVER_PID=$!
-          for i in 1 2 3 4 5 6 7 8 9 10; do
-            if curl -sS http://localhost:3000/api/health >/dev/null; then
-              echo "server up"
-              break
-            fi
-            sleep 1
-          done
-          curl -sS http://localhost:3000/api/health
-          curl -sS http://localhost:3000/metrics | head -5
-          kill $SERVER_PID
+        run: npm run smoke:built
   docker:
     runs-on: ubuntu-latest
     needs: test

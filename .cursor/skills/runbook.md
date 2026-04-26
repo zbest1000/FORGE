@@ -13,10 +13,10 @@ If this is your first time in the repo, read **Quick start** and
 
 ```bash
 node --version          # require >=20 (engines field in package.json)
-npm install             # installs better-sqlite3 native binding (needs python3, make, g++)
-npm run build           # optional production SPA bundle in ./dist/
+npm install             # installs native bindings + bundled client deps
+npm run release:check   # build + tests; required before release/merge
 npm run seed            # creates ./data/forge.db and demo users (idempotent)
-npm start               # Fastify on http://localhost:3000
+npm start               # Fastify on http://localhost:3000, serving ./dist
 ```
 
 Demo users (password `forge` for all of them) are printed by `npm run seed`.
@@ -44,9 +44,9 @@ is served**:
 
 | Mode | How to start | What runs |
 |---|---|---|
-| **Server mode** (recommended) | `npm start` (or `npm run dev` for `--watch`) | Fastify + SQLite + SPA on `:3000`. If `dist/index.html` exists, Fastify serves the Vite production bundle; otherwise it serves source modules from the repo root. Client probes `/api/health`, sees a 200, and uses the real backend. |
+| **Server mode** (recommended) | `npm run build && npm start` | Fastify + SQLite + SPA on `:3000`. Production requires the Vite bundle in `dist/`; `npm run dev` sets `FORGE_SERVE_SOURCE=1` for source-module fallback. Client probes `/api/health`, sees a 200, and uses the real backend. |
 | **Vite dev mode** | `npm run dev:client -- --host 0.0.0.0` | Vite serves the SPA on `:5173`; run `npm start` separately if you want server APIs. |
-| **Demo mode** (client only) | `python3 -m http.server 8080` from repo root or `npm run dev:client` without the server | SPA only. `/api/health` 404s, `src/core/api.js` flips `_mode = "demo"`, all data lives in `localStorage`. |
+| **Demo mode** (client only) | `npm run dev:client` without the server | SPA only. `/api/health` 404s, `src/core/api.js` flips `_mode = "demo"`, all data lives in `localStorage`. |
 
 How the toggle actually works (`src/core/api.js`, `app.js:147`):
 
@@ -187,10 +187,10 @@ hatch when chrome is fully hidden.
 
 ### 3. Browser SPA — shell, screens, store (`app.js`, `src/`)
 
-No build step. Edit a file, hard-reload the page. Modules are served directly
-from disk by either `npm start` or `python3 -m http.server` when `dist/` is
-absent. For production-style validation, run `npm run build` first; then
-`npm start` serves the hashed Vite bundle from `dist/`.
+The SPA is build-first for enterprise/release use. Run `npm run build` before
+`npm start`; Fastify serves the hashed Vite bundle from `dist/`. Source-module
+fallback is development-only via `npm run dev` or
+`FORGE_SERVE_SOURCE=1 npm start`.
 
 **Smoke test in DevTools:**
 

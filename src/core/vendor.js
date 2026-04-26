@@ -18,9 +18,33 @@ const cache = new Map();
 const loadedOk = new Set();
 const loadedFail = new Set();
 
+// Vite can statically discover these import targets and include them in the
+// production build. In direct-source dev mode the import map in index.html
+// resolves the same specifiers.
+const loaders = {
+  minisearch: () => import("minisearch"),
+  dexie: () => import("dexie"),
+  marked: () => import("marked"),
+  dompurify: () => import("dompurify"),
+  mermaid: () => import("mermaid"),
+  "svg-pan-zoom": () => import("svg-pan-zoom"),
+  uplot: () => import("uplot"),
+  mqtt: () => import("mqtt"),
+  "web-ifc": () => import("web-ifc"),
+  "fuse.js": () => import("fuse.js"),
+  "date-fns": () => import("date-fns"),
+  "pdfjs-dist": () => import("pdfjs-dist"),
+  papaparse: () => import("papaparse"),
+  three: () => import("three"),
+  "dxf-viewer": () => import("dxf-viewer"),
+  "online-3d-viewer": () => import("online-3d-viewer"),
+  rapidoc: () => import("rapidoc"),
+};
+
 function load(spec, name, probe) {
   if (cache.has(name)) return cache.get(name);
-  const p = import(/* @vite-ignore */ spec)
+  const loader = loaders[spec] || (() => import(/* @vite-ignore */ spec));
+  const p = loader()
     .then(mod => {
       const v = probe ? probe(mod) : mod;
       if (!loadedOk.has(name)) {
@@ -63,6 +87,7 @@ export const vendor = {
   three:       () => load("three",        "three",       m => m),
   dxfViewer:   () => load("dxf-viewer",   "dxf-viewer",  m => m),
   online3d:    () => load("online-3d-viewer", "online-3d-viewer", m => m),
+  rapidoc:     () => load("rapidoc",      "rapidoc",     m => (m.default || m)),
 };
 
 /**

@@ -41,7 +41,12 @@ import { startRollupWorker, readSeries, listDailySnapshot } from "./metrics-roll
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const DIST = path.join(ROOT, "dist");
-const CLIENT_ROOT = fs.existsSync(path.join(DIST, "index.html")) ? DIST : ROOT;
+const HAS_DIST = fs.existsSync(path.join(DIST, "index.html"));
+const ALLOW_SOURCE_CLIENT = process.env.FORGE_SERVE_SOURCE === "1";
+if (!HAS_DIST && !ALLOW_SOURCE_CLIENT) {
+  throw new Error("Startup requires a built SPA in ./dist. Run `npm run build`, or use `npm run dev` / FORGE_SERVE_SOURCE=1 for local source fallback.");
+}
+const CLIENT_ROOT = HAS_DIST ? DIST : ROOT;
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const JWT_SECRET = process.env.FORGE_JWT_SECRET || "forge-dev-jwt-secret-please-rotate";
@@ -170,8 +175,7 @@ app.get("/api/metrics/series", async (req) => {
 });
 app.get("/api/metrics/snapshot", async () => listDailySnapshot());
 
-// Serve the built client when `npm run build` has produced dist/.
-// In development, fall back to the source tree so `npm start` still works.
+// Serve the built client. Source serving is an explicit development fallback.
 await app.register(fStatic, {
   root: CLIENT_ROOT,
   prefix: "/",
