@@ -10,7 +10,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { db, now, uuid } from "../db.js";
 import { audit } from "../audit.js";
-import { allows } from "../acl.js";
+import { allows, requireAccess } from "../acl.js";
 import { require_ } from "../auth.js";
 
 const DATA_DIR = process.env.FORGE_DATA_DIR || path.resolve(process.cwd(), "data");
@@ -103,9 +103,11 @@ export default async function fileRoutes(fastify) {
   });
 
   // GET /api/files?parent_kind=&parent_id= — listing.
-  fastify.get("/api/files", async (req, reply) => {
+  fastify.get("/api/files", { preHandler: require_("view") }, async (req, reply) => {
     const { parent_kind, parent_id } = req.query || {};
     if (!parent_kind || !parent_id) return reply.code(400).send({ error: "parent_kind and parent_id required" });
+    const parent = resolveParent(parent_kind, parent_id);
+    if (!requireAccess(req, reply, parent, "view")) return;
     const rows = db.prepare("SELECT id, name, mime, size, sha256, created_by, created_at FROM files WHERE parent_kind = ? AND parent_id = ? ORDER BY created_at DESC").all(parent_kind, parent_id);
     return rows;
   });

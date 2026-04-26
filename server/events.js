@@ -8,6 +8,7 @@ import { db, now, uuid } from "./db.js";
 import { audit } from "./audit.js";
 import { broadcast } from "./sse.js";
 import { dispatchEvent } from "./webhooks.js";
+import { enqueueOutbox } from "./outbox.js";
 
 const insertEvent = db.prepare(`
   INSERT INTO events (id, received_at, source, source_type, asset_ref, project_ref, object_refs,
@@ -66,6 +67,14 @@ export function ingest(raw, meta = {}) {
     dedupe_key: env.dedupe_key,
     auth_context: JSON.stringify(env.auth_context || {}),
   });
+  enqueueOutbox({
+    topic: "events.ingested",
+    eventType: env.event_type,
+    aggregateType: "Event",
+    aggregateId: env.event_id,
+    payload: env,
+    traceId: env.trace_id,
+  });
   try {
     route(env);
     audit({ actor: env.auth_context?.actor || "system", action: "event.ingest", subject: env.event_id, detail: { severity: env.severity }, traceId: env.trace_id });
@@ -90,7 +99,7 @@ function normalize(raw, { source, source_type }) {
     severity: raw.severity || "info",
     event_type: raw.event_type || raw.type || "generic",
     payload: raw.payload || raw.body || raw,
-    trace_id: raw.trace_id || uuid("TRACE"),
+    trace_id: raw.trace_id || raw.traceparent || uuid("TRACE"),
     routing_policy: raw.routing_policy || "default",
     dedupe_key: raw.dedupe_key || null,
     auth_context: raw.auth_context || { actor: "system" },

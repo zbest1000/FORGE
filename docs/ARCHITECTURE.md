@@ -6,12 +6,17 @@ implementation.
 
 ## 1. Shape of the system
 
-FORGE ships as **server + client**. The server is a Node.js 20+ Fastify
-application backed by SQLite; it serves the HTTP + CESMII i3X API and the
-static SPA client from the same origin. The client can also run standalone
-in "demo mode" (no backend) from `python3 -m http.server` — the in-browser
-store and i3X engine stand in for their server counterparts so the UX is
-fully exercisable offline.
+FORGE ships today as a **modular server + client** and now has explicit
+distributed-service seams. The default deployment is still a Node.js 20+
+Fastify application backed by SQLite; it serves the HTTP + CESMII i3X API and
+the static SPA client from the same origin. Enterprise deployments can enable
+the transitional distributed profile: the API/BFF process, worker process,
+transactional outbox, connector registry, n8n, MQTT broker, and OpenTelemetry
+collector run as separate services while sharing the same durable store.
+
+The client can also run standalone in "demo mode" (no backend) from
+`python3 -m http.server` — the in-browser store and i3X engine stand in for
+their server counterparts so the UX is fully exercisable offline.
 
 See `docs/SERVER.md` for the server API surface, deployment, and security
 model.
@@ -32,6 +37,8 @@ model.
 │  /api/automations/n8n/*  Proxy to n8n workflow engine   │
 │  /api/search   SQLite FTS5 + facets                     │
 │  /api/events   Canonical envelope + rule engine + DLQ   │
+│  /api/enterprise-systems Connector registry + mappings  │
+│  /api/compliance ROPA/DSAR/holds/evidence/AI inventory  │
 │  /api/audit    Hash-chained ledger + signed export pack │
 │  /api/ai/*     Provider-routed LLM gateway              │
 │  /api/events/stream  SSE firehose                       │
@@ -39,14 +46,36 @@ model.
 │  /metrics      Prometheus text format                   │
 │  static        SPA client                               │
 │     │                                                   │
-│     ├── better-sqlite3  (WAL, FTS5)                     │
+│     ├── better-sqlite3  (WAL, FTS5; Postgres seam next) │
+│     ├── transactional outbox (worker/extraction seam)   │
 │     ├── @fastify/jwt    (HS256)                         │
 │     ├── bcryptjs        (cost 10)                       │
 │     ├── pino            (structured logs)               │
+│     ├── OpenTelemetry   (optional OTLP tracing)         │
 │     ├── Web Crypto      (SHA-256 chain + HMAC-SHA256)   │
 │     └── mqtt            (optional broker bridge)        │
 └─────────────────────────────────────────────────────────┘
 ```
+
+## 1.1 Distributed enterprise topology
+
+The codebase is intentionally a **modular monolith with extraction seams**:
+
+| Boundary | Current module(s) | Extraction path |
+|---|---|---|
+| API Gateway / BFF | `server/main.js`, route modules | dedicated `forge-api` container |
+| Worker / async bus | `server/outbox.js`, `server/events.js`, `server/webhooks.js` | `forge-worker` container, then NATS/Redpanda |
+| Identity & access | `server/auth.js`, `server/acl.js`, token routes | OIDC/SCIM/MFA service |
+| Records | `server/routes/core.js`, extras routes | records service over Postgres |
+| Audit & compliance | `server/audit.js`, `server/routes/compliance.js` | compliance service + evidence store |
+| Connectors | `server/connectors/*`, `server/integrations/registry.js` | connector workers per system category |
+| Observability | `server/metrics.js`, `server/tracing.js` | OTel Collector + Prometheus/Grafana |
+
+`docker compose --profile distributed up` starts API and worker containers,
+Postgres/Redis placeholders, Mosquitto, n8n, and an OpenTelemetry Collector.
+SQLite remains the runtime database for this slice; the profile documents the
+service split without falsely claiming multi-node HA until the Postgres data
+adapter is implemented.
 
 ```
 ┌──────────────────── Browser ────────────────────────────────────────┐

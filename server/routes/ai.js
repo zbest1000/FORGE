@@ -6,7 +6,7 @@ import { require_ } from "../auth.js";
 import { ask, listProviders } from "../ai.js";
 
 export default async function aiRoutes(fastify) {
-  fastify.get("/api/ai/providers", async () => listProviders());
+  fastify.get("/api/ai/providers", { preHandler: require_("view") }, async () => listProviders());
 
   fastify.post("/api/ai/ask", { preHandler: require_("view") }, async (req, reply) => {
     const { prompt, provider, scope = {} } = req.body || {};

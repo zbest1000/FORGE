@@ -10,6 +10,7 @@ import helmet from "@fastify/helmet";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
+import { initTracing } from "./tracing.js";
 
 import { db } from "./db.js";
 import { audit } from "./audit.js";
@@ -32,24 +33,30 @@ import extrasRoutes from "./routes/extras.js";
 import aiRoutes from "./routes/ai.js";
 import automationRoutes from "./routes/automations.js";
 import cadRoutes from "./routes/cad.js";
+import complianceRoutes from "./routes/compliance.js";
+import enterpriseSystemRoutes from "./routes/enterprise-systems.js";
+import { config } from "./config.js";
 
 import { startMqttBridge } from "./connectors/mqtt.js";
 import { startOpcuaBridge } from "./connectors/opcua.js";
 import { startAlertWorker } from "./alerts.js";
 import { startRollupWorker, readSeries, listDailySnapshot } from "./metrics-rollup.js";
 
+initTracing("forge-api");
+import { startOutboxWorker } from "./outbox.js";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const DIST = path.join(ROOT, "dist");
 const HAS_DIST = fs.existsSync(path.join(DIST, "index.html"));
-const ALLOW_SOURCE_CLIENT = process.env.FORGE_SERVE_SOURCE === "1";
+const ALLOW_SOURCE_CLIENT = config.serveSourceClient;
 if (!HAS_DIST && !ALLOW_SOURCE_CLIENT) {
   throw new Error("Startup requires a built SPA in ./dist. Run `npm run build`, or use `npm run dev` / FORGE_SERVE_SOURCE=1 for local source fallback.");
 }
 const CLIENT_ROOT = HAS_DIST ? DIST : ROOT;
-const PORT = Number(process.env.PORT || 3000);
-const HOST = process.env.HOST || "0.0.0.0";
-const JWT_SECRET = process.env.FORGE_JWT_SECRET || "forge-dev-jwt-secret-please-rotate";
+const PORT = config.port;
+const HOST = config.host;
+const JWT_SECRET = config.jwtSecret;
 
 const app = Fastify({
   logger: {
@@ -57,14 +64,14 @@ const app = Fastify({
       target: "pino/file",
       options: { destination: 1 },
     },
-    level: process.env.LOG_LEVEL || "info",
+    level: config.logLevel,
   },
   bodyLimit: 10 * 1024 * 1024,
   trustProxy: true,
 });
 
 await app.register(cors, {
-  origin: process.env.FORGE_CORS_ORIGIN ? process.env.FORGE_CORS_ORIGIN.split(",") : true,
+  origin: config.corsOrigin,
   credentials: true,
 });
 // Secure HTTP headers. Permissive CSP for the SPA (needs the ESM CDN for the
@@ -88,8 +95,8 @@ await app.register(helmet, {
 });
 await app.register(rateLimit, {
   global: true,
-  max: Number(process.env.FORGE_RATELIMIT_MAX || 600),
-  timeWindow: process.env.FORGE_RATELIMIT_WINDOW || "1 minute",
+  max: config.rateLimit.max,
+  timeWindow: config.rateLimit.timeWindow,
   // Don't rate-limit static assets; they're small + cached.
   skipOnError: true,
   allowList: (req) => {
@@ -164,6 +171,8 @@ await app.register(extrasRoutes);
 await app.register(aiRoutes);
 await app.register(automationRoutes);
 await app.register(cadRoutes);
+await app.register(complianceRoutes);
+await app.register(enterpriseSystemRoutes);
 attachSSE(app);
 registerMetrics(app);
 
@@ -205,6 +214,7 @@ startMqttBridge(app.log);
 startOpcuaBridge(app.log);
 startAlertWorker(app.log);
 startRollupWorker(app.log);
+startOutboxWorker(app.log);
 
 // Record boot in the audit ledger.
 audit({ actor: "system", action: "server.start", subject: "forge", detail: { host: HOST, port: PORT, pid: process.pid } });

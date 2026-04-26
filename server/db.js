@@ -19,7 +19,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 7;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -555,6 +555,290 @@ function migrate() {
         );
       `);
       setVersion(4);
+    }
+
+    if (getVersion() < 5) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS outbox_events (
+          id TEXT PRIMARY KEY,
+          topic TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          aggregate_type TEXT,
+          aggregate_id TEXT,
+          payload TEXT NOT NULL DEFAULT '{}',
+          trace_id TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          next_attempt_at TEXT,
+          created_at TEXT NOT NULL,
+          published_at TEXT,
+          last_error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(status, next_attempt_at, created_at);
+
+        CREATE TABLE IF NOT EXISTS inbox_events (
+          id TEXT PRIMARY KEY,
+          source TEXT NOT NULL,
+          dedupe_key TEXT,
+          received_at TEXT NOT NULL,
+          processed_at TEXT,
+          status TEXT NOT NULL DEFAULT 'received',
+          UNIQUE(source, dedupe_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_inbox_status ON inbox_events(status, received_at);
+      `);
+      setVersion(5);
+    }
+
+    if (getVersion() < 6) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS enterprise_systems (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          vendor TEXT,
+          base_url TEXT,
+          auth_type TEXT,
+          secret_ref TEXT,
+          status TEXT NOT NULL DEFAULT 'configured',
+          capabilities TEXT NOT NULL DEFAULT '[]',
+          owner_id TEXT,
+          config TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS connector_runs (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          status TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          stats TEXT NOT NULL DEFAULT '{}',
+          error TEXT,
+          requested_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_connector_runs_system ON connector_runs(system_id, started_at);
+
+        CREATE TABLE IF NOT EXISTS connector_mappings (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL,
+          source_kind TEXT NOT NULL,
+          target_kind TEXT NOT NULL,
+          transform TEXT NOT NULL DEFAULT '{}',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS external_object_links (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL,
+          external_kind TEXT NOT NULL,
+          external_id TEXT NOT NULL,
+          forge_kind TEXT NOT NULL,
+          forge_id TEXT NOT NULL,
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          UNIQUE(system_id, external_kind, external_id, forge_kind, forge_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS processing_activities (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          controller TEXT,
+          processor TEXT,
+          purpose TEXT NOT NULL,
+          lawful_basis TEXT NOT NULL,
+          data_categories TEXT NOT NULL DEFAULT '[]',
+          data_subjects TEXT NOT NULL DEFAULT '[]',
+          recipients TEXT NOT NULL DEFAULT '[]',
+          retention_policy TEXT,
+          residency_region TEXT,
+          cross_border_transfers TEXT NOT NULL DEFAULT '[]',
+          safeguards TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS data_subject_requests (
+          id TEXT PRIMARY KEY,
+          subject_user_id TEXT,
+          subject_email TEXT,
+          request_type TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'open',
+          due_at TEXT,
+          notes TEXT,
+          export_json TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          completed_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS legal_holds (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          scope_kind TEXT NOT NULL,
+          scope_id TEXT,
+          reason TEXT NOT NULL,
+          custodian_user_ids TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL DEFAULT 'active',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          released_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS compliance_evidence (
+          id TEXT PRIMARY KEY,
+          framework TEXT NOT NULL,
+          control_id TEXT,
+          title TEXT NOT NULL,
+          description TEXT,
+          object_kind TEXT,
+          object_id TEXT,
+          evidence_uri TEXT,
+          collected_by TEXT,
+          collected_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS subprocessors (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          service TEXT,
+          region TEXT,
+          data_categories TEXT NOT NULL DEFAULT '[]',
+          transfer_mechanism TEXT,
+          risk_rating TEXT,
+          dpa_uri TEXT,
+          last_review_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS risk_register (
+          id TEXT PRIMARY KEY,
+          framework TEXT,
+          title TEXT NOT NULL,
+          category TEXT,
+          likelihood TEXT,
+          impact TEXT,
+          treatment TEXT,
+          owner_id TEXT,
+          status TEXT NOT NULL DEFAULT 'open',
+          due_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ai_system_inventory (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          provider TEXT,
+          model TEXT,
+          purpose TEXT,
+          risk_class TEXT NOT NULL DEFAULT 'limited',
+          data_categories TEXT NOT NULL DEFAULT '[]',
+          human_oversight TEXT,
+          evaluation_notes TEXT,
+          owner_id TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS regulatory_incidents (
+          id TEXT PRIMARY KEY,
+          incident_id TEXT,
+          regime TEXT NOT NULL,
+          severity TEXT,
+          report_deadline_at TEXT,
+          status TEXT NOT NULL DEFAULT 'draft',
+          report_json TEXT NOT NULL DEFAULT '{}',
+          submitted_at TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      setVersion(6);
+    }
+
+    if (getVersion() < 7) {
+      const addColumn = (table, columnSql) => {
+        try { db.prepare(`ALTER TABLE ${table} ADD COLUMN ${columnSql}`).run(); }
+        catch (err) {
+          if (!/duplicate column name/i.test(String(err?.message || err))) throw err;
+        }
+      };
+      addColumn("enterprise_systems", "category TEXT");
+      addColumn("enterprise_systems", "data_residency TEXT");
+      addColumn("enterprise_systems", "created_by TEXT");
+      addColumn("connector_runs", "run_type TEXT");
+      addColumn("connector_runs", "trace_id TEXT");
+      addColumn("connector_mappings", "source_object TEXT");
+      addColumn("connector_mappings", "created_by TEXT");
+      addColumn("external_object_links", "direction TEXT NOT NULL DEFAULT 'bidirectional'");
+      addColumn("external_object_links", "created_by TEXT");
+      addColumn("external_object_links", "updated_at TEXT");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS enterprise_systems (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          category TEXT NOT NULL,
+          vendor TEXT,
+          base_url TEXT,
+          auth_type TEXT NOT NULL DEFAULT 'none',
+          secret_ref TEXT,
+          capabilities TEXT NOT NULL DEFAULT '[]',
+          data_residency TEXT,
+          status TEXT NOT NULL DEFAULT 'configured',
+          owner_id TEXT,
+          config TEXT NOT NULL DEFAULT '{}',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_enterprise_systems_category ON enterprise_systems(category, status);
+
+        CREATE TABLE IF NOT EXISTS connector_runs (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL,
+          run_type TEXT NOT NULL,
+          status TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          requested_by TEXT,
+          trace_id TEXT,
+          stats TEXT NOT NULL DEFAULT '{}',
+          error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_connector_runs_system ON connector_runs(system_id, started_at);
+
+        CREATE TABLE IF NOT EXISTS connector_mappings (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL,
+          source_object TEXT NOT NULL,
+          target_kind TEXT NOT NULL,
+          transform TEXT NOT NULL DEFAULT '{}',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_connector_mappings_system ON connector_mappings(system_id, enabled);
+
+        CREATE TABLE IF NOT EXISTS external_object_links (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL,
+          external_kind TEXT NOT NULL,
+          external_id TEXT NOT NULL,
+          forge_kind TEXT NOT NULL,
+          forge_id TEXT NOT NULL,
+          direction TEXT NOT NULL DEFAULT 'bidirectional',
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(system_id, external_kind, external_id, forge_kind, forge_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_external_links_forge ON external_object_links(forge_kind, forge_id);
+      `);
+      setVersion(7);
     }
   })();
 }

@@ -13,10 +13,32 @@ import { db, now, uuid } from "../db.js";
 import { audit } from "../audit.js";
 import { require_ } from "../auth.js";
 import { signHMAC, canonicalJSON } from "../crypto.js";
+import { allows, filterAllowed, requireAccess } from "../acl.js";
+
+function parentFor(kind, id) {
+  const table = ({
+    document: "documents", revision: "revisions", drawing: "drawings",
+    work_item: "work_items", workitem: "work_items", incident: "incidents",
+    asset: "assets", project: "projects", channel: "channels",
+  })[String(kind || "").toLowerCase()];
+  if (!table || !id) return null;
+  if (table === "revisions") {
+    return db.prepare("SELECT d.* FROM documents d JOIN revisions r ON r.doc_id = d.id WHERE r.id = ?").get(id) || null;
+  }
+  return db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id) || null;
+}
+
+function projectForChecklist(id) {
+  return db.prepare(`SELECT p.* FROM projects p JOIN commissioning_checklists c ON c.project_id = p.id WHERE c.id = ?`).get(id) || null;
+}
+
+function drawingParent(drawingId) {
+  return db.prepare("SELECT * FROM drawings WHERE id = ?").get(drawingId) || null;
+}
 
 export default async function extrasRoutes(fastify) {
   // ------- Review cycles -------
-  fastify.get("/api/review-cycles", async (req) => {
+  fastify.get("/api/review-cycles", { preHandler: require_("view") }, async (req) => {
     const { docId, revId } = req.query || {};
     let sql = "SELECT * FROM review_cycles";
     const params = [];
@@ -25,12 +47,15 @@ export default async function extrasRoutes(fastify) {
     if (revId) { wheres.push("rev_id = ?"); params.push(revId); }
     if (wheres.length) sql += " WHERE " + wheres.join(" AND ");
     sql += " ORDER BY created_at DESC";
-    return db.prepare(sql).all(...params).map(parseReviewCycle);
+    return db.prepare(sql).all(...params)
+      .filter(r => allows(req.user, parentFor("document", r.doc_id)?.acl, "view"))
+      .map(parseReviewCycle);
   });
 
   fastify.post("/api/review-cycles", { preHandler: require_("create") }, async (req, reply) => {
     const { docId, revId, name, reviewers = [], dueTs = null, notes = null } = req.body || {};
     if (!docId || !revId || !name) return reply.code(400).send({ error: "docId, revId, name required" });
+    if (!requireAccess(req, reply, parentFor("document", docId), "create")) return;
     const id = uuid("RC");
     db.prepare(`INSERT INTO review_cycles (id, doc_id, rev_id, name, reviewers, status, due_ts, notes, created_by, created_at)
                 VALUES (@id, @doc, @rev, @name, @reviewers, 'open', @due, @notes, @by, @ts)`)
@@ -42,13 +67,14 @@ export default async function extrasRoutes(fastify) {
   fastify.post("/api/review-cycles/:id/close", { preHandler: require_("approve") }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM review_cycles WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
+    if (!requireAccess(req, reply, parentFor("document", row.doc_id), "approve")) return;
     db.prepare("UPDATE review_cycles SET status = 'closed', closed_at = ? WHERE id = ?").run(now(), row.id);
     audit({ actor: req.user.id, action: "review_cycle.close", subject: row.id });
     return { ok: true };
   });
 
   // ------- Forms / submissions -------
-  fastify.get("/api/forms", async () => {
+  fastify.get("/api/forms", { preHandler: require_("view") }, async () => {
     // Forms are seeded in-memory only; expose a shape consistent with the
     // client's existing seed entry so existing UI keeps working.
     // Client serves the live list.
@@ -58,6 +84,7 @@ export default async function extrasRoutes(fastify) {
   fastify.post("/api/form-submissions", { preHandler: require_("create") }, async (req, reply) => {
     const { formId, parentKind = null, parentId = null, answers = {} } = req.body || {};
     if (!formId) return reply.code(400).send({ error: "formId required" });
+    if (parentKind && parentId && !requireAccess(req, reply, parentFor(parentKind, parentId), "create")) return;
     const id = uuid("FS");
     const ts = now();
     const payload = { formId, parentKind, parentId, answers, submitter: req.user.id, ts };
@@ -69,7 +96,7 @@ export default async function extrasRoutes(fastify) {
     return { id, signature: sig };
   });
 
-  fastify.get("/api/form-submissions", async (req) => {
+  fastify.get("/api/form-submissions", { preHandler: require_("view") }, async (req) => {
     const { formId, parentKind, parentId } = req.query || {};
     let sql = "SELECT * FROM form_submissions";
     const wheres = []; const params = [];
@@ -78,20 +105,23 @@ export default async function extrasRoutes(fastify) {
     if (parentId)   { wheres.push("parent_id = ?"); params.push(parentId); }
     if (wheres.length) sql += " WHERE " + wheres.join(" AND ");
     sql += " ORDER BY ts DESC";
-    return db.prepare(sql).all(...params).map(r => ({ ...r, answers: JSON.parse(r.answers || "{}") }));
+    return db.prepare(sql).all(...params)
+      .filter(r => !r.parent_kind || !r.parent_id || allows(req.user, parentFor(r.parent_kind, r.parent_id)?.acl, "view"))
+      .map(r => ({ ...r, answers: JSON.parse(r.answers || "{}") }));
   });
 
   // ------- Commissioning -------
-  fastify.get("/api/commissioning", async (req) => {
+  fastify.get("/api/commissioning", { preHandler: require_("view") }, async (req) => {
     const { projectId } = req.query || {};
     const sql = projectId ? "SELECT * FROM commissioning_checklists WHERE project_id = ?" : "SELECT * FROM commissioning_checklists";
     const rows = projectId ? db.prepare(sql).all(projectId) : db.prepare(sql).all();
-    return rows.map(parseCommissioning);
+    return rows.filter(r => allows(req.user, parentFor("project", r.project_id)?.acl, "view")).map(parseCommissioning);
   });
 
   fastify.post("/api/commissioning", { preHandler: require_("create") }, async (req, reply) => {
     const { name, projectId, system = null, panel = null, package: pkg = null, items = [] } = req.body || {};
     if (!name || !projectId) return reply.code(400).send({ error: "name + projectId required" });
+    if (!requireAccess(req, reply, parentFor("project", projectId), "create")) return;
     const id = uuid("CC");
     db.prepare(`INSERT INTO commissioning_checklists (id, name, project_id, system, panel, package, items, completed, created_at, updated_at)
                 VALUES (@id, @name, @pid, @sys, @panel, @pkg, @items, '[]', @ts, @ts)`)
@@ -103,6 +133,7 @@ export default async function extrasRoutes(fastify) {
   fastify.post("/api/commissioning/:id/check", { preHandler: require_("edit") }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM commissioning_checklists WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
+    if (!requireAccess(req, reply, projectForChecklist(row.id), "edit")) return;
     const { index, checked = true } = req.body || {};
     const completed = JSON.parse(row.completed || "[]");
     const idx = Number(index);
@@ -120,13 +151,15 @@ export default async function extrasRoutes(fastify) {
   });
 
   // ------- RFI link graph -------
-  fastify.get("/api/rfi/:id/links", async (req) => {
+  fastify.get("/api/rfi/:id/links", { preHandler: require_("view") }, async (req, reply) => {
+    if (!requireAccess(req, reply, parentFor("work_item", req.params.id), "view")) return;
     return db.prepare("SELECT * FROM rfi_links WHERE rfi_id = ?").all(req.params.id);
   });
 
   fastify.post("/api/rfi/:id/links", { preHandler: require_("edit") }, async (req, reply) => {
     const { targetKind, targetId, relation = "references" } = req.body || {};
     if (!targetKind || !targetId) return reply.code(400).send({ error: "targetKind, targetId required" });
+    if (!requireAccess(req, reply, parentFor("work_item", req.params.id), "edit")) return;
     db.prepare("INSERT OR IGNORE INTO rfi_links (rfi_id, target_kind, target_id, relation) VALUES (?, ?, ?, ?)")
       .run(req.params.id, targetKind, targetId, relation);
     audit({ actor: req.user.id, action: "rfi.link", subject: req.params.id, detail: { targetKind, targetId, relation } });
@@ -138,6 +171,7 @@ export default async function extrasRoutes(fastify) {
     // The matching POST validates these — the DELETE silently dropped no
     // rows when callers omitted them and still returned `{ ok: true }`.
     if (!targetKind || !targetId) return reply.code(400).send({ error: "targetKind, targetId required" });
+    if (!requireAccess(req, reply, parentFor("work_item", req.params.id), "edit")) return;
     const r = db.prepare("DELETE FROM rfi_links WHERE rfi_id = ? AND target_kind = ? AND target_id = ?")
       .run(req.params.id, targetKind, targetId);
     audit({ actor: req.user.id, action: "rfi.unlink", subject: req.params.id, detail: { targetKind, targetId, removed: r.changes } });
@@ -171,6 +205,7 @@ export default async function extrasRoutes(fastify) {
   fastify.post("/api/drawings/:id/ingest", { preHandler: require_("create") }, async (req, reply) => {
     const dr = db.prepare("SELECT * FROM drawings WHERE id = ?").get(req.params.id);
     if (!dr) return reply.code(404).send({ error: "drawing not found" });
+    if (!requireAccess(req, reply, dr, "create")) return;
     const { fileId, reviewerId = null } = req.body || {};
     if (!fileId) return reply.code(400).send({ error: "fileId required" });
     const f = db.prepare("SELECT * FROM files WHERE id = ?").get(fileId);
@@ -203,15 +238,17 @@ export default async function extrasRoutes(fastify) {
   });
 
   // ------- Model-element pins -------
-  fastify.get("/api/model-pins", async (req) => {
+  fastify.get("/api/model-pins", { preHandler: require_("view") }, async (req, reply) => {
     const { drawingId } = req.query || {};
     if (!drawingId) return [];
+    if (!requireAccess(req, reply, drawingParent(drawingId), "view")) return;
     return db.prepare("SELECT * FROM model_pins WHERE drawing_id = ? ORDER BY created_at DESC").all(drawingId);
   });
 
   fastify.post("/api/model-pins", { preHandler: require_("edit.markup") }, async (req, reply) => {
     const { drawingId, elementId, text } = req.body || {};
     if (!drawingId || !elementId || !text) return reply.code(400).send({ error: "drawingId, elementId, text required" });
+    if (!requireAccess(req, reply, drawingParent(drawingId), "edit.markup")) return;
     const id = uuid("MP");
     db.prepare(`INSERT INTO model_pins (id, drawing_id, element_id, author, text, created_at)
                 VALUES (@id, @dr, @el, @author, @text, @ts)`)

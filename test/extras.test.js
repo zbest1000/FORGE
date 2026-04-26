@@ -76,13 +76,13 @@ test("login", async () => {
 test("review cycle: create, list, close", async () => {
   const c = await req("/api/review-cycles", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ docId: "DOC-1", revId: "REV-1", name: "cycle 1", reviewers: ["U-X"] }) });
   assert.equal(c.status, 200);
-  const list = await req("/api/review-cycles?docId=DOC-1");
+  const list = await req("/api/review-cycles?docId=DOC-1", { headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(list.status, 200);
   assert.equal(list.body.length, 1);
   assert.equal(list.body[0].status, "open");
   const close = await req(`/api/review-cycles/${c.body.id}/close`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(close.status, 200);
-  const list2 = await req("/api/review-cycles?docId=DOC-1");
+  const list2 = await req("/api/review-cycles?docId=DOC-1", { headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(list2.body[0].status, "closed");
 });
 
@@ -90,7 +90,7 @@ test("form submission: signed and listed", async () => {
   const r = await req("/api/form-submissions", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ formId: "FRM-1", parentKind: "work_item", parentId: "WI-RFI", answers: { ok: true } }) });
   assert.equal(r.status, 200);
   assert.ok(r.body.signature?.signature?.length === 64);
-  const list = await req("/api/form-submissions?formId=FRM-1");
+  const list = await req("/api/form-submissions?formId=FRM-1", { headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(list.body.length, 1);
   assert.equal(list.body[0].submitter_id, "U-X");
 });
@@ -108,20 +108,20 @@ test("commissioning: create + check + uncheck", async () => {
 test("RFI links: add + list + delete", async () => {
   const a = await req("/api/rfi/WI-RFI/links", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ targetKind: "drawing", targetId: "DRW-1", relation: "references" }) });
   assert.equal(a.status, 200);
-  const list = await req("/api/rfi/WI-RFI/links");
+  const list = await req("/api/rfi/WI-RFI/links", { headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(list.body.length, 1);
 
   // DELETE without query params must reject (previously returned ok with no
   // rows touched, hiding caller bugs).
   const badDel = await req("/api/rfi/WI-RFI/links", { method: "DELETE", headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(badDel.status, 400);
-  const stillThere = await req("/api/rfi/WI-RFI/links");
+  const stillThere = await req("/api/rfi/WI-RFI/links", { headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(stillThere.body.length, 1);
 
   const del = await req("/api/rfi/WI-RFI/links?targetKind=drawing&targetId=DRW-1", { method: "DELETE", headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(del.status, 200);
   assert.equal(del.body.removed, 1);
-  const list2 = await req("/api/rfi/WI-RFI/links");
+  const list2 = await req("/api/rfi/WI-RFI/links", { headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(list2.body.length, 0);
 });
 
@@ -142,7 +142,7 @@ test("drawing ingest rejects when drawing has no parent document", async () => {
 test("model pin: create + list", async () => {
   const c = await req("/api/model-pins", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ drawingId: "DRW-1", elementId: "EQ-HX01", text: "check tube integrity" }) });
   assert.equal(c.status, 200);
-  const list = await req("/api/model-pins?drawingId=DRW-1");
+  const list = await req("/api/model-pins?drawingId=DRW-1", { headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(list.body.length, 1);
   assert.equal(list.body[0].element_id, "EQ-HX01");
 });
