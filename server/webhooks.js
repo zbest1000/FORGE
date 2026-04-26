@@ -12,6 +12,7 @@ import crypto from "node:crypto";
 import { db, now, uuid } from "./db.js";
 import { audit } from "./audit.js";
 import { traceContextCarrier } from "./tracing.js";
+import { validateOutboundUrl } from "./security/outbound.js";
 
 function sign(secret, body) {
   return "sha256=" + crypto.createHmac("sha256", secret).update(body).digest("hex");
@@ -25,6 +26,13 @@ export function listWebhooks() {
 }
 
 export function createWebhook({ name, url, events = ["*"], secret = null, createdBy = null }) {
+  const validated = validateOutboundUrl(url);
+  if (!validated.ok) {
+    const err = new Error(`webhook url rejected: ${validated.reason}`);
+    err.statusCode = 400;
+    err.code = validated.reason;
+    throw err;
+  }
   const id = uuid("WH");
   const row = {
     id, name, url,
@@ -116,6 +124,13 @@ async function tick() {
     const wireBody = JSON.stringify({ id: uuid("WHD"), type: d.event_type, ts: new Date().toISOString(), payload });
     const signature = sign(wh.secret, wireBody);
     const attempt = d.attempt + 1;
+    const validated = validateOutboundUrl(wh.url);
+    if (!validated.ok) {
+      db.prepare("UPDATE webhook_deliveries SET status = 'failed', attempt = ?, last_error = ? WHERE id = ?")
+        .run(attempt, `unsafe_url:${validated.reason}`, d.id);
+      audit({ actor: "webhooks", action: "webhook.failed", subject: wh.id, detail: { deliveryId: d.id, attempt, error: `unsafe_url:${validated.reason}` } });
+      continue;
+    }
     try {
       const ac = new AbortController();
       const tmo = setTimeout(() => ac.abort(), 8000);

@@ -53,8 +53,9 @@ COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json ./
 COPY --chown=node:node server ./server
-COPY --chown=node:node docs ./docs
-COPY --chown=node:node PRODUCT_SPEC.md README.md LICENSE ./
+# Only license metadata is required at runtime. Docs and PRODUCT_SPEC.md
+# describe internal auth/audit semantics and were leaking into images.
+COPY --chown=node:node LICENSE ./
 
 USER node
 EXPOSE 3000

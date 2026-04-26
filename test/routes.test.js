@@ -58,7 +58,12 @@ app.addHook("onRequest", async (req) => {
   const tok = h.startsWith("Bearer ") ? h.slice(7) : null;
   req.user = null;
   if (!tok) return;
-  if (tok.startsWith("fgt_")) { const r = resolveToken(tok, userById); req.user = r?.user || null; return; }
+  if (tok.startsWith("fgt_")) {
+    const r = resolveToken(tok, userById);
+    req.user = r?.user || null;
+    if (r) { req.tokenId = r.tokenId; req.tokenScopes = r.scopes; }
+    return;
+  }
   try { const d = app.jwt.verify(tok); req.user = d?.sub ? userById(d.sub) : null; } catch {}
 });
 
@@ -102,6 +107,42 @@ test("login returns non-owner token for ACL regression checks", async () => {
 test("login with bad password is rejected", async () => {
   const r = await req("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "admin@forge.local", password: "wrong" }) });
   assert.equal(r.status, 401);
+});
+
+test("login.fail audit no longer leaks email plaintext", async () => {
+  const probe = "leaky-" + Math.random().toString(36).slice(2, 8) + "@forge.local";
+  await req("/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: probe, password: "wrong" }),
+  });
+  const { db: _db } = await import("../server/db.js");
+  const { drain } = await import("../server/audit.js");
+  await drain();
+  const rows = _db.prepare("SELECT actor, subject, detail FROM audit_log WHERE action = 'auth.login.fail' ORDER BY seq DESC LIMIT 10").all();
+  for (const r of rows) {
+    assert.equal(r.actor.includes(probe), false);
+    assert.equal(r.subject.includes(probe), false);
+    assert.equal((r.detail || "").includes(probe), false);
+    assert.match(r.actor, /^email:[0-9a-f]{16}$/);
+  }
+});
+
+test("login lockout returns 429 after threshold", async () => {
+  const { _resetAll } = await import("../server/security/lockout.js");
+  _resetAll();
+  const probe = "lockout-" + Math.random().toString(36).slice(2, 8) + "@forge.local";
+  let last;
+  for (let i = 0; i < 6; i++) {
+    last = await req("/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: probe, password: "wrong" }),
+    });
+  }
+  assert.equal(last.status, 429);
+  assert.ok(last.headers.get("retry-after"));
+  _resetAll();
 });
 
 test("tenant data endpoints require auth and filter object ACLs", async () => {
@@ -184,4 +225,33 @@ test("API token issuance, use, and revoke", async () => {
 
   const me2 = await req("/api/me", { headers: { authorization: `Bearer ${plain}` } });
   assert.equal(me2.status, 401);
+});
+
+test("API token scope is enforced against capabilities", async () => {
+  // view-only token still cannot create work items even though the underlying
+  // user is an Org Owner with all capabilities.
+  const create = await req("/api/tokens", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ name: "scope-test", scopes: ["view"] }) });
+  assert.equal(create.status, 200);
+  const viewOnly = create.body.token;
+
+  const list = await req("/api/work-items?projectId=PRJ-1", { headers: { authorization: `Bearer ${viewOnly}` } });
+  assert.equal(list.status, 200);
+
+  const denied = await req("/api/work-items", {
+    method: "POST",
+    headers: { authorization: `Bearer ${viewOnly}`, "content-type": "application/json" },
+    body: JSON.stringify({ projectId: "PRJ-1", title: "should-fail" }),
+  });
+  assert.equal(denied.status, 403);
+  assert.equal(denied.body.reason, "token_scope");
+
+  // Wildcard scope passes the same call.
+  const wild = await req("/api/tokens", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ name: "scope-wild", scopes: ["*"] }) });
+  const wildTok = wild.body.token;
+  const allowed = await req("/api/work-items", {
+    method: "POST",
+    headers: { authorization: `Bearer ${wildTok}`, "content-type": "application/json" },
+    body: JSON.stringify({ projectId: "PRJ-1", title: "should-pass" }),
+  });
+  assert.equal(allowed.status, 200);
 });

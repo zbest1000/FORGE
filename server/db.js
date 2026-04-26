@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.FORGE_DATA_DIR || path.resolve(__dirname, "..", "data");
@@ -848,8 +849,16 @@ migrate();
 // ---------- Helpers ----------
 export function now() { return new Date().toISOString(); }
 
+/**
+ * Generate a short, opaque, prefixed identifier suitable for primary keys.
+ *
+ * Backed by `crypto.randomUUID()` so output is unguessable and collision-
+ * resistant even for high-volume tables. Result is `prefix-XXXXXXXXXXXX`
+ * where the suffix is the first 12 hex chars of a random UUID, uppercased
+ * for parity with previous IDs already in seed data.
+ */
 export function uuid(prefix = "") {
-  const s = Math.random().toString(36).slice(2, 10).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
+  const s = randomUUID().replace(/-/g, "").slice(0, 12).toUpperCase();
   return prefix ? `${prefix}-${s}` : s;
 }
 

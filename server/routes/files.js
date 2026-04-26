@@ -17,6 +17,49 @@ const DATA_DIR = process.env.FORGE_DATA_DIR || path.resolve(process.cwd(), "data
 const FILES_DIR = path.join(DATA_DIR, "files");
 fs.mkdirSync(FILES_DIR, { recursive: true });
 
+// Server-side magic-byte sniff. Returns the canonical MIME type or null when
+// the bytes don't match a known signature. The caller decides whether to
+// trust the multipart-supplied MIME if no signature matches.
+function sniffMime(head) {
+  if (!head || head.length < 4) return null;
+  const b = head;
+  // PDF
+  if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return "application/pdf";
+  // PNG
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "image/png";
+  // JPEG (FF D8 FF)
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  // GIF
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return "image/gif";
+  // ZIP / docx/xlsx/pptx (PK\x03\x04)
+  if (b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04) return "application/zip";
+  // WebP (RIFF....WEBP)
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b.length >= 12 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return "image/webp";
+  // SVG / XML / HTML — very loose; treat any leading "<" as untrusted markup
+  if (b[0] === 0x3c) return "text/markup";
+  return null;
+}
+
+// Conservative inline-display allowlist. Anything else is forced to
+// `attachment` so the browser saves rather than renders.
+const INLINE_SAFE_MIMES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/svg+xml",
+  "text/plain",
+  "application/json",
+]);
+
+function shouldServeInline(mime) {
+  if (!mime) return false;
+  // SVG has script vectors; only allow if explicitly opted in via query.
+  if (mime === "image/svg+xml") return false;
+  return INLINE_SAFE_MIMES.has(String(mime).toLowerCase());
+}
+
 function pathFor(hash) {
   const shard = hash.slice(0, 2);
   const dir = path.join(FILES_DIR, shard);
@@ -54,14 +97,26 @@ export default async function fileRoutes(fastify) {
         const tmp = path.join(FILES_DIR, `.tmp-${uuid("t")}`);
         const hash = crypto.createHash("sha256");
         const sink = fs.createWriteStream(tmp);
-        uploadedMime = part.mimetype || "application/octet-stream";
+        const declaredMime = part.mimetype || "application/octet-stream";
         name = name || part.filename || "file";
         let size = 0;
+        let head = Buffer.alloc(0);
         await pipeline(async function* () {
-          for await (const chunk of part.file) { size += chunk.length; hash.update(chunk); yield chunk; }
+          for await (const chunk of part.file) {
+            if (head.length < 16) head = Buffer.concat([head, chunk.subarray(0, 16 - head.length)]);
+            size += chunk.length;
+            hash.update(chunk);
+            yield chunk;
+          }
         }(), sink);
         uploadedSize = size;
         uploadedHash = hash.digest("hex");
+        // Reconcile declared vs sniffed MIME. Sniffed wins when the bytes
+        // contradict the multipart header — a `text/markup` sniff means the
+        // payload starts with `<`, so we tag it as untrusted markup so the
+        // download path forces an `attachment` disposition.
+        const sniffed = sniffMime(head);
+        uploadedMime = sniffed || declaredMime;
         destPath = pathFor(uploadedHash);
         if (!fs.existsSync(destPath)) fs.renameSync(tmp, destPath);
         else fs.unlinkSync(tmp); // dedupe
@@ -95,9 +150,17 @@ export default async function fileRoutes(fastify) {
     }
     if (!fs.existsSync(row.path)) return reply.code(410).send({ error: "content missing" });
     audit({ actor: req.user.id, action: "file.download", subject: row.id, detail: { name: row.name, sha256: row.sha256 } });
+    // Force `attachment` for anything that is not on the inline-safe MIME
+    // allowlist. HTML/SVG/script-bearing markup is always served as a
+    // download — combined with the content-sniff guard below, this keeps
+    // a malicious upload from XSS-ing other tenants on the same origin.
+    const safeName = (row.name || "file").replace(/[^\w.\-]/g, "_");
+    const inlineOk = shouldServeInline(row.mime);
+    const disposition = inlineOk ? "inline" : "attachment";
     reply.header("Content-Type", row.mime || "application/octet-stream");
     reply.header("Content-Length", String(row.size));
-    reply.header("Content-Disposition", `inline; filename="${(row.name || "file").replace(/[^\w.\-]/g, "_")}"`);
+    reply.header("Content-Disposition", `${disposition}; filename="${safeName}"`);
+    reply.header("X-Content-Type-Options", "nosniff");
     reply.header("X-Content-SHA256", row.sha256);
     return reply.send(fs.createReadStream(row.path));
   });
