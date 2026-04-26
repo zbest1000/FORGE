@@ -44,3 +44,29 @@ export function allows(user, acl, capability) {
 export function filterAllowed(rows, user, capability, aclField = "acl") {
   return rows.filter(r => allows(user, r[aclField], capability));
 }
+
+export function canReadTenantData(user) {
+  return !!user && (can(user, "view") || can(user, "view.external") || user.role === "Organization Owner");
+}
+
+export function requireAccess(req, reply, row, capability = "view", aclField = "acl") {
+  if (!req.user) {
+    reply.code(401).send({ error: "unauthenticated" });
+    return false;
+  }
+  if (!row) {
+    reply.code(404).send({ error: "not found" });
+    return false;
+  }
+  if (!allows(req.user, row[aclField], capability)) {
+    reply.code(403).send({ error: "forbidden by ACL", capability });
+    return false;
+  }
+  return true;
+}
+
+export function requireAuth(req, reply) {
+  if (req.user) return true;
+  reply.code(401).send({ error: "unauthenticated" });
+  return false;
+}

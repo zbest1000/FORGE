@@ -28,12 +28,16 @@ db.prepare("INSERT INTO organizations (id, name, tenant_key, created_at) VALUES 
 db.prepare("INSERT INTO workspaces (id, org_id, name, region, created_at) VALUES ('WS-1','ORG-1','North Plant','us-east',?)").run(now);
 db.prepare("INSERT INTO users (id, org_id, email, name, role, password_hash, initials, disabled, created_at, updated_at) VALUES ('U-ADMIN','ORG-1','admin@forge.local','Admin','Organization Owner',?,'AD',0,?,?)")
   .run(await bcrypt.hash("forge", 10), now, now);
+db.prepare("INSERT INTO users (id, org_id, email, name, role, password_hash, initials, disabled, created_at, updated_at) VALUES ('U-ENG','ORG-1','eng@forge.local','Engineer','Engineer/Contributor',?,'EN',0,?,?)")
+  .run(await bcrypt.hash("forge", 10), now, now);
 db.prepare("INSERT INTO team_spaces (id, org_id, workspace_id, name, summary, status, acl, labels, created_at, updated_at) VALUES ('TS-1','ORG-1','WS-1','Engineering','',?,'{}','[]',?,?)")
   .run("active", now, now);
 db.prepare("INSERT INTO projects (id, team_space_id, name, status, milestones, acl, labels, created_at, updated_at) VALUES ('PRJ-1','TS-1','Project 1','active','[]','{}','[]',?,?)").run(now, now);
 db.prepare("INSERT INTO documents (id, team_space_id, project_id, name, discipline, current_revision_id, sensitivity, acl, labels, created_at, updated_at) VALUES ('DOC-1','TS-1','PRJ-1','Doc 1','Controls',NULL,'internal','{}','[]',?,?)").run(now, now);
 db.prepare("INSERT INTO revisions (id, doc_id, label, status, summary, notes, created_at, updated_at) VALUES ('REV-1','DOC-1','A','IFR','initial','',?,?)").run(now, now);
 db.prepare("INSERT INTO work_items (id, project_id, type, title, assignee_id, status, severity, blockers, labels, acl, created_at, updated_at) VALUES ('WI-1','PRJ-1','Task','First','U-ADMIN','Open','medium','[]','[]','{}',?,?)").run(now, now);
+db.prepare("INSERT INTO work_items (id, project_id, type, title, assignee_id, status, severity, blockers, labels, acl, created_at, updated_at) VALUES ('WI-SECRET','PRJ-1','Task','Secret','U-ADMIN','Open','high','[]','[]',?, ?, ?)")
+  .run(JSON.stringify({ roles: ["Reviewer/Approver"], users: [], abac: {} }), now, now);
 db.prepare("INSERT INTO channels (id, team_space_id, name, kind, acl, created_at, updated_at) VALUES ('CH-1','TS-1','general','team','{}',?,?)").run(now, now);
 
 // Boot fastify in-process.
@@ -74,6 +78,7 @@ async function req(path, opts = {}) {
   return { status: r.status, body, headers: r.headers };
 }
 let TOKEN;
+let ENG_TOKEN;
 
 test.after(async () => { await app.close(); });
 
@@ -88,9 +93,32 @@ test("login returns JWT + /api/me resolves it", async () => {
   assert.deepEqual(me.body.capabilities, ["*"]);
 });
 
+test("login returns non-owner token for ACL regression checks", async () => {
+  const login = await req("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "eng@forge.local", password: "forge" }) });
+  assert.equal(login.status, 200);
+  ENG_TOKEN = login.body.token;
+});
+
 test("login with bad password is rejected", async () => {
   const r = await req("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "admin@forge.local", password: "wrong" }) });
   assert.equal(r.status, 401);
+});
+
+test("tenant data endpoints require auth and filter object ACLs", async () => {
+  const anon = await req("/api/work-items?projectId=PRJ-1");
+  assert.equal(anon.status, 401);
+
+  const engList = await req("/api/work-items?projectId=PRJ-1", { headers: { authorization: `Bearer ${ENG_TOKEN}` } });
+  assert.equal(engList.status, 200);
+  assert.ok(engList.body.find(w => w.id === "WI-1"));
+  assert.equal(engList.body.some(w => w.id === "WI-SECRET"), false);
+
+  const adminList = await req("/api/work-items?projectId=PRJ-1", { headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(adminList.status, 200);
+  assert.ok(adminList.body.find(w => w.id === "WI-SECRET"));
+
+  const deniedPatch = await req("/api/work-items/WI-SECRET", { method: "PATCH", headers: { authorization: `Bearer ${ENG_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ status: "In Review" }) });
+  assert.equal(deniedPatch.status, 403);
 });
 
 test("CRUD on work items (create, patch, list)", async () => {
@@ -103,7 +131,7 @@ test("CRUD on work items (create, patch, list)", async () => {
   assert.equal(patched.status, 200);
   assert.equal(patched.body.status, "In Review");
 
-  const list = await req("/api/work-items?projectId=PRJ-1");
+  const list = await req("/api/work-items?projectId=PRJ-1", { headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(list.status, 200);
   assert.ok(list.body.find(w => w.id === id));
 });
@@ -117,7 +145,7 @@ test("revision transition cascades IFR → Approved → IFC with auto-supersede"
   assert.equal(t2.status, 200);
   assert.equal(t2.body.status, "IFC");
 
-  const doc = await req("/api/documents/DOC-1");
+  const doc = await req("/api/documents/DOC-1", { headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(doc.body.current_revision_id, "REV-1");
 
   const badJump = await req("/api/revisions/REV-1/transition", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ to: "Draft" }) });
