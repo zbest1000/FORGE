@@ -149,13 +149,26 @@ export function uninstallLicense() {
 }
 
 /**
- * Force the FORGE app to re-pull from the local license server. Only
- * meaningful when the installation is in online-activation mode
- * (i.e. FORGE_LOCAL_LS_URL is set on the server). Returns the new
- * resolved license, or rejects with the server's error envelope.
+ * Trigger the local LS to (re-)activate this installation against
+ * FORGE LLC. Used after a release or to recover after the operator
+ * marked the activation as released. Returns the new entitlements.
  */
-export function refreshActivation() {
-  return api("/api/license/refresh", { method: "POST" }).then((data) => {
+export function reactivateLicense() {
+  return api("/api/license/reactivate", { method: "POST" }).then((data) => {
+    _cached = data;
+    notify();
+    return data;
+  });
+}
+
+/**
+ * Release this installation's activation back to the customer's seat
+ * pool, freeing the seat to be reused on a different machine. After
+ * a successful release, this installation drops to the Community plan
+ * until it reactivates.
+ */
+export function releaseActivation() {
+  return api("/api/license/release", { method: "POST" }).then((data) => {
     _cached = data;
     notify();
     return data;
@@ -180,10 +193,22 @@ export function licenseBanner() {
     return { severity: "danger", text: `Your license for ${lic.customer} expired on ${lic.expires_at?.slice(0, 10)}. Running on the Community plan.` };
   }
   if (lic.status === "not_activated") {
-    return { severity: "danger", text: "This installation hasn't activated yet. Check that the local license server is reachable from this server." };
+    return { severity: "danger", text: "This installation hasn't activated yet. Click Reactivate, or check that the local license server is reachable." };
   }
-  if (lic.status === "offline_grace_expired") {
-    return { severity: "danger", text: "We haven't been able to reach your local license server for too long. Paid features have been disabled until activation succeeds again." };
+  if (lic.status === "superseded") {
+    return { severity: "danger", text: "This license has been activated on another machine. Click Reactivate to take the seat back here." };
+  }
+  if (lic.status === "released") {
+    return { severity: "danger", text: "This activation has been released to the seat pool. Click Reactivate to use the license here again." };
+  }
+  if (lic.status === "revoked") {
+    return { severity: "danger", text: "This activation was revoked by your FORGE LLC operator. Contact your account manager to restore service." };
+  }
+  if (lic.status === "host_mismatch") {
+    return { severity: "danger", text: "This activation was issued for a different host. Reactivate this installation to bind a fresh activation here." };
+  }
+  if (lic.status === "clock_tampered") {
+    return { severity: "danger", text: "The system clock appears to have been moved backward. Fix the clock and reactivate." };
   }
   if (lic.status === "not_yet_active") {
     return { severity: "warning", text: `Your license is dated to start on ${lic.starts_at?.slice(0, 10)}.` };
@@ -191,9 +216,6 @@ export function licenseBanner() {
   for (const r of lic.reasons || []) {
     const m = /^expires_in_(\d+)_days$/.exec(r);
     if (m) return { severity: "warning", text: `Your license expires in ${m[1]} day${m[1] === "1" ? "" : "s"}.` };
-    if (r === "offline_in_grace_period") {
-      return { severity: "warning", text: "The local license server has been unreachable; running on the cached entitlement until contact is restored." };
-    }
   }
   if (lic.usage && lic.usage.active_users > lic.seats) {
     return {

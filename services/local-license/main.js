@@ -1,13 +1,16 @@
 // FORGE local license server — runs on the customer's network as a
 // sidecar to the FORGE app. One per customer (or one per data centre).
 //
-// Responsibilities:
-//   1. Authenticate to the FORGE LLC central server using the
-//      customer's activation key, on a configurable schedule.
-//   2. Cache the most recent signed entitlement bundle on disk so
-//      transient internet outages don't take customers down.
-//   3. Serve that bundle on the LAN to FORGE app instances over a
-//      simple shared-secret HTTP API (`GET /api/v1/entitlement`).
+// Activation model:
+//   - Online activation is required ONCE. After that the long-lived
+//     activation1.* token is cached on disk and served to FORGE app
+//     instances over the LAN.
+//   - The local LS opportunistically heartbeats once a day to detect
+//     supersession (the same customer activated on another machine)
+//     or operator-initiated release/revoke. The heartbeat is best-
+//     effort and an offline customer keeps running normally.
+//   - The customer can voluntarily release the activation back to
+//     the pool (POST /api/v1/release) so it can be reused elsewhere.
 //
 // Configuration (env):
 //
@@ -19,11 +22,7 @@
 //   LOCAL_LS_SHARED_TOKEN      required: bearer for FORGE app callers
 //   LOCAL_LS_INSTANCE_ID       optional, defaults to a stable hash of
 //                              FORGE_CUSTOMER_ID + machine hostname
-//   LOCAL_LS_GRACE_HOURS       default 168 (7 days). After this many
-//                              hours offline, served bundles are
-//                              flagged as `offline_grace_expired`.
-//   LOCAL_LS_REFRESH_S         default 3600 (1 hour). Lower = more
-//                              outbound traffic but tighter freshness.
+//   LOCAL_LS_HEARTBEAT_S       default 86400 (24h). Set to 0 to disable.
 
 import Fastify from "fastify";
 import helmet from "@fastify/helmet";
@@ -31,17 +30,16 @@ import rateLimit from "@fastify/rate-limit";
 import os from "node:os";
 import crypto from "node:crypto";
 
-import { activate, refresh, heartbeat } from "./central-client.js";
+import { activate, release as releaseRemote, heartbeat } from "./central-client.js";
 import { verifyEntitlement } from "./verify.js";
-import { getState, saveActivation, recordRefreshFailure } from "./state.js";
+import { getState, saveActivation, applyHeartbeatResult, recordHeartbeatError, markReleased } from "./state.js";
 
 const PORT = Number(process.env.PORT || 7200);
 const HOST = process.env.HOST || "0.0.0.0";
 const CUSTOMER_ID = process.env.FORGE_CUSTOMER_ID;
 const ACTIVATION_KEY = process.env.FORGE_ACTIVATION_KEY;
 const SHARED_TOKEN = process.env.LOCAL_LS_SHARED_TOKEN;
-const GRACE_HOURS = Number(process.env.LOCAL_LS_GRACE_HOURS || 168);
-const REFRESH_S = Number(process.env.LOCAL_LS_REFRESH_S || 3600);
+const HEARTBEAT_S = Number(process.env.LOCAL_LS_HEARTBEAT_S || 86_400);
 const INSTANCE_ID = process.env.LOCAL_LS_INSTANCE_ID
   || ("ULS-" + crypto.createHash("sha256").update(String(CUSTOMER_ID || "") + os.hostname()).digest("hex").slice(0, 12));
 
@@ -54,7 +52,7 @@ if (!ACTIVATION_KEY) {
   process.exit(2);
 }
 if (!SHARED_TOKEN || SHARED_TOKEN.length < 16) {
-  console.error("error: LOCAL_LS_SHARED_TOKEN is required and must be at least 16 chars (used by FORGE app instances on the LAN)");
+  console.error("error: LOCAL_LS_SHARED_TOKEN is required and must be at least 16 chars");
   process.exit(2);
 }
 
@@ -68,7 +66,6 @@ const app = Fastify({
 await app.register(helmet, { contentSecurityPolicy: false });
 await app.register(rateLimit, { global: true, max: 120, timeWindow: "1 minute" });
 
-// --- LAN-side authentication for FORGE app callers ----------------
 function lanAuthenticated(req) {
   const h = req.headers.authorization || "";
   if (!h.startsWith("Bearer ")) return false;
@@ -80,21 +77,18 @@ function lanAuthenticated(req) {
 // --- Routes -------------------------------------------------------
 app.get("/api/v1/health", async () => {
   const s = getState();
-  const grace = computeGrace(s);
   return {
     status: "ok",
     customer_id: CUSTOMER_ID,
     instance_id: INSTANCE_ID,
     activation_status: s.activation_status || "uninitialised",
-    last_central_at: s.last_central_at || null,
-    last_failure_at: s.last_failure_at || null,
-    bundle_id: s.bundle_id || null,
-    bundle_expires_at: s.expires_at || null,
-    grace_until: grace.grace_until,
-    in_grace: grace.in_grace,
-    grace_expired: grace.grace_expired,
-    refresh_at: s.refresh_at || null,
-    activation_error: s.activation_error || null,
+    activation_token_id: s.activation_token_id || null,
+    activation_id: s.activation_id || null,
+    issued_at: s.issued_at || null,
+    last_heartbeat_at: s.last_heartbeat_at || null,
+    last_heartbeat_error: s.last_heartbeat_error || null,
+    superseded_by: s.superseded_by || null,
+    released_at: s.released_at || null,
   };
 });
 
@@ -106,119 +100,182 @@ app.get("/api/v1/entitlement", async (req, reply) => {
     });
   }
   const s = getState();
-  if (!s.entitlement) {
+  if (!s.activation_token) {
     return reply.code(503).send({
-      error: "no_entitlement",
-      message: "This local license server hasn't activated yet. Check the central license server connection.",
+      error: "no_activation",
+      message: "This local license server hasn't activated yet. Once activation succeeds against FORGE LLC the token will be served here.",
     });
   }
-  // Re-verify before serving so we never hand back a tampered cache.
-  const v = verifyEntitlement(s.entitlement);
+  if (s.activation_status && s.activation_status !== "active") {
+    // We deliberately still return the cached token — the FORGE app
+    // will see the same status and decide for itself how to react.
+    return {
+      activation_token: s.activation_token,
+      activation_id: s.activation_id,
+      activation_token_id: s.activation_token_id,
+      issued_at: s.issued_at,
+      activation_status: s.activation_status,
+      released_at: s.released_at || null,
+      revoked_at: s.revoked_at || null,
+      superseded_by: s.superseded_by || null,
+      last_heartbeat_at: s.last_heartbeat_at || null,
+      customer: s.customer,
+      license: s.license,
+    };
+  }
+  // Re-verify the cached token before serving so we never hand back a corrupt blob.
+  const v = verifyEntitlement(s.activation_token);
   if (!v.ok) {
     return reply.code(500).send({
       error: "entitlement_invalid",
-      message: "Cached entitlement signature did not verify. The local license server should be re-activated.",
+      message: "Cached activation token signature did not verify. The local license server should be re-activated.",
       detail: v.error,
     });
   }
-  const grace = computeGrace(s);
   return {
-    entitlement: s.entitlement,
-    bundle_id: s.bundle_id,
+    activation_token: s.activation_token,
+    activation_id: s.activation_id,
+    activation_token_id: s.activation_token_id,
     issued_at: s.issued_at,
-    expires_at: s.expires_at,
-    refresh_at: s.refresh_at,
-    last_central_at: s.last_central_at,
-    online: !!s.activation_status && s.activation_status === "ok",
-    grace_until: grace.grace_until,
-    in_grace: grace.in_grace,
-    grace_expired: grace.grace_expired,
+    activation_status: "active",
+    last_heartbeat_at: s.last_heartbeat_at || null,
     customer: s.customer,
     license: s.license,
+    instance_id: INSTANCE_ID,
   };
 });
 
-app.post("/api/v1/refresh-now", async (req, reply) => {
+// Trigger activation now (synchronous). Useful from the FORGE admin UI
+// the first time a customer brings the stack up, or after a release
+// to take the seat back.
+app.post("/api/v1/activate-now", async (req, reply) => {
   if (!lanAuthenticated(req)) {
     return reply.code(401).send({ error: "lan_auth_invalid", message: "Provide a valid LOCAL_LS_SHARED_TOKEN bearer." });
   }
   try {
-    const result = await runRefresh({ force: true });
+    const result = await runActivate();
     return { ok: true, result };
   } catch (err) {
-    return reply.code(502).send({ error: "refresh_failed", message: err.message || String(err) });
+    return reply.code(502).send({ error: "activate_failed", message: err.message || String(err) });
+  }
+});
+
+// Release the cached activation back to the FORGE LLC pool so the
+// customer can take this seat to a different machine. The local LS
+// stops serving the token once the central server confirms.
+app.post("/api/v1/release", async (req, reply) => {
+  if (!lanAuthenticated(req)) {
+    return reply.code(401).send({ error: "lan_auth_invalid", message: "Provide a valid LOCAL_LS_SHARED_TOKEN bearer." });
+  }
+  const s = getState();
+  if (!s.activation_token_id) {
+    return reply.code(409).send({ error: "no_activation", message: "There's no active activation on this server." });
+  }
+  try {
+    const r = await releaseRemote({
+      instance_id: INSTANCE_ID,
+      customer_id: CUSTOMER_ID,
+      activation_token_id: s.activation_token_id,
+      activation_id: s.activation_id,
+    });
+    if (!r.ok) {
+      return reply.code(502).send({ error: "release_failed", message: r.body?.message || `central server returned ${r.status}` });
+    }
+    markReleased();
+    return { ok: true, status: "released", released_at: r.body?.released_at };
+  } catch (err) {
+    return reply.code(502).send({ error: "release_failed", message: err.message || String(err) });
+  }
+});
+
+// Force a heartbeat now. The same logic runs on a daily timer.
+app.post("/api/v1/heartbeat-now", async (req, reply) => {
+  if (!lanAuthenticated(req)) {
+    return reply.code(401).send({ error: "lan_auth_invalid", message: "Provide a valid LOCAL_LS_SHARED_TOKEN bearer." });
+  }
+  try {
+    const result = await runHeartbeat();
+    return { ok: true, result };
+  } catch (err) {
+    return reply.code(502).send({ error: "heartbeat_failed", message: err.message || String(err) });
   }
 });
 
 // --- Central server interaction -----------------------------------
-async function runRefresh({ force = false } = {}) {
-  const s = getState();
-  const isActivated = !!s.entitlement;
-  const central = isActivated && !force
-    ? await refresh({ instance_id: INSTANCE_ID, customer_id: CUSTOMER_ID, prior_bundle_id: s.bundle_id })
-    : await activate({ instance_id: INSTANCE_ID, customer_id: CUSTOMER_ID });
-
+async function runActivate() {
+  const central = await activate({ instance_id: INSTANCE_ID, customer_id: CUSTOMER_ID });
   if (!central.ok) {
     const msg = central.body?.message || `central server returned ${central.status}`;
-    recordRefreshFailure(msg);
-    app.log.warn({ status: central.status, body: central.body }, "central refresh failed");
+    app.log.warn({ status: central.status, body: central.body }, "activation failed");
     throw new Error(msg);
   }
-
-  const verified = verifyEntitlement(central.body.entitlement);
+  const verified = verifyEntitlement(central.body.activation_token);
   if (!verified.ok) {
-    recordRefreshFailure("signature_invalid: " + verified.error);
-    throw new Error("central server returned an entitlement that failed signature verification: " + verified.error);
+    throw new Error("central server returned an activation token that failed signature verification: " + verified.error);
   }
   if (verified.payload.customer_id !== CUSTOMER_ID) {
-    recordRefreshFailure("customer_mismatch");
-    throw new Error("central server issued an entitlement for a different customer id (configuration mismatch)");
+    throw new Error("central server issued a token for a different customer id (configuration mismatch)");
   }
-
   return saveActivation({
-    entitlement: central.body.entitlement,
-    bundle_id: central.body.bundle_id,
+    activation_token: central.body.activation_token,
+    activation_id: central.body.activation_id,
+    activation_token_id: central.body.activation_token_id,
     customer: central.body.customer,
     license: central.body.license,
     issued_at: central.body.issued_at,
-    expires_at: central.body.expires_at,
-    refresh_at: central.body.refresh_at,
+    instance_id: INSTANCE_ID,
   });
 }
 
-function computeGrace(s) {
-  if (!s.last_central_at) return { grace_until: null, in_grace: false, grace_expired: false };
-  const ms = GRACE_HOURS * 3600_000;
-  const graceUntil = new Date(new Date(s.last_central_at).getTime() + ms).toISOString();
-  const now = Date.now();
-  const inGrace = now <= new Date(graceUntil).getTime();
-  return { grace_until: graceUntil, in_grace: inGrace, grace_expired: !inGrace };
+async function runHeartbeat() {
+  const s = getState();
+  if (!s.activation_token_id) return { skipped: "no_activation" };
+  try {
+    const r = await heartbeat({
+      instance_id: INSTANCE_ID,
+      customer_id: CUSTOMER_ID,
+      activation_token_id: s.activation_token_id,
+    });
+    if (!r.ok) {
+      recordHeartbeatError(r.body?.message || `central server returned ${r.status}`);
+      app.log.warn({ status: r.status, body: r.body }, "heartbeat returned non-OK");
+      return { ok: false, status: r.status };
+    }
+    applyHeartbeatResult(r.body || {});
+    return { ok: true, body: r.body };
+  } catch (err) {
+    recordHeartbeatError(err.message || String(err));
+    app.log.warn({ err: String(err.message || err) }, "heartbeat threw");
+    throw err;
+  }
 }
 
 // --- Boot ---------------------------------------------------------
 try {
   await app.listen({ host: HOST, port: PORT });
-  app.log.info({ instance_id: INSTANCE_ID, customer_id: CUSTOMER_ID, refresh_s: REFRESH_S, grace_hours: GRACE_HOURS },
+  app.log.info({ instance_id: INSTANCE_ID, customer_id: CUSTOMER_ID, heartbeat_s: HEARTBEAT_S },
     `FORGE local license server listening on http://${HOST}:${PORT}`);
 } catch (err) {
   app.log.error(err);
   process.exit(1);
 }
 
-// First activation, in the background. The HTTP API is up immediately
-// either way — calls just return 503 until the first activation
-// succeeds (or a cached bundle is present from a previous run).
-runRefresh({ force: !getState().entitlement }).catch(err => {
-  app.log.warn({ err: String(err.message || err) }, "initial activation failed; will retry");
-});
+// First activation, in the background — only when we don't already
+// have a cached token. The HTTP API is up immediately either way.
+if (!getState().activation_token) {
+  runActivate().catch(err => {
+    app.log.warn({ err: String(err.message || err) }, "initial activation failed; call POST /api/v1/activate-now to retry");
+  });
+}
 
-setInterval(() => {
-  runRefresh().catch(err => app.log.warn({ err: String(err.message || err) }, "scheduled refresh failed"));
-}, REFRESH_S * 1000);
-
-setInterval(() => {
-  heartbeat({ instance_id: INSTANCE_ID, customer_id: CUSTOMER_ID }).catch(() => {});
-}, Math.max(60_000, REFRESH_S * 1000 / 4));
+// Daily best-effort heartbeat. Detects supersession (another machine
+// took the seat), operator release, or revocation. Keeps last-seen
+// fresh on the central server too.
+if (HEARTBEAT_S > 0) {
+  setInterval(() => {
+    runHeartbeat().catch(() => {});
+  }, HEARTBEAT_S * 1000);
+}
 
 function shutdown(sig) {
   app.log.info({ sig }, "shutting down");

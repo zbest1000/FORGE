@@ -17,7 +17,7 @@ import { canonicalJSON } from "../core/crypto.js";
 import { mode as apiMode, api } from "../core/api.js";
 import { listGroups, currentUserId, effectiveGroupIds, isOrgOwner } from "../core/groups.js";
 import { navigate } from "../core/router.js";
-import { license as currentLicense, refreshLicense, installLicense as installLic, uninstallLicense as uninstallLic, refreshActivation, FEATURES } from "../core/license.js";
+import { license as currentLicense, refreshLicense, installLicense as installLic, uninstallLicense as uninstallLic, reactivateLicense, releaseActivation as releaseAct, FEATURES } from "../core/license.js";
 
 const ADMIN_SECTIONS = new Set(["identity", "access", "integrations", "audit", "retention", "health", "license"]);
 
@@ -137,35 +137,80 @@ function licensePanel() {
   ]);
 
   // ---- Activation panel: online (local LS) vs offline (token paste) ----
+  const activationStatusLabel = onlineActivationStatusLabel(lic);
+  const isActivated = isOnlineMode && lic?.activation_id && (lic?.activation_status === "active" || lic?.local_ls?.activation_status === "active");
+  const isSuperseded = lic?.status === "superseded";
+  const isReleased   = lic?.status === "released";
+  const isRevoked    = lic?.status === "revoked";
+
   const activationPanel = isOnlineMode
     ? card("Online activation", el("div", { class: "stack" }, [
         el("div", { class: "tiny muted" }, [
-          "This installation is activated through your local license server, which contacts FORGE LLC to keep your entitlements current.",
+          "This installation activates online once and then runs entirely from the cached, signed activation token. The activation only re-checks with FORGE LLC during a daily heartbeat — enough to learn if the seat has been moved to another machine or released by your operator.",
         ]),
         el("dl", { class: "kv" }, [
           kv("Local server", lic.local_ls.url || "—"),
-          kv("Currently online", lic.local_ls.online ? "Yes" : "No"),
-          kv("Last successful refresh", fmtDateTime(lic.local_ls.last_fetch_at)),
-          kv("Bundle ID", lic.local_ls.bundle_id || "—"),
-          kv("Bundle expires", fmtDateTime(lic.local_ls.bundle_expires_at)),
+          kv("Activation status", activationStatusLabel),
+          kv("Activation ID", lic.activation_id || lic.local_ls.activation_id || "—"),
+          kv("Token ID", lic.activation_token_id || lic.local_ls.activation_token_id || "—"),
+          kv("Activated at", fmtDateTime(lic.issued_at || lic.local_ls.issued_at)),
+          kv("Last heartbeat", fmtDateTime(lic.local_ls.last_fetch_at)),
+          (isSuperseded && lic.superseded_by) ? kv("Superseded by", lic.superseded_by) : null,
+          (isReleased && lic.released_at) ? kv("Released at", fmtDateTime(lic.released_at)) : null,
+          (isRevoked && lic.revoked_at) ? kv("Revoked at", fmtDateTime(lic.revoked_at)) : null,
           lic.local_ls.last_error ? kv("Last error", lic.local_ls.last_error) : null,
         ]),
+        (isSuperseded || isReleased || isRevoked)
+          ? el("div", { class: "callout warn tiny" }, [
+              isSuperseded
+                ? "This license is currently activated on another machine. Reactivate here to take the seat back — the previous machine will be downgraded the next time it heartbeats."
+                : isReleased
+                  ? "This activation was released back to the seat pool. Reactivate here to start using the license on this machine again."
+                  : "This activation was revoked by your FORGE LLC operator. Reactivation will create a fresh activation if your license still has a free seat.",
+            ])
+          : null,
         el("div", { class: "row wrap" }, [
           el("button", {
             class: "btn primary",
             disabled: !isOwner,
-            title: isOwner ? "" : "Only the Organization Owner can refresh activation",
+            title: isOwner ? "" : "Only the Organization Owner can reactivate the license",
             onClick: async () => {
               try {
-                await refreshActivation();
-                toast("Activation refreshed.", "success");
+                await reactivateLicense();
+                toast("Activated. This machine now holds a seat.", "success");
                 navigate("/admin/license");
               } catch (err) {
                 const msg = err?.body?.message || err.message || String(err);
-                toast("Couldn't refresh activation: " + msg, "danger");
+                toast("Couldn't reactivate: " + msg, "danger");
               }
             },
-          }, ["Refresh activation now"]),
+          }, [isSuperseded ? "Reactivate (take seat back)" : isActivated ? "Reactivate" : "Activate"]),
+          isActivated
+            ? el("button", {
+                class: "btn warn",
+                disabled: !isOwner,
+                title: isOwner
+                  ? "Releases this seat back to your license pool so you can use it on a different machine"
+                  : "Only the Organization Owner can release the activation",
+                onClick: async () => {
+                  if (!isOwner) return;
+                  const ok = await dangerAction({
+                    title: "Release this activation?",
+                    message: "This installation will return its seat to your license pool and drop to the Community plan immediately. You can move the license to another machine, or click Reactivate later to take the seat back here.",
+                    confirmLabel: "Release seat",
+                  });
+                  if (!ok) return;
+                  try {
+                    await releaseAct();
+                    toast("Seat released — running on Community plan.", "warn");
+                    navigate("/admin/license");
+                  } catch (err) {
+                    const msg = err?.body?.message || err.message || String(err);
+                    toast("Couldn't release: " + msg, "danger");
+                  }
+                },
+              }, ["Release this seat"])
+            : null,
         ]),
       ]))
     : card("Offline activation", el("div", { class: "stack" }, [
@@ -213,6 +258,19 @@ function licensePanel() {
     el("div", {}, [catalogBtn]),
     featuresPanel,
   ]);
+}
+
+function onlineActivationStatusLabel(lic) {
+  const s = lic?.activation_status || lic?.local_ls?.activation_status;
+  switch (s) {
+    case "active":     return "Active";
+    case "superseded": return "Superseded by another machine";
+    case "released":   return "Released to the pool";
+    case "revoked":    return "Revoked by operator";
+    case "cached":     return "Cached (offline)";
+    case "uninitialised": return "Not yet activated";
+    default:           return s || "—";
+  }
 }
 
 function activationLabel(lic) {

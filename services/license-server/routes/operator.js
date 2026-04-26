@@ -149,7 +149,61 @@ export default async function operatorRoutes(fastify) {
 
   // ---- Activations / audit ----
   fastify.get("/customers/:id/activations", async (req) => {
-    return db.prepare("SELECT id, instance_id, fingerprint, client_version, remote_ip, first_seen_at, last_seen_at FROM activations WHERE customer_id = ? ORDER BY last_seen_at DESC").all(req.params.id);
+    const filter = (req.query?.status || "").toString();
+    const sql = filter
+      ? "SELECT * FROM activations WHERE customer_id = ? AND status = ? ORDER BY last_seen_at DESC"
+      : "SELECT * FROM activations WHERE customer_id = ? ORDER BY last_seen_at DESC";
+    const rows = filter
+      ? db.prepare(sql).all(req.params.id, filter)
+      : db.prepare(sql).all(req.params.id);
+    return rows.map(r => ({
+      ...r,
+      fingerprint: jsonOrEmpty(r.fingerprint, {}),
+      bound_fingerprint: jsonOrEmpty(r.bound_fingerprint, {}),
+    }));
+  });
+
+  // Operator-initiated reclaim. Used when a customer's machine is
+  // unreachable (lost laptop, dead server) and they need their seat
+  // back so they can re-activate elsewhere. Marks the activation as
+  // released and downgrades any active token issued for it.
+  fastify.post("/activations/:id/release", async (req, reply) => {
+    const cur = db.prepare("SELECT * FROM activations WHERE id = ?").get(req.params.id);
+    if (!cur) return reply.code(404).send({ error: "not_found", message: "Unknown activation." });
+    if (cur.status !== "active") {
+      return reply.code(409).send({ error: cur.status, message: `This activation is already ${cur.status}.` });
+    }
+    const ts = now();
+    db.transaction(() => {
+      db.prepare("UPDATE activations SET status = 'released', released_at = ?, released_by = ? WHERE id = ?")
+        .run(ts, "operator", req.params.id);
+      db.prepare("UPDATE activation_tokens SET status = 'released', status_changed_at = ? WHERE activation_id = ? AND status = 'active'")
+        .run(ts, req.params.id);
+    })();
+    audit(db, {
+      actor: "operator", action: "activation.release",
+      customer_id: cur.customer_id, subject: req.params.id, ip: req.ip,
+      detail: { reason: req.body?.reason || null, instance_id: cur.instance_id },
+    });
+    return { ok: true, id: req.params.id, status: "released", released_at: ts };
+  });
+
+  fastify.post("/activations/:id/revoke", async (req, reply) => {
+    const cur = db.prepare("SELECT * FROM activations WHERE id = ?").get(req.params.id);
+    if (!cur) return reply.code(404).send({ error: "not_found", message: "Unknown activation." });
+    const ts = now();
+    db.transaction(() => {
+      db.prepare("UPDATE activations SET status = 'revoked', revoked_at = ? WHERE id = ?")
+        .run(ts, req.params.id);
+      db.prepare("UPDATE activation_tokens SET status = 'revoked', status_changed_at = ? WHERE activation_id = ? AND status = 'active'")
+        .run(ts, req.params.id);
+    })();
+    audit(db, {
+      actor: "operator", action: "activation.revoke",
+      customer_id: cur.customer_id, subject: req.params.id, ip: req.ip,
+      detail: { reason: req.body?.reason || null },
+    });
+    return { ok: true, id: req.params.id, status: "revoked", revoked_at: ts };
   });
 
   fastify.get("/customers/:id/audit", async (req) => {
@@ -157,3 +211,5 @@ export default async function operatorRoutes(fastify) {
     return db.prepare("SELECT * FROM audit_log WHERE customer_id = ? ORDER BY ts DESC LIMIT ?").all(req.params.id, limit);
   });
 }
+
+function jsonOrEmpty(s, fallback) { try { return s ? JSON.parse(s) : fallback; } catch { return fallback; } }

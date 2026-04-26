@@ -50,6 +50,7 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -565,13 +566,15 @@ const COMMUNITY_FALLBACK = Object.freeze({
   reasons: [],
 });
 
-// In-memory cache of the most recent local-LS-supplied entitlement.
-// Populated by `pollLocalLicenseServer()`; consumed by `getLicense()`
-// before any of the legacy sources are checked.
-let _onlineEntitlement = null;
+// Persistent cache of the long-lived activation token from the local
+// LS. The FORGE app reads it once at boot, persists it under
+// FORGE_DATA_DIR/activation.json, and only re-fetches if the file is
+// missing, the local LS reports a different `activation_token_id`,
+// or the operator clicks "Reactivate" / "Release" in the admin UI.
 let _onlineMaterialised = null;
 let _onlineLastFetchAt = 0;
 let _onlineLastError = null;
+let _onlineHeartbeat = null; // { active, status, superseded_by, ... } from last heartbeat
 
 let cached = null;
 let cachedAt = 0;
@@ -596,7 +599,14 @@ export function clearLicenseCache() {
 export function getLicense({ skipCache = false } = {}) {
   if (!skipCache && cached && Date.now() - cachedAt < CACHE_MS) return cached;
 
-  // 1. Online activation via the local license server.
+  // 1. Online activation token (in memory if loaded this boot, on disk
+  //    otherwise). Once activated, the FORGE app re-verifies the
+  //    signature + datetime sanity on every read but never needs to
+  //    contact the network unless the operator explicitly releases or
+  //    the local LS reports a heartbeat-derived status change.
+  if (!_onlineMaterialised) {
+    loadPersistedActivation();
+  }
   if (_onlineMaterialised) {
     cached = _onlineMaterialised;
     cachedAt = Date.now();
@@ -743,12 +753,19 @@ export function verifyEntitlementBundle(token) {
 }
 
 /**
- * Translate a verified entitlement-bundle payload into the same
- * internal verdict shape as a `forge1.*` token. The bundle's own
- * `expires_at` is the rotation deadline, NOT the license expiry —
- * those are tracked separately.
+ * Translate a verified activation-token payload into the same
+ * internal verdict shape as a `forge1.*` offline token.
+ *
+ * The activation token is signed by FORGE LLC and has no rotation
+ * expiry of its own. Validity is governed by:
+ *   - signature (verified on every read)
+ *   - wall-clock vs `license_expires_at` for annual licenses
+ *   - wall-clock not earlier than `issued_at` (clock-back tampering)
+ *   - the local LS heartbeat result (`superseded` / `released` /
+ *     `revoked` → downgrade to community)
+ *   - optional `bound_fingerprint` match against the host
  */
-function materialiseEntitlement(payload, { graceExpired = false } = {}) {
+function materialiseActivation(payload, { heartbeatStatus = "active", supersededBy = null, releasedAt = null, revokedAt = null, fingerprintMismatch = false } = {}) {
   const reasons = [];
   const tier = TIERS.includes(payload.tier) ? payload.tier : "community";
   const limits = TIER_DEFAULT_SEATS[tier] || ENTERPRISE_LIMITS;
@@ -758,6 +775,10 @@ function materialiseEntitlement(payload, { graceExpired = false } = {}) {
     source: "local_ls",
     raw: null,
     license_id: payload.license_id,
+    activation_id: payload.activation_id,
+    activation_token_id: payload.activation_token_id,
+    instance_id: payload.instance_id,
+    bound_fingerprint: payload.bound_fingerprint || null,
     customer: payload.customer_name,
     contact: payload.contact || null,
     edition: payload.edition || tier,
@@ -774,34 +795,146 @@ function materialiseEntitlement(payload, { graceExpired = false } = {}) {
     notes: null,
     status: "ok",
     reasons,
-    bundle_id: payload.bundle_id,
-    bundle_expires_at: payload.expires_at,
+    activation_status: "active",
   };
 
-  const today = new Date();
-  if (verdict.expires_at && new Date(verdict.expires_at) < today) {
+  const now = Date.now();
+  // 1. Wall-clock sanity: refuse to honour a token whose `issued_at` is
+  //    in the future (system clock has been moved back) by more than a
+  //    small skew tolerance.
+  if (payload.issued_at) {
+    const issued = new Date(payload.issued_at).getTime();
+    if (issued - now > 24 * 3600_000) {
+      verdict.status = "clock_tampered";
+      reasons.push("clock_back_detected");
+      verdict.features = TIER_DEFAULTS.community.slice();
+      verdict.tier = "community";
+      return verdict;
+    }
+  }
+
+  // 2. License expiry.
+  if (verdict.expires_at && new Date(verdict.expires_at).getTime() < now) {
     verdict.status = "expired";
     reasons.push(`expired_at ${verdict.expires_at}`);
     verdict.features = TIER_DEFAULTS.community.slice();
     verdict.tier = "community";
+    return verdict;
   } else if (verdict.expires_at) {
-    const days = Math.ceil((new Date(verdict.expires_at) - today) / 86_400_000);
+    const days = Math.ceil((new Date(verdict.expires_at).getTime() - now) / 86_400_000);
     if (days <= 30) reasons.push(`expires_in_${days}_days`);
   }
-  if (graceExpired) {
-    verdict.status = "offline_grace_expired";
-    reasons.push("offline_grace_expired");
+
+  // 3. Heartbeat outcomes from the local LS take priority over local
+  //    state. Last-writer-wins: if another machine has activated for
+  //    the same customer, this machine's heartbeat returns superseded.
+  if (heartbeatStatus === "superseded") {
+    verdict.status = "superseded";
+    verdict.activation_status = "superseded";
+    if (supersededBy) verdict.superseded_by = supersededBy;
+    reasons.push("superseded_by_other_machine");
     verdict.features = TIER_DEFAULTS.community.slice();
     verdict.tier = "community";
+    return verdict;
   }
+  if (heartbeatStatus === "released") {
+    verdict.status = "released";
+    verdict.activation_status = "released";
+    verdict.released_at = releasedAt || null;
+    reasons.push("released_to_pool");
+    verdict.features = TIER_DEFAULTS.community.slice();
+    verdict.tier = "community";
+    return verdict;
+  }
+  if (heartbeatStatus === "revoked") {
+    verdict.status = "revoked";
+    verdict.activation_status = "revoked";
+    verdict.revoked_at = revokedAt || null;
+    reasons.push("revoked_by_operator");
+    verdict.features = TIER_DEFAULTS.community.slice();
+    verdict.tier = "community";
+    return verdict;
+  }
+
+  // 4. Fingerprint mismatch — a token bound to a different host.
+  if (fingerprintMismatch) {
+    verdict.status = "host_mismatch";
+    reasons.push("activation_bound_to_different_host");
+    verdict.features = TIER_DEFAULTS.community.slice();
+    verdict.tier = "community";
+    return verdict;
+  }
+
   return verdict;
 }
 
+// ---------------------------------------------------------------------------
+// Activation persistence (FORGE_DATA_DIR/activation.json)
+// ---------------------------------------------------------------------------
+
+function activationFilePath() {
+  const dir = process.env.FORGE_DATA_DIR || path.resolve(__dirname, "..", "data");
+  return path.join(dir, "activation.json");
+}
+
+function readPersistedActivation() {
+  try {
+    const raw = fs.readFileSync(activationFilePath(), "utf8");
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+function writePersistedActivation(obj) {
+  const p = activationFilePath();
+  try { fs.mkdirSync(path.dirname(p), { recursive: true }); } catch {}
+  const tmp = p + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
+  fs.renameSync(tmp, p);
+}
+
+function clearPersistedActivation() {
+  try { fs.unlinkSync(activationFilePath()); } catch {}
+}
+
 /**
- * Pull a fresh entitlement from the local license server. Returns
- * the materialised verdict on success and updates the in-memory
- * cache; on failure clears the online cache so getLicense() can fall
- * through to legacy sources / community fallback.
+ * Compute the local fingerprint we expect any activation bound to
+ * this host to match. Only stable, low-entropy fields participate so
+ * a routine reboot or container respawn doesn't invalidate.
+ */
+function localFingerprint() {
+  return {
+    platform: process.platform + "-" + process.arch,
+    hostname_hash: crypto.createHash("sha256").update(os.hostname()).digest("hex"),
+  };
+}
+
+function fingerprintMatches(bound) {
+  if (!bound || typeof bound !== "object") return true; // unbound activation
+  if (process.env.FORGE_SKIP_FINGERPRINT === "1") return true;
+  const local = localFingerprint();
+  if (bound.platform && bound.platform !== local.platform) return false;
+  if (bound.hostname_hash && bound.hostname_hash !== local.hostname_hash) return false;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Local LS interaction
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the long-lived activation token from the local license server.
+ *
+ * Behaviour:
+ *   - Calls GET /api/v1/entitlement on the local LS.
+ *   - Verifies the signed activation token against the bundled vendor
+ *     public key. A signature failure rejects the token outright.
+ *   - Honours heartbeat-derived statuses (`superseded`, `released`,
+ *     `revoked`) reported by the local LS.
+ *   - Persists the token + matched activation_token_id to disk so
+ *     subsequent boots don't re-hit the network.
+ *
+ * Returns the materialised verdict on success, or `null` on
+ * failure (with `_onlineLastError` set for diagnostic display).
  */
 export async function pollLocalLicenseServer() {
   const url = process.env.FORGE_LOCAL_LS_URL;
@@ -817,46 +950,158 @@ export async function pollLocalLicenseServer() {
     });
     if (!r.ok) {
       _onlineLastError = `local_ls_status_${r.status}`;
-      _onlineEntitlement = null;
       _onlineMaterialised = null;
       clearLicenseCache();
       return null;
     }
     const body = await r.json();
+    if (!body.activation_token) {
+      _onlineLastError = "local_ls_no_activation";
+      _onlineMaterialised = null;
+      clearLicenseCache();
+      return null;
+    }
     if (process.env.FORGE_EXPECTED_CUSTOMER_ID && body?.customer?.id && body.customer.id !== process.env.FORGE_EXPECTED_CUSTOMER_ID) {
       _onlineLastError = "customer_id_mismatch";
-      _onlineEntitlement = null;
       _onlineMaterialised = null;
       clearLicenseCache();
       return null;
     }
-    const verified = verifyEntitlementBundle(body.entitlement);
+    const verified = verifyEntitlementBundle(body.activation_token);
     if (!verified.ok) {
       _onlineLastError = "signature_invalid: " + verified.error;
-      _onlineEntitlement = null;
       _onlineMaterialised = null;
       clearLicenseCache();
       return null;
     }
-    _onlineEntitlement = body.entitlement;
+    const status = body.activation_status || "active";
+    _onlineMaterialised = materialiseActivation(verified.payload, {
+      heartbeatStatus: status,
+      supersededBy: body.superseded_by || null,
+      releasedAt: body.released_at || null,
+      revokedAt: body.revoked_at || null,
+      fingerprintMismatch: !fingerprintMatches(verified.payload.bound_fingerprint),
+    });
+    _onlineHeartbeat = {
+      status,
+      superseded_by: body.superseded_by || null,
+      released_at: body.released_at || null,
+      revoked_at: body.revoked_at || null,
+      last_heartbeat_at: body.last_heartbeat_at || null,
+    };
     _onlineLastFetchAt = Date.now();
     _onlineLastError = null;
-    _onlineMaterialised = materialiseEntitlement(verified.payload, { graceExpired: !!body.grace_expired });
-    _onlineMaterialised.online = !!body.online;
-    _onlineMaterialised.last_central_at = body.last_central_at || null;
-    _onlineMaterialised.grace_until = body.grace_until || null;
-    if (!body.online && body.in_grace) _onlineMaterialised.reasons.push("offline_in_grace_period");
+    // Persist the token + minimal context so subsequent boots can run
+    // entirely offline as long as the underlying license stays valid.
+    writePersistedActivation({
+      activation_token: body.activation_token,
+      activation_token_id: body.activation_token_id,
+      activation_id: body.activation_id,
+      issued_at: body.issued_at,
+      customer: body.customer,
+      license: body.license,
+      cached_at: new Date().toISOString(),
+    });
     clearLicenseCache();
     return _onlineMaterialised;
   } catch (err) {
     _onlineLastError = String(err.message || err);
-    _onlineEntitlement = null;
     _onlineMaterialised = null;
     clearLicenseCache();
     return null;
   } finally {
     clearTimeout(t);
   }
+}
+
+/**
+ * On boot, restore the activation from disk WITHOUT contacting the
+ * local LS. We still verify the signature, the wall-clock against
+ * the token's issued_at + license_expires_at, and the fingerprint.
+ * The local LS poll then runs separately and only updates the
+ * heartbeat status; if the local LS is unreachable, the cached
+ * activation continues to drive entitlements.
+ */
+export function loadPersistedActivation() {
+  const persisted = readPersistedActivation();
+  if (!persisted?.activation_token) return null;
+  const verified = verifyEntitlementBundle(persisted.activation_token);
+  if (!verified.ok) {
+    _onlineLastError = "persisted_activation_invalid: " + verified.error;
+    return null;
+  }
+  if (process.env.FORGE_EXPECTED_CUSTOMER_ID
+      && verified.payload.customer_id !== process.env.FORGE_EXPECTED_CUSTOMER_ID) {
+    _onlineLastError = "persisted_customer_id_mismatch";
+    return null;
+  }
+  _onlineMaterialised = materialiseActivation(verified.payload, {
+    heartbeatStatus: "active",
+    fingerprintMismatch: !fingerprintMatches(verified.payload.bound_fingerprint),
+  });
+  _onlineLastFetchAt = persisted.cached_at ? new Date(persisted.cached_at).getTime() : 0;
+  return _onlineMaterialised;
+}
+
+/**
+ * Tell the local license server to release this machine's activation
+ * back to the FORGE LLC pool. Returns the local LS's response. On
+ * success, clears any persisted activation so the FORGE app drops
+ * back to the community tier.
+ */
+export async function releaseActivation() {
+  const url = process.env.FORGE_LOCAL_LS_URL;
+  const token = process.env.FORGE_LOCAL_LS_TOKEN;
+  if (!url || !token) {
+    const e = new Error("FORGE_LOCAL_LS_URL is not configured; nothing to release");
+    e.code = "ERR_FORGE_NO_LOCAL_LS";
+    throw e;
+  }
+  const r = await fetch(url.replace(/\/+$/, "") + "/api/v1/release", {
+    method: "POST",
+    headers: { "Authorization": "Bearer " + token, "Accept": "application/json" },
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = new Error(body.message || `local LS returned ${r.status}`);
+    e.code = "ERR_FORGE_RELEASE_FAILED";
+    e.body = body;
+    throw e;
+  }
+  clearPersistedActivation();
+  _onlineMaterialised = null;
+  _onlineHeartbeat = null;
+  clearLicenseCache();
+  return body;
+}
+
+/**
+ * Trigger the local LS to (re-)activate against FORGE LLC. Used after
+ * a release, when first bringing the FORGE app online, or when the
+ * customer wants to take a previously-released seat back.
+ */
+export async function reactivateLicense() {
+  const url = process.env.FORGE_LOCAL_LS_URL;
+  const token = process.env.FORGE_LOCAL_LS_TOKEN;
+  if (!url || !token) {
+    const e = new Error("FORGE_LOCAL_LS_URL is not configured");
+    e.code = "ERR_FORGE_NO_LOCAL_LS";
+    throw e;
+  }
+  const r = await fetch(url.replace(/\/+$/, "") + "/api/v1/activate-now", {
+    method: "POST",
+    headers: { "Authorization": "Bearer " + token, "Accept": "application/json" },
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = new Error(body.message || `local LS returned ${r.status}`);
+    e.code = "ERR_FORGE_REACTIVATE_FAILED";
+    e.body = body;
+    throw e;
+  }
+  // Pull the new token immediately.
+  await pollLocalLicenseServer();
+  return body;
 }
 
 /** For tests + admin UI. */
@@ -866,20 +1111,30 @@ export function localLicenseStatus() {
     url: process.env.FORGE_LOCAL_LS_URL || null,
     last_fetch_at: _onlineLastFetchAt ? new Date(_onlineLastFetchAt).toISOString() : null,
     last_error: _onlineLastError,
-    online: !!_onlineMaterialised && _onlineMaterialised.status === "ok",
-    bundle_id: _onlineMaterialised?.bundle_id || null,
-    bundle_expires_at: _onlineMaterialised?.bundle_expires_at || null,
+    has_persisted_activation: !!readPersistedActivation()?.activation_token,
+    activation_status: _onlineMaterialised?.activation_status || (readPersistedActivation()?.activation_token ? "cached" : "uninitialised"),
+    activation_token_id: _onlineMaterialised?.activation_token_id || readPersistedActivation()?.activation_token_id || null,
+    activation_id: _onlineMaterialised?.activation_id || readPersistedActivation()?.activation_id || null,
+    issued_at: _onlineMaterialised?.issued_at || readPersistedActivation()?.issued_at || null,
+    last_heartbeat: _onlineHeartbeat || null,
   };
 }
 
 /** Test/dev helper: forcibly inject a materialised online verdict
- *  without going over the network. */
+ *  without going over the network. Only mutates in-memory state —
+ *  call `_clearPersistedActivationForTest()` explicitly if you also
+ *  want the on-disk cache wiped.
+ */
 export function _setOnlineMaterialisedForTest(v) {
   _onlineMaterialised = v;
-  _onlineEntitlement = v ? "test" : null;
   _onlineLastFetchAt = v ? Date.now() : 0;
   _onlineLastError = null;
+  _onlineHeartbeat = null;
   clearLicenseCache();
+}
+
+export function _clearPersistedActivationForTest() {
+  clearPersistedActivation();
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,6 +1262,17 @@ export function publicEntitlements(license = getLicense()) {
     status_label: humanStatus(license),
     reasons: license.reasons.slice(),
     reason_messages: license.reasons.map(humanReason),
+    // Online activation fields. Present when source === "local_ls"; null
+    // otherwise. Surfaced here so the SPA admin panel can render the
+    // activation id, last heartbeat result, and supersede / release
+    // reasons without inspecting the raw token.
+    activation_id: license.activation_id || null,
+    activation_token_id: license.activation_token_id || null,
+    activation_status: license.activation_status || null,
+    superseded_by: license.superseded_by || null,
+    released_at: license.released_at || null,
+    revoked_at: license.revoked_at || null,
+    instance_id: license.instance_id || null,
   };
 }
 
@@ -1022,6 +1288,12 @@ function humanStatus(license) {
     case "expired": return "Expired";
     case "not_yet_active": return "Starts in the future";
     case "invalid": return "Invalid signature";
+    case "not_activated": return "Not activated";
+    case "superseded": return "Superseded by another machine";
+    case "released": return "Released to the pool";
+    case "revoked": return "Revoked by operator";
+    case "host_mismatch": return "Activation bound to a different host";
+    case "clock_tampered": return "System clock moved backward";
     default: return license.status || "Unknown";
   }
 }

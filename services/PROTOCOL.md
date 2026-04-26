@@ -1,33 +1,64 @@
 # FORGE Licensing — wire protocol
 
-Three components, two protocol hops:
+Three components, two protocol hops, **one** online activation per
+machine. After activation, FORGE installations run entirely from the
+cached, signed token; the only network traffic is a daily heartbeat
+from each customer's local LS to FORGE LLC, which is best-effort.
 
 ```
-┌────────────────────────────┐  HTTPS, vendor API key  ┌────────────────────────────┐
-│ FORGE LLC central server   │ ◄────────────────────── │ Customer local LS sidecar  │
-│ (Ed25519 signing key)      │ ──────────────────────► │ (per-customer install)     │
-└────────────────────────────┘    signed entitlement   └────────────────────────────┘
-                                  bundle (JWS)                       ▲
-                                                                     │ HTTPS / LAN
-                                                                     │ pull (any auth user)
-                                                          ┌──────────┴───────────┐
-                                                          │ FORGE app instances  │
-                                                          │ (1..N replicas)      │
-                                                          └──────────────────────┘
+┌────────────────────────────┐  HTTPS, vendor activation key  ┌────────────────────────────┐
+│ FORGE LLC central server   │ ◄──────────────────────────── │ Customer local LS sidecar  │
+│ (Ed25519 signing key)      │ ──────────────────────────►   │ (per-customer install)     │
+└────────────────────────────┘  long-lived signed             └────────────────────────────┘
+                                activation token                              ▲
+                                                                              │ HTTPS / LAN
+                                                                              │ shared-secret
+                                                                   ┌──────────┴───────────┐
+                                                                   │ FORGE app instances  │
+                                                                   │ (1..N replicas)      │
+                                                                   └──────────────────────┘
 ```
 
-## Hop 1 — central ↔ local
+## Activation lifecycle
 
-The customer's local license server holds two long-lived secrets,
-provisioned out-of-band when FORGE LLC creates the customer account:
+A *seat* is the right to run one FORGE installation against the
+customer's license at any given moment. A licence with `seats: N`
+allows N concurrent activations.
 
-- `customer_id` — opaque vendor-side identifier (e.g. `CUST-9C3F2A`).
-- `activation_key` — high-entropy bearer secret (32 bytes hex,
-  rotatable). Sent over TLS as `Authorization: Bearer <key>`.
+Each activation goes through these statuses on the central server:
+
+```
+                     ┌──────────► released  (voluntary or operator)
+                     │
+                     │  ┌───────► superseded  (last-writer-wins: another machine took the seat)
+                     │  │
+   activate  →  active ─┤
+                        │
+                        └───────► revoked    (operator anti-piracy / fraud)
+```
+
+`released` and `superseded` rows can be reused: the next `activate`
+call from the same `instance_id` flips the row back to `active` and
+issues a new token; an `activate` call from a fresh `instance_id`
+either claims an empty slot (status: nothing) or supersedes the
+oldest `active` row.
+
+Once `revoked`, an activation is dead until the operator restores it
+or the customer is issued a new license entirely.
+
+## Hop 1 — central ↔ local LS
+
+Authentication: long-lived `activation_key` (`fla_…`) the customer's
+local LS holds. Stored on the central server as `sha256(key)`.
 
 ### `POST /api/v1/activate`
 
-Initial activation. The local LS sends:
+Claim a seat for this `instance_id`. Idempotent: re-activating from
+the same instance_id flips the row to `active` and issues a fresh
+token. Activating with a new `instance_id` and no free seat
+supersedes the oldest activation (last-writer-wins).
+
+Request:
 
 ```json
 {
@@ -36,121 +67,164 @@ Initial activation. The local LS sends:
   "fingerprint": {
     "node_version": "v20.16.0",
     "platform": "linux-x64",
-    "hostname_hash": "sha256(hostname)",
-    "boot_id": "fb9d1…"
+    "hostname_hash": "sha256(hostname)"
   },
   "client_version": "0.4.0"
 }
 ```
 
-The central server:
+Response (success):
 
-1. Authenticates the activation key.
-2. Looks up the customer's active license (tier, term, seats, expires_at,
-   features).
-3. Issues a **signed entitlement bundle** (`entitlement1.<payload>.<sig>`)
-   valid for `entitlement_ttl_seconds` (default **24h**).
-4. Records the activation in its audit log (`license.activate`).
-5. Returns `{ entitlement, refresh_at, expires_at, customer, ... }`.
+```json
+{
+  "activation_token": "entitlement1.<payload>.<sig>",
+  "activation_id": "ACT-…",
+  "activation_token_id": "TOK-…",
+  "issued_at": "2026-04-26T14:00:00Z",
+  "customer": { "id": "CUST-9C3F2A", "name": "Acme" },
+  "license": { "id": "LIC-…", "tier": "enterprise", "term": "annual", "seats": 50,
+               "starts_at": "...", "expires_at": "..." },
+  "superseded_activation_ids": ["ACT-OTHER", "..."],
+  "reused": false
+}
+```
 
-### `POST /api/v1/refresh`
+Errors: `auth_invalid` 401, `auth_revoked` 401, `customer_disabled`
+403, `license_not_found` 404, `license_starts_in_future` 409,
+`license_expired` 410, `bad_request` 400.
 
-Periodic refresh. Same auth. Body includes the previously issued
-`entitlement` so the central server can reject already-revoked tokens.
+### `POST /api/v1/release`
 
-Local LS calls this every `refresh_at - 5m`.
+Voluntary release. Caller proves possession by sending the
+`activation_token_id` (or `activation_id` for operator-script use).
+Returns `{ ok, activation_id, status: "released", released_at }`.
+
+After a release the seat is free; another machine activating reuses
+the slot, and the original machine sees `superseded` on its next
+heartbeat. The original machine can also re-activate to take the
+seat back (its `instance_id` row will move from `released` to
+`active` again).
 
 ### `POST /api/v1/heartbeat`
 
-Lightweight liveness ping. The central server records a `last_seen_at`
-on the customer's row and may surface it on the FORGE LLC operator
-dashboard. Heartbeats do **not** issue new entitlements.
-
-### Errors
-
-All errors use the same envelope:
+Opportunistic supersession + liveness check. Returns the current
+status of the supplied `activation_token_id`. Does NOT issue a new
+token.
 
 ```json
 {
-  "error": "machine_code",
-  "message": "Sentence-cased English explanation suitable for end users.",
-  "details": { "...": "..." }
+  "active": false,
+  "status": "superseded",
+  "activation_status": "superseded",
+  "superseded_by": "ACT-OTHER",
+  "released_at": null,
+  "revoked_at": null,
+  "last_seen_at": "...",
+  "message": "This activation has been replaced by another machine. To take this seat back, run activation again."
 }
 ```
 
-Common machine codes: `auth_invalid`, `customer_disabled`,
-`license_not_found`, `license_expired`, `seat_overage_hard_block`,
-`rate_limited`, `version_unsupported`.
+The customer's local LS calls this once a day (configurable via
+`LOCAL_LS_HEARTBEAT_S`). FORGE app instances pull the heartbeat
+result (alongside the cached token) from the local LS — they do
+**not** open a separate connection to the central server.
 
-## Hop 2 — local ↔ FORGE app
+### Operator endpoints
 
-The customer's FORGE app instances pull from the local LS over LAN.
-This hop never touches the public internet, so it is intentionally
-lightweight: a shared secret per LAN, set in both `FORGE_LOCAL_LS_URL`
-and `FORGE_LOCAL_LS_TOKEN`.
+Authenticated via `OPERATOR_API_TOKEN` (intended to be locked down
+by network policy / VPN / IP allowlist).
+
+- `GET  /admin/v1/customers/:id/activations[?status=…]`
+- `POST /admin/v1/activations/:id/release`  — operator reclaim, e.g. lost laptop
+- `POST /admin/v1/activations/:id/revoke`   — anti-piracy / fraud
+
+Both write to the `audit_log`.
+
+## Hop 2 — local LS ↔ FORGE app
+
+Authentication: shared LAN bearer (`LOCAL_LS_SHARED_TOKEN`, ≥16
+chars, timing-safe compare).
 
 ### `GET /api/v1/entitlement`
 
-Returns the most recently issued bundle plus a sanitised resolved view:
+Returns the cached signed activation token plus the current
+heartbeat-derived status:
 
 ```json
 {
-  "entitlement": "entitlement1.eyJ…",
-  "resolved": {
-    "tier": "team",
-    "tier_label": "Team",
-    "edition_label": "Team edition",
-    "term": "annual",
-    "term_label": "Annual",
-    "seats": 25,
-    "features": ["core.auth", "core.docs", "..." ],
-    "feature_details": [{ "id": "...", "name": "Documents & revisions", ... }],
-    "expires_at": "2027-04-26T00:00:00Z",
-    "status": "ok",
-    "status_label": "Active",
-    "reasons": ["expires_in_29_days"],
-    "reason_messages": ["Expires in 29 days."]
-  },
+  "activation_token": "entitlement1.…",
+  "activation_id": "ACT-…",
+  "activation_token_id": "TOK-…",
   "issued_at": "2026-04-26T14:00:00Z",
-  "refresh_at": "2026-04-27T13:55:00Z",
-  "grace_until": "2026-05-03T14:00:00Z",
-  "online": true,
-  "last_central_at": "2026-04-26T14:00:00Z"
+  "activation_status": "active" | "superseded" | "released" | "revoked",
+  "superseded_by": "ACT-OTHER",
+  "released_at": null,
+  "revoked_at": null,
+  "last_heartbeat_at": "...",
+  "customer": { "id": "...", "name": "..." },
+  "license":  { "id": "...", "tier": "...", "term": "...", "seats": ... },
+  "instance_id": "ULS-…"
 }
 ```
 
-The FORGE app verifies the `entitlement` JWS locally with the bundled
-FORGE LLC public key — same primitive as v1 — so a malicious local LS
-cannot escalate the customer's tier.
+### `POST /api/v1/release`
 
-### `GET /api/v1/health`
+Tells the local LS to release this activation against the central
+server, then clears the local cache. Used by the FORGE admin UI's
+"Release this seat" button.
 
-Operator probe; returns the local LS's view of central connectivity.
+### `POST /api/v1/activate-now`
 
-## Trust + verification rules
+Tells the local LS to (re-)activate. Used after a release to take
+the seat back, or to recover from operator-initiated reclaim.
 
-- The Ed25519 signing key lives only on the FORGE LLC central server.
-- The matching public key is bundled in every FORGE app and the local
-  LS at build time (`config/license-pubkey.pem`).
+### `POST /api/v1/heartbeat-now`
+
+Force a heartbeat right now. The same logic runs automatically
+every `LOCAL_LS_HEARTBEAT_S` seconds.
+
+## Trust + verification
+
+- The Ed25519 signing key lives only on the FORGE LLC central server
+  (set via `FORGE_LICENSE_SIGNING_KEY[_PATH]`).
+- The matching public key is bundled into every FORGE app and every
+  local LS at build time (`config/license-pubkey.pem`), or can be
+  overridden at runtime via `FORGE_LICENSE_PUBLIC_KEY`.
 - The local LS is **untrusted**: the FORGE app independently verifies
-  every bundle signature, and refuses bundles where:
-  - The signature is invalid.
-  - `expires_at` is in the past.
-  - `customer_id` does not match the `FORGE_EXPECTED_CUSTOMER_ID`
-    when that env var is set (defence against a swapped LS).
-- The local LS keeps the **most recent verified** bundle on disk so
-  short central-server outages don't take customers down. After
-  `grace_until` the local LS still serves the bundle, but flags
-  `status = "offline_grace_expired"` so the FORGE app can fail
-  paid features closed.
+  every activation token signature, refuses tokens whose `bound_fingerprint`
+  doesn't match the host (unless `FORGE_SKIP_FINGERPRINT=1`), and
+  refuses tokens whose `issued_at` is in the future (clock-back
+  tampering defence).
+- `FORGE_EXPECTED_CUSTOMER_ID` adds defence against a swapped local
+  LS: the FORGE app refuses any token whose `customer_id` doesn't
+  match.
 
-## Why an extra hop?
+## Why no rotation expiry on the activation token?
 
-- One outbound TCP connection per customer, not per FORGE replica
-  (matters for HA deployments with 6+ replicas).
-- LAN-side auth between FORGE and local LS is simple shared-secret;
-  the only public-internet endpoint is the local LS's outbound
-  connection to FORGE LLC.
-- Local LS can operate behind a corporate proxy, in DMZ, or with
-  a static-IP NAT rule, regardless of how many FORGE replicas the
-  customer runs.
+The activation token has no rotation expiry of its own. Validity is
+governed by:
+
+1. **Signature** — verified on every read by the FORGE app.
+2. **Wall clock** — must not be earlier than `issued_at`, must not
+   be later than `license_expires_at` (annual licenses).
+3. **Heartbeat status** — `superseded` / `released` / `revoked` from
+   the local LS's last successful contact with the central server
+   downgrades the FORGE app to the Community plan immediately.
+4. **Bound fingerprint** — the activation is bound to the host that
+   originally activated; tokens carried to a different host are
+   refused.
+
+Why this design over short-lived rotating bundles:
+
+- **No periodic internet need.** Once activated, an air-gap-tolerant
+  FORGE installation runs indefinitely. The local LS only needs to
+  reach FORGE LLC during initial activation, when the customer
+  voluntarily releases the seat, and during the daily heartbeat
+  (best-effort).
+- **Datetime sanity is enough** because the license `expires_at`
+  doesn't move and clock-back tampering is detectable from the token
+  payload alone.
+- **Last-writer-wins** is the model customers actually want for
+  workstation licenses ("I'm moving my license to my new laptop").
+  Short-lived bundles would either need a separate seat-allocator
+  service or would risk cross-machine token sharing.

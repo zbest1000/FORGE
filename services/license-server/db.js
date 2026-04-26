@@ -26,7 +26,7 @@ db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 db.pragma("synchronous = NORMAL");
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -154,6 +154,60 @@ function migrate() {
         );
       `);
       setVersion(1);
+    }
+
+    if (getVersion() < 2) {
+      // v2: switch from "every refresh issues a fresh bundle" to "one
+      // long-lived activation per seat slot, last-writer-wins". Each
+      // activation row carries its full lifecycle: active → released
+      // (voluntary) | superseded (another machine claimed the slot) |
+      // revoked (operator action). When `seat_slot` is N, there must
+      // be at most N rows with status='active' for that customer at
+      // any time.
+      db.exec(`
+        ALTER TABLE activations ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+        ALTER TABLE activations ADD COLUMN seat_slot INTEGER;
+        ALTER TABLE activations ADD COLUMN activation_token_id TEXT;
+        ALTER TABLE activations ADD COLUMN released_at TEXT;
+        ALTER TABLE activations ADD COLUMN released_by TEXT;
+        ALTER TABLE activations ADD COLUMN superseded_at TEXT;
+        ALTER TABLE activations ADD COLUMN superseded_by TEXT;
+        ALTER TABLE activations ADD COLUMN revoked_at TEXT;
+        ALTER TABLE activations ADD COLUMN bound_fingerprint TEXT NOT NULL DEFAULT '{}';
+        CREATE INDEX IF NOT EXISTS idx_activations_status ON activations(customer_id, status);
+
+        -- Long-lived activation tokens. We keep the issued token id +
+        -- public metadata (never the signature) so refresh requests
+        -- can be authenticated without leaking secrets.
+        CREATE TABLE IF NOT EXISTS activation_tokens (
+          id TEXT PRIMARY KEY,
+          customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+          activation_id TEXT NOT NULL REFERENCES activations(id) ON DELETE CASCADE,
+          license_id TEXT NOT NULL REFERENCES licenses(id),
+          issued_at TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',  -- active | released | superseded | revoked
+          status_changed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_activation_tokens_customer ON activation_tokens(customer_id, status);
+
+        -- The old issued_entitlements table held a row per refresh.
+        -- Under the new model we issue once per activation, so we
+        -- migrate the most recent row per (customer, license) into
+        -- activation_tokens, then drop the table.
+        INSERT INTO activation_tokens (id, customer_id, activation_id, license_id, issued_at, status, status_changed_at)
+          SELECT ie.id, ie.customer_id, COALESCE(ie.activation_id, ''), ie.license_id, ie.issued_at,
+                 CASE WHEN ie.revoked_at IS NULL THEN 'active' ELSE 'revoked' END,
+                 ie.revoked_at
+          FROM issued_entitlements ie
+          WHERE ie.activation_id IS NOT NULL
+            AND ie.id IN (
+              SELECT id FROM issued_entitlements ie2
+              WHERE ie2.customer_id = ie.customer_id AND ie2.license_id = ie.license_id
+              ORDER BY ie2.issued_at DESC LIMIT 1
+            );
+        DROP TABLE issued_entitlements;
+      `);
+      setVersion(2);
     }
   })();
 }

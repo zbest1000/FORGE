@@ -10,6 +10,7 @@ import {
   publicEntitlements, FEATURES, FEATURE_CATALOG, TIER_DEFAULTS, TIERS,
   TIER_LABELS, TIER_DESCRIPTIONS, describeFeature,
   activeUserCount, localLicenseStatus, pollLocalLicenseServer,
+  releaseActivation, reactivateLicense,
 } from "../license.js";
 import { audit } from "../audit.js";
 
@@ -27,25 +28,76 @@ export default async function licenseRoutes(app) {
     return out;
   });
 
-  // Force the FORGE app to re-pull from the local license server right
-  // now. Useful from the admin UI after the operator has just activated
-  // or upgraded the customer's plan.
-  app.post("/api/license/refresh", { preHandler: require_("admin.view") }, async (req, reply) => {
+  // ---- Online activation control ----
+  // The new model is one-time activation + lifetime token. The two
+  // routes below cover the only legitimate runtime transitions:
+  //
+  //   POST /api/license/reactivate
+  //     Triggers the local LS to (re-)activate against FORGE LLC.
+  //     Used to take a previously-released seat back on this machine
+  //     or to recover after FORGE LLC operator-released the seat.
+  //
+  //   POST /api/license/release
+  //     Releases this activation back to the customer's seat pool so
+  //     the same license can be reused on a different machine. Once
+  //     released, this FORGE installation drops to the Community
+  //     plan until reactivation.
+
+  app.post("/api/license/reactivate", { preHandler: require_("admin.view") }, async (req, reply) => {
     if (!process.env.FORGE_LOCAL_LS_URL) {
       return reply.code(409).send({
         error: "local_ls_not_configured",
-        message: "This installation isn't configured to use a local license server. Set FORGE_LOCAL_LS_URL or install an offline license token instead.",
+        message: "This installation isn't configured to use a local license server. Set FORGE_LOCAL_LS_URL, or install an offline license token instead.",
       });
     }
     if (req.user.role !== "Organization Owner") {
-      return reply.code(403).send({ error: "forbidden", message: "Only the Organization Owner can refresh the activation." });
+      return reply.code(403).send({ error: "forbidden", message: "Only the Organization Owner can reactivate the license." });
     }
-    const result = await pollLocalLicenseServer();
-    audit({
-      actor: req.user.id, action: "license.refresh",
-      subject: result?.bundle_id || "no-bundle",
-      detail: { ok: !!result, status: localLicenseStatus() },
-    });
+    try {
+      const result = await reactivateLicense();
+      audit({
+        actor: req.user.id, action: "license.reactivate",
+        subject: result?.result?.activation_id || "reactivate",
+        detail: { ok: true, status: localLicenseStatus() },
+      });
+    } catch (err) {
+      return reply.code(502).send({
+        error: err.code || "reactivate_failed",
+        message: err.message || "Couldn't reactivate against the local license server.",
+        detail: err.body || null,
+      });
+    }
+    const lic = getLicense({ skipCache: true });
+    const out = publicEntitlements(lic);
+    out.usage = { active_users: activeUserCount(), seats: lic.seats, hard_seat_cap: lic.hard_seat_cap };
+    out.local_ls = localLicenseStatus();
+    return out;
+  });
+
+  app.post("/api/license/release", { preHandler: require_("admin.view") }, async (req, reply) => {
+    if (!process.env.FORGE_LOCAL_LS_URL) {
+      return reply.code(409).send({
+        error: "local_ls_not_configured",
+        message: "This installation isn't configured for online activation. Use the offline token controls instead.",
+      });
+    }
+    if (req.user.role !== "Organization Owner") {
+      return reply.code(403).send({ error: "forbidden", message: "Only the Organization Owner can release the activation." });
+    }
+    try {
+      const result = await releaseActivation();
+      audit({
+        actor: req.user.id, action: "license.release",
+        subject: result?.activation_id || "release",
+        detail: result || {},
+      });
+    } catch (err) {
+      return reply.code(502).send({
+        error: err.code || "release_failed",
+        message: err.message || "Couldn't release the activation.",
+        detail: err.body || null,
+      });
+    }
     const lic = getLicense({ skipCache: true });
     const out = publicEntitlements(lic);
     out.usage = { active_users: activeUserCount(), seats: lic.seats, hard_seat_cap: lic.hard_seat_cap };

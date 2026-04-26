@@ -37,7 +37,7 @@ import complianceRoutes from "./routes/compliance.js";
 import enterpriseSystemRoutes from "./routes/enterprise-systems.js";
 import licenseRoutes from "./routes/license.js";
 import { config } from "./config.js";
-import { getLicense, requireFeature, FEATURES, pollLocalLicenseServer, localLicenseStatus } from "./license.js";
+import { getLicense, requireFeature, FEATURES, pollLocalLicenseServer, loadPersistedActivation, localLicenseStatus } from "./license.js";
 
 import { startMqttBridge } from "./connectors/mqtt.js";
 import { startOpcuaBridge } from "./connectors/opcua.js";
@@ -283,19 +283,31 @@ startOutboxWorker(app.log);
 audit({ actor: "system", action: "server.start", subject: "forge", detail: { host: HOST, port: PORT, pid: process.pid } });
 
 try {
-  // If a local license server is configured, do the first activation
-  // pull BEFORE we start serving. This way `/api/license` reflects
-  // the customer's real entitlement on the very first request rather
-  // than briefly showing the community fallback.
-  if (process.env.FORGE_LOCAL_LS_URL) {
+  // 1) Restore the persisted activation token from disk (no network).
+  //    This means an already-activated FORGE app comes up at full
+  //    entitlement with zero outbound traffic.
+  loadPersistedActivation();
+
+  // 2) If we don't yet have a persisted activation but a local LS is
+  //    configured, pull once before listening so the very first
+  //    /api/license response reflects the real entitlement.
+  if (!getLicense().activation_id && process.env.FORGE_LOCAL_LS_URL) {
     try { await pollLocalLicenseServer(); }
-    catch (err) { app.log.warn({ err: String(err.message || err) }, "initial local-LS pull failed; will retry"); }
-    // Background refresh every 30 minutes (the local LS itself
-    // refreshes its own bundle hourly from FORGE LLC).
-    const refreshMs = Number(process.env.FORGE_LOCAL_LS_REFRESH_S || 1800) * 1000;
-    setInterval(() => {
-      pollLocalLicenseServer().catch((err) => app.log.warn({ err: String(err.message || err) }, "local-LS refresh failed"));
-    }, refreshMs);
+    catch (err) { app.log.warn({ err: String(err.message || err) }, "initial local-LS pull failed; the FORGE app will keep trying via heartbeat"); }
+  }
+
+  // 3) Daily best-effort heartbeat. Detects supersession (the same
+  //    customer activated this license on another machine) or
+  //    operator-initiated release/revoke, so this app downgrades
+  //    itself promptly. Heartbeat failures are non-fatal — we
+  //    continue serving from the cached activation.
+  if (process.env.FORGE_LOCAL_LS_URL) {
+    const heartbeatMs = Number(process.env.FORGE_LOCAL_LS_HEARTBEAT_S || 86_400) * 1000;
+    if (heartbeatMs > 0) {
+      setInterval(() => {
+        pollLocalLicenseServer().catch((err) => app.log.warn({ err: String(err.message || err) }, "license heartbeat failed"));
+      }, heartbeatMs);
+    }
   }
 
   await app.listen({ host: HOST, port: PORT });
@@ -308,15 +320,24 @@ try {
     edition: lic.edition,
     term: lic.term,
     seats: lic.seats,
-    expires_at: lic.expires_at,
+    license_expires_at: lic.expires_at,
     status: lic.status,
+    activation_status: lic.activation_status || null,
+    activation_id: lic.activation_id || null,
+    activation_token_id: lic.activation_token_id || null,
     feature_count: lic.features.length,
     local_ls: localLicenseStatus(),
   }, lic.source === "fallback"
-    ? "no license installed; running on community tier"
+    ? "no license installed; running on Community plan"
     : lic.source === "local_ls_unreachable"
-      ? "local license server unreachable; running on community tier until activation"
-      : `licensed to ${lic.customer} (${lic.tier}) — activated via ${lic.source}`);
+      ? "local license server unreachable and no cached activation; running on Community plan until activation"
+      : lic.status === "superseded"
+        ? `activation ${lic.activation_id} has been superseded by another machine; running on Community plan`
+        : lic.status === "released"
+          ? `activation ${lic.activation_id} has been released to the pool; running on Community plan`
+          : lic.status === "revoked"
+            ? `activation ${lic.activation_id} has been revoked by the operator; running on Community plan`
+            : `licensed to ${lic.customer} (${lic.tier}) — activation ${lic.activation_id || "?"}`);
 } catch (err) {
   app.log.error(err);
   process.exit(1);

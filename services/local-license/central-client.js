@@ -1,15 +1,15 @@
 // Local license server → FORGE LLC central server client.
 //
-// One outbound HTTPS connection per local LS. Configured by env:
+// Required at activation time only. After activation the long-lived
+// activation token is cached on disk and the local LS no longer needs
+// internet connectivity for FORGE app callers to receive it.
+//
+// Configured by env:
 //
 //   FORGE_LLC_URL           default https://license.forge.llc
 //   FORGE_CUSTOMER_ID       customer identifier (CUST-…)
 //   FORGE_ACTIVATION_KEY    bearer credential
 //   FORGE_LLC_TIMEOUT_MS    default 15000
-//
-// The client is intentionally tiny: no third-party HTTP library, just
-// global fetch with a timeout AbortController. It returns the raw
-// JSON envelope from the central server for downstream handling.
 
 import os from "node:os";
 import crypto from "node:crypto";
@@ -63,20 +63,20 @@ export async function activate({ instance_id, customer_id }) {
   });
 }
 
-export async function refresh({ instance_id, customer_id, prior_bundle_id }) {
-  return call("POST", "/api/v1/refresh", {
+export async function release({ instance_id, customer_id, activation_token_id, activation_id }) {
+  return call("POST", "/api/v1/release", {
     customer_id,
     instance_id,
-    prior_bundle_id,
-    fingerprint: fingerprint(),
-    client_version: "0.4.0",
+    activation_token_id,
+    activation_id,
   });
 }
 
-export async function heartbeat({ instance_id, customer_id }) {
+export async function heartbeat({ instance_id, customer_id, activation_token_id }) {
   return call("POST", "/api/v1/heartbeat", {
     customer_id,
     instance_id,
+    activation_token_id,
     fingerprint: fingerprint(),
     client_version: "0.4.0",
   });

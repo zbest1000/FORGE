@@ -150,12 +150,56 @@ const commands = {
     if (!row) die("customer not found");
     const lic = db.prepare("SELECT * FROM licenses WHERE customer_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1").get(id);
     const keys = db.prepare("SELECT id, label, last_used_at, revoked_at FROM activation_keys WHERE customer_id = ?").all(id);
-    const acts = db.prepare("SELECT id, instance_id, last_seen_at, client_version FROM activations WHERE customer_id = ? ORDER BY last_seen_at DESC LIMIT 10").all(id);
+    const acts = db.prepare("SELECT id, instance_id, status, last_seen_at, client_version FROM activations WHERE customer_id = ? ORDER BY last_seen_at DESC LIMIT 10").all(id);
+    const seatsUsed = db.prepare("SELECT COUNT(*) AS c FROM activations WHERE customer_id = ? AND status = 'active'").get(id);
     console.log(JSON.stringify({
       customer: row,
       active_license: lic ? { ...lic, features_add: jsonOrEmpty(lic.features_add, []), features_remove: jsonOrEmpty(lic.features_remove, []) } : null,
+      seats_used: seatsUsed.c,
       keys, recent_activations: acts,
     }, null, 2));
+  },
+
+  "list-activations": () => {
+    const customerId = flag("customer") || die("--customer required");
+    const status = flag("status");
+    const sql = status
+      ? "SELECT id, instance_id, status, client_version, first_seen_at, last_seen_at, released_at, superseded_by FROM activations WHERE customer_id = ? AND status = ? ORDER BY last_seen_at DESC"
+      : "SELECT id, instance_id, status, client_version, first_seen_at, last_seen_at, released_at, superseded_by FROM activations WHERE customer_id = ? ORDER BY last_seen_at DESC";
+    const rows = status ? db.prepare(sql).all(customerId, status) : db.prepare(sql).all(customerId);
+    console.table(rows);
+  },
+
+  "release-activation": () => {
+    const id = flag("activation") || die("--activation required");
+    const reason = flag("reason") || "operator-reclaim";
+    const cur = db.prepare("SELECT customer_id, status, instance_id FROM activations WHERE id = ?").get(id);
+    if (!cur) die("activation not found");
+    if (cur.status !== "active") die(`activation is already ${cur.status}`);
+    const ts = now();
+    db.transaction(() => {
+      db.prepare("UPDATE activations SET status = 'released', released_at = ?, released_by = ? WHERE id = ?")
+        .run(ts, "operator", id);
+      db.prepare("UPDATE activation_tokens SET status = 'released', status_changed_at = ? WHERE activation_id = ? AND status = 'active'")
+        .run(ts, id);
+    })();
+    audit("cli", "activation.release", cur.customer_id, id, { reason, instance_id: cur.instance_id });
+    console.log(`released activation ${id} (instance ${cur.instance_id}); seat returned to the pool`);
+  },
+
+  "revoke-activation": () => {
+    const id = flag("activation") || die("--activation required");
+    const reason = flag("reason") || "operator-revoke";
+    const cur = db.prepare("SELECT customer_id, instance_id FROM activations WHERE id = ?").get(id);
+    if (!cur) die("activation not found");
+    const ts = now();
+    db.transaction(() => {
+      db.prepare("UPDATE activations SET status = 'revoked', revoked_at = ? WHERE id = ?").run(ts, id);
+      db.prepare("UPDATE activation_tokens SET status = 'revoked', status_changed_at = ? WHERE activation_id = ? AND status = 'active'")
+        .run(ts, id);
+    })();
+    audit("cli", "activation.revoke", cur.customer_id, id, { reason });
+    console.log(`revoked activation ${id}`);
   },
 
   help: () => print_usage(),
@@ -165,17 +209,22 @@ function print_usage() {
   console.log(`forge-license-server admin
 Commands:
   print-pubkey
-  create-customer   --name STR [--email] [--id] [--notes]
+  create-customer     --name STR [--email] [--id] [--notes]
   list-customers
-  show-customer     --customer CUST-…
-  create-key        --customer CUST-… [--label]
-  list-keys         --customer CUST-…
-  revoke-key        --key KEY-…
-  create-license    --customer CUST-… --tier T --term annual|perpetual
-                    [--years N] [--seats N] [--starts YYYY-MM-DD]
-                    [--maintenance YEARS] [--add f1,f2] [--remove f1,f2]
-                    [--edition STR] [--deployment self_hosted|cloud] [--notes]
-  revoke-license    --license LIC-…`);
+  show-customer       --customer CUST-…
+  create-key          --customer CUST-… [--label]
+  list-keys           --customer CUST-…
+  revoke-key          --key KEY-…
+  create-license      --customer CUST-… --tier T --term annual|perpetual
+                      [--years N] [--seats N] [--starts YYYY-MM-DD]
+                      [--maintenance YEARS] [--add f1,f2] [--remove f1,f2]
+                      [--edition STR] [--deployment self_hosted|cloud] [--notes]
+  revoke-license      --license LIC-…
+  list-activations    --customer CUST-… [--status active|superseded|released|revoked]
+  release-activation  --activation ACT-…  [--reason STR]
+                      Release an unreachable customer's seat back to the pool.
+  revoke-activation   --activation ACT-…  [--reason STR]
+                      Hard-revoke an activation (anti-piracy / fraud).`);
 }
 
 if (!cmd || !commands[cmd]) { print_usage(); process.exit(cmd ? 2 : 0); }
