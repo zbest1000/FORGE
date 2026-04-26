@@ -24,8 +24,8 @@
     "sbom": "cyclonedx-npm --output-file bom.json",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "license:keygen": "node scripts/license/keygen.js",
-    "license:issue":  "node scripts/license/issue.js",
-    "license:inspect":"node scripts/license/inspect.js"
+    "license:issue": "node scripts/license/issue.js",
+    "license:inspect": "node scripts/license/inspect.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
@@ -46,6 +46,7 @@
     "dexie": "^4.4.2",
     "dompurify": "^3.4.1",
     "dxf-viewer": "^1.0.47",
+    "echarts": "^6.0.0",
     "fastify": "^5.1.0",
     "fuse.js": "^7.3.0",
     "graphql": "^16.13.2",

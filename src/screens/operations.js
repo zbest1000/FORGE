@@ -1,9 +1,9 @@
-import { el, mount, card, badge, kpi, tabs } from "../core/ui.js";
+import { el, mount, card, badge, kpi, tabs, select, toast } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
-import { sparkline } from "../core/charts.js";
+import { historianChart, sparkline } from "../core/charts.js";
 
 export function renderOperationsData() {
   const root = document.getElementById("screenContainer");
@@ -45,23 +45,88 @@ export function renderOperationsData() {
 }
 
 function trendsTab() {
-  return el("div", { class: "two-col" }, [
-    card("Asset DAQ history", el("div", { class: "stack" }, (state.data.historianPoints || []).map(pointTrend))),
-    card("Historian backends", el("div", { class: "stack" }, [
-      el("div", { class: "small" }, ["Local SQLite stores recent samples now; points carry a historian field so Timebase or another time-series backend can be selected without changing asset tags."]),
-      ...Object.entries(groupBy(state.data.historianPoints || [], p => p.historian || "sqlite")).map(([name, rows]) =>
-        el("div", { class: "activity-row" }, [
-          badge(name, name === "sqlite" ? "accent" : "purple"),
-          el("span", {}, [`${rows.length} points`]),
-          el("span", { class: "tiny muted" }, [rows.map(r => r.tag).slice(0, 2).join(", ")]),
-        ])
-      ),
-    ])),
+  const points = state.data.historianPoints || [];
+  const assets = assetsWithHistorian(points);
+  const selectedAssetId = sessionStorage.getItem("operations.trends.asset") || assets[0]?.id || "";
+  const chartType = sessionStorage.getItem("operations.trends.chart") || "line";
+  const selectedPoints = points.filter(p => !selectedAssetId || p.assetId === selectedAssetId);
+  const assetPick = select(assets.map(a => ({ value: a.id, label: a.name })), {
+    value: selectedAssetId,
+    onChange: e => {
+      sessionStorage.setItem("operations.trends.asset", e.target.value);
+      renderOperationsData();
+    },
+  });
+  const chartPick = select([
+    { value: "line", label: "Line" },
+    { value: "area", label: "Area" },
+    { value: "bar", label: "Bar" },
+    { value: "scatter", label: "Scatter" },
+  ], {
+    value: chartType,
+    onChange: e => {
+      sessionStorage.setItem("operations.trends.chart", e.target.value);
+      renderOperationsData();
+    },
+  });
+
+  return el("div", { class: "stack" }, [
+    card("Trend controls", el("div", { class: "row wrap" }, [
+      el("label", { class: "stack", style: { gap: "4px" } }, [
+        el("span", { class: "tiny muted" }, ["Asset"]),
+        assetPick,
+      ]),
+      el("label", { class: "stack", style: { gap: "4px" } }, [
+        el("span", { class: "tiny muted" }, ["Chart type"]),
+        chartPick,
+      ]),
+      badge("ECharts", "accent"),
+    ]), { subtitle: "Add different chart views for an asset's live and historical data." }),
+    el("div", { class: "two-col" }, [
+      card("Asset DAQ history", el("div", { class: "stack" }, selectedPoints.map(pointTrend))),
+      card("Historian backends", el("div", { class: "stack" }, [
+        el("div", { class: "small" }, ["Local SQLite stores recent samples now; points carry a historian field so Timebase or another time-series backend can be selected without changing asset tags."]),
+        ...Object.entries(groupBy(points, p => p.historian || "sqlite")).map(([name, rows]) =>
+          el("div", { class: "activity-row" }, [
+            badge(name, name === "sqlite" ? "accent" : "purple"),
+            el("span", {}, [`${rows.length} points`]),
+            el("span", { class: "tiny muted" }, [rows.map(r => r.tag).slice(0, 2).join(", ")]),
+          ])
+        ),
+      ])),
+    ]),
+    card("Asset historian charts", el("div", { class: "card-grid" }, selectedPoints.map(point => pointChart(point, chartType))), {
+      subtitle: "Each card renders the selected asset's historical samples with ECharts.",
+    }),
+  ]);
+}
+
+function assetsWithHistorian(points) {
+  const ids = new Set(points.map(p => p.assetId));
+  return (state.data.assets || []).filter(a => ids.has(a.id));
+}
+
+function pointChart(point, chartType) {
+  const samples = samplesForPoint(point);
+  return el("div", { class: "stack" }, [
+    el("div", { class: "row spread" }, [
+      el("div", {}, [
+        el("div", { class: "small strong" }, [point.name]),
+        el("div", { class: "tiny muted mono" }, [point.tag]),
+      ]),
+      badge(point.unit || "value", "info"),
+    ]),
+    historianChart(samples, { title: point.name, unit: point.unit || "", type: chartType, height: 260 }),
+    el("div", { class: "row wrap tiny muted" }, [
+      `Latest ${latestValue(samples, point.unit)}`,
+      ` · ${samples.length} samples`,
+      ` · ${assetName(point.assetId)}`,
+    ]),
   ]);
 }
 
 function pointTrend(point) {
-  const samples = (state.data.historianSamples || []).filter(s => s.pointId === point.id).slice(-24);
+  const samples = samplesForPoint(point);
   const asset = assetName(point.assetId);
   return el("div", { class: "activity-row" }, [
     badge(point.unit || point.dataType || "value", "info"),
@@ -73,6 +138,10 @@ function pointTrend(point) {
     sparkline(samples.map(s => s.value), { width: 160, height: 44 }),
     el("span", { class: "strong" }, [latestValue(samples, point.unit)]),
   ]);
+}
+
+function samplesForPoint(point) {
+  return (state.data.historianSamples || []).filter(s => s.pointId === point.id).slice(-48);
 }
 
 function recipesTab() {

@@ -1,4 +1,4 @@
-// Chart helpers — uPlot sparklines / line charts with SVG fallback.
+// Chart helpers — ECharts visualizations plus uPlot sparklines with SVG fallback.
 
 import { vendor } from "./vendor.js";
 
@@ -32,6 +32,46 @@ export function sparkline(series, { width = 300, height = 60, label = "" } = {})
         ],
       };
       new uPlotCtor(opts, data, host);
+    } catch { /* keep SVG fallback */ }
+  })();
+  return host;
+}
+
+export function historianChart(samples, { title = "", unit = "", type = "line", width = "100%", height = 280 } = {}) {
+  const host = document.createElement("div");
+  host.className = "historian-chart";
+  host.style.width = typeof width === "number" ? width + "px" : width;
+  host.style.height = typeof height === "number" ? height + "px" : height;
+  const values = samples.map(s => Number(s.value)).filter(Number.isFinite);
+  host.append(svgSpark(values, 640, 220));
+  (async () => {
+    try {
+      const echarts = await vendor.echarts();
+      if (!echarts) return;
+      host.replaceChildren();
+      const chart = echarts.init(host, null, { renderer: "canvas" });
+      const data = samples.map((s, i) => [s.ts || i, Number(s.value)]);
+      const seriesType = type === "area" ? "line" : type;
+      chart.setOption({
+        backgroundColor: "transparent",
+        color: ["#38bdf8"],
+        title: { text: title, left: 8, top: 4, textStyle: { color: "#e5edf7", fontSize: 12, fontWeight: 600 } },
+        grid: { left: 42, right: 18, top: 42, bottom: 42 },
+        tooltip: { trigger: "axis", valueFormatter: v => `${Number(v).toFixed(2)} ${unit}`.trim() },
+        xAxis: { type: "time", axisLabel: { color: "#94a3b8" }, axisLine: { lineStyle: { color: "#334155" } }, splitLine: { show: false } },
+        yAxis: { type: "value", name: unit, nameTextStyle: { color: "#94a3b8" }, axisLabel: { color: "#94a3b8" }, splitLine: { lineStyle: { color: "rgba(148,163,184,0.16)" } } },
+        series: [{
+          name: title || "value",
+          type: seriesType,
+          data,
+          symbolSize: type === "scatter" ? 8 : 4,
+          showSymbol: type === "scatter",
+          smooth: type === "line" || type === "area",
+          areaStyle: type === "area" ? { opacity: 0.18 } : undefined,
+          barMaxWidth: 18,
+        }],
+      });
+      setTimeout(() => chart.resize(), 0);
     } catch { /* keep SVG fallback */ }
   })();
   return host;
