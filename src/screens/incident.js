@@ -87,6 +87,7 @@ export function renderIncident({ id }) {
 
   mount(root, [
     severityBar(inc),
+    incidentCommandHeader(inc, asset),
     alarmsStrip(inc, asset),
     el("div", { class: "incident-layout" }, [
       el("div", { class: "stack" }, [
@@ -131,6 +132,39 @@ export function renderIncident({ id }) {
     audit("incident.entry", id);
     toast("Entry logged", "success");
   }
+}
+
+function incidentCommandHeader(inc, asset) {
+  const roster = inc.roster || {};
+  const checklist = COMMAND_CHECKLIST[inc.severity] || COMMAND_CHECKLIST["SEV-3"];
+  const done = Object.values(inc.checklistState || {}).filter(Boolean).length;
+  const latest = (inc.timeline || []).slice(-1)[0];
+  const objective = inc.status === "active" ? "Stabilize affected operation"
+    : inc.status === "escalated" ? "Contain scope and assign decision owner"
+    : inc.status === "stabilized" ? "Verify steady state before resolution"
+    : inc.status === "resolved" ? "Prepare postmortem and evidence export"
+    : "Maintain command record";
+  return card("Incident command", el("div", { class: "stack" }, [
+    el("div", { class: "card-grid" }, [
+      commandMetric("Commander", roster.Commander || inc.commanderId || "Unassigned", !roster.Commander && !inc.commanderId ? "warn" : "success"),
+      commandMetric("Current objective", objective, inc.status === "active" ? "danger" : "info"),
+      commandMetric("Active actions", `${done}/${checklist.length} complete`, done === checklist.length ? "success" : "warn"),
+      commandMetric("Linked asset", asset ? asset.name : "None", asset?.status === "alarm" ? "danger" : "info"),
+    ]),
+    latest ? el("div", { class: "activity-row" }, [
+      badge("latest", "info"),
+      el("span", {}, [latest.text]),
+      el("span", { class: "tiny muted" }, [new Date(latest.ts).toLocaleTimeString()]),
+    ]) : null,
+  ]));
+}
+
+function commandMetric(label, value, variant) {
+  return el("div", { class: "kpi" }, [
+    el("div", { class: "kpi-label" }, [label]),
+    el("div", { class: "small strong" }, [value]),
+    badge(variant === "danger" ? "attention" : variant === "warn" ? "pending" : "ok", variant),
+  ]);
 }
 
 function severityBar(inc) {

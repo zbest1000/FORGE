@@ -67,7 +67,7 @@ function domainFor(route) {
   if (path.startsWith("/incident") || path === "/incidents") return "incidents";
   if (path.startsWith("/team-space") || path.startsWith("/channel") || path === "/team-spaces") return "spaces";
   if (path.startsWith("/integrations")) return "integrations";
-  if (path === "/admin") return "admin";
+  if (path === "/admin" || path.startsWith("/admin/")) return "admin";
   return "home";
 }
 
@@ -104,8 +104,12 @@ function quickActions(domain, d) {
       { label: "DLQ/events", route: "/integrations" },
     ],
     admin: [
-      { label: "Governance", route: "/admin", primary: true },
-      { label: "Audit", route: "/admin" },
+      { label: "Identity", route: "/admin/identity", primary: true },
+      { label: "Access", route: "/admin/access" },
+      { label: "Integrations", route: "/admin/integrations" },
+      { label: "Audit", route: "/admin/audit" },
+      { label: "Retention", route: "/admin/retention" },
+      { label: "System health", route: "/admin/health" },
     ],
     home: [
       { label: "Command palette", onClick: openPalette, primary: true },
@@ -184,10 +188,12 @@ function sectionsFor(domain, d) {
   }
   if (domain === "admin") {
     return [makeSection("Settings", [
-      { route: "/admin", label: "Identity and access" },
-      { route: "/admin", label: "Audit ledger" },
-      { route: "/admin", label: "Retention policies" },
-      { route: "/admin", label: "System health" },
+      { route: "/admin/identity", label: "Identity" },
+      { route: "/admin/access", label: "Access and roles" },
+      { route: "/admin/integrations", label: "Integrations" },
+      { route: "/admin/audit", label: "Audit ledger" },
+      { route: "/admin/retention", label: "Retention policies" },
+      { route: "/admin/health", label: "System health" },
     ], x => x)];
   }
   return [

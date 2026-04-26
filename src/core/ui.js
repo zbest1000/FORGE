@@ -41,8 +41,8 @@ export function mount(node, content) {
   else if (content) node.append(content);
 }
 
-export function badge(label, variant = "") {
-  return el("span", { class: `badge ${variant}`.trim() }, [label]);
+export function badge(label, variant = "", opts = {}) {
+  return el("span", { class: `badge ${variant}`.trim(), ...opts }, [label]);
 }
 
 export function chip(label, opts = {}) {
@@ -169,6 +169,65 @@ export function modal({ title, body, actions }) {
   root.innerHTML = "";
   root.append(backdrop);
   // Focus the first focusable element.
+  setTimeout(() => {
+    const first = backdrop.querySelector("button:not(.ghost), input, select, textarea, button");
+    if (first) try { first.focus(); } catch {}
+  }, 0);
+  return { close };
+}
+
+export function drawer({ title, subtitle, body, actions, width = "520px" } = {}) {
+  const root = document.getElementById("modalRoot");
+  if (!root) return { close: () => {} };
+
+  const previouslyFocused = document.activeElement;
+  const close = () => {
+    root.innerHTML = "";
+    if (previouslyFocused && typeof previouslyFocused.focus === "function") {
+      try { previouslyFocused.focus(); } catch { /* noop */ }
+    }
+  };
+
+  const backdrop = el("div", {
+    class: "drawer-backdrop",
+    onClick: (e) => { if (e.target === backdrop) close(); },
+    onKeydown: (e) => {
+      if (e.key === "Escape") { e.preventDefault(); close(); return; }
+      if (e.key !== "Tab") return;
+      const focusables = backdrop.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
+      const first = focusables[0]; const last = focusables[focusables.length - 1];
+      if (!first) return;
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    },
+  }, [
+    el("aside", {
+      class: "drawer-panel",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-label": title || "Details",
+      style: { width },
+    }, [
+      el("div", { class: "drawer-header" }, [
+        el("div", {}, [
+          title ? el("h3", {}, [title]) : null,
+          subtitle ? el("div", { class: "tiny muted" }, [subtitle]) : null,
+        ]),
+        el("button", { class: "btn ghost sm", onClick: close, "aria-label": "Close details" }, ["Close"]),
+      ]),
+      el("div", { class: "drawer-body" }, [body]),
+      actions?.length ? el("div", { class: "drawer-footer" }, actions.map(a => a.node ? a.node : el("button", {
+        class: `btn ${a.variant || ""}`.trim(),
+        onClick: () => {
+          if (a.onClick && a.onClick() === false) return;
+          close();
+        },
+      }, [a.label]))) : null,
+    ]),
+  ]);
+
+  root.innerHTML = "";
+  root.append(backdrop);
   setTimeout(() => {
     const first = backdrop.querySelector("button:not(.ghost), input, select, textarea, button");
     if (first) try { first.focus(); } catch {}

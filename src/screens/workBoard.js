@@ -5,7 +5,7 @@
 // severity, bulk labels. Dependencies create blocked-by links.
 // Automation: default rules and per-project trigger viewer.
 
-import { el, mount, card, badge, kpi, toast, modal, formRow, input, select, textarea } from "../core/ui.js";
+import { el, mount, card, badge, kpi, toast, modal, drawer, formRow, input, select, textarea } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -45,17 +45,19 @@ export function renderWorkBoard({ id }) {
   const batch = JSON.parse(sessionStorage.getItem(batchKey) || "[]");
 
   const items = filteredItems(id, filter);
+  const viewPreset = sessionStorage.getItem(`board.saved.${id}`) || "all";
+  const visibleItems = applySavedView(items, viewPreset);
 
   mount(root, [
-    header(project, view, filter, items.length, batch, viewKey, filterKey, batchKey, id),
+    header(project, view, filter, visibleItems.length, batch, viewKey, filterKey, batchKey, id, viewPreset),
     projectContext(project, items),
     batchBar(batch, batchKey, id),
-    view === "kanban"   ? kanbanView(items, batch, batchKey) :
-    view === "table"    ? tableView(items, batch, batchKey) :
-    view === "timeline" ? timelineView(items) :
-    view === "calendar" ? calendarView(items, id) :
-    view === "deps"     ? dependencyView(items) :
-    kanbanView(items, batch, batchKey),
+    view === "kanban"   ? kanbanView(visibleItems, batch, batchKey) :
+    view === "table"    ? tableView(visibleItems, batch, batchKey) :
+    view === "timeline" ? timelineView(visibleItems) :
+    view === "calendar" ? calendarView(visibleItems, id) :
+    view === "deps"     ? dependencyView(visibleItems) :
+    kanbanView(visibleItems, batch, batchKey),
     automationCard(project, id),
   ]);
 }
@@ -87,7 +89,7 @@ function projectContext(project, items) {
   const tabContent = ({
     overview: projectOverview(project, { orgName, site, loc, projectAssets, projectDocs, dataSources, maintenance, incidents }),
     assets: card(`Linked assets (${projectAssets.length})`, assetList(projectAssets)),
-    docs: card(`Documents (${projectDocs.length})`, documentList(projectDocs)),
+    docs: card(`Documents (${projectDocs.length})`, documentList(projectDocs, project, projectAssets)),
     signals: card("Signal health", signalHealthList(dataSources), { actions: [
       helpHint("Live operations signals from MQTT, OPC UA, ERP, or other connectors. Hover each status for source and quality."),
     ]}),
@@ -179,16 +181,28 @@ function assetList(assets) {
   ])));
 }
 
-function documentList(docs) {
+function documentList(docs, project, assets = []) {
   if (!docs.length) return el("div", { class: "muted tiny" }, ["No scoped documents."]);
+  const assetIds = new Set(assets.map(a => a.id));
   return el("div", { class: "stack" }, docs.map(doc => el("button", {
     class: "activity-row",
     onClick: () => navigate(`/doc/${doc.id}`),
   }, [
-    badge(doc.scope || "project", doc.scope === "enterprise" ? "purple" : doc.scope === "asset" ? "accent" : "info"),
+    scopeBadge(doc, project, assetIds),
     el("span", {}, [doc.name]),
     el("span", { class: "tiny muted" }, [doc.discipline || doc.kind || doc.id]),
   ])));
+}
+
+function scopeBadge(doc, project, assetIds) {
+  const scope = doc.scope || "project";
+  const reason = scope === "enterprise" ? "Enterprise document: visible across the organization."
+    : doc.projectId === project.id ? `Project document for ${project.name}.`
+    : doc.siteId === project.siteId ? "Site document inherited from this project's site."
+    : (doc.assetIds || []).some(id => assetIds.has(id)) ? "Asset document inherited from a linked asset."
+    : "Document matched this context.";
+  const variant = scope === "enterprise" ? "purple" : scope === "asset" ? "accent" : scope === "site" ? "warn" : "info";
+  return badge(scope, variant, { title: reason });
 }
 
 function signalHealthList(sources) {
@@ -212,7 +226,7 @@ function signalBadge(ds) {
 function serviceWorkList(items) {
   if (!items.length) return el("div", { class: "muted tiny" }, ["No maintenance items linked."]);
   return el("div", { class: "stack" }, items.map(m => el("div", { class: "activity-row" }, [
-    badge(m.source, "purple"),
+    badge(m.source, "purple", { title: `External ${m.source} record ${m.externalId || m.id} · sync ${m.syncStatus || "unknown"}` }),
     el("span", {}, [m.title]),
     badge(`${m.status} · ${m.priority}`, m.priority === "high" ? "danger" : m.priority === "medium" ? "warn" : "info"),
   ])));
@@ -252,7 +266,21 @@ function dataVariant(s) {
     : "info";
 }
 
-function header(project, view, filter, count, batch, viewKey, filterKey, batchKey, id) {
+const SAVED_VIEWS = [
+  { id: "all", label: "All", test: () => true },
+  { id: "mine", label: "My work", test: w => w.assigneeId === state.data?.currentUserId },
+  { id: "blocked", label: "Blocked", test: w => (w.blockers || []).length > 0 },
+  { id: "due", label: "Due soon", test: w => w.due && Date.parse(w.due) <= Date.now() + 7 * 86400_000 },
+  { id: "asset", label: "Asset-linked", test: w => (w.assetIds || []).length > 0 },
+  { id: "approval", label: "Needs approval", test: w => ["In Review", "Approved"].includes(w.status) },
+];
+
+function applySavedView(items, viewId) {
+  const view = SAVED_VIEWS.find(v => v.id === viewId) || SAVED_VIEWS[0];
+  return items.filter(view.test);
+}
+
+function header(project, view, filter, count, batch, viewKey, filterKey, batchKey, id, viewPreset) {
   const searchInput = input({ placeholder: "Filter by title/ID/label...", value: filter });
   searchInput.addEventListener("input", () => {
     sessionStorage.setItem(filterKey, searchInput.value);
@@ -265,6 +293,11 @@ function header(project, view, filter, count, batch, viewKey, filterKey, batchKe
     ]),
     el("div", { class: "row" }, [
       searchInput,
+      select(SAVED_VIEWS.map(v => ({ value: v.id, label: v.label })), {
+        value: viewPreset,
+        title: "Saved view",
+        onChange: (e) => { sessionStorage.setItem(`board.saved.${id}`, e.target.value); renderWorkBoard({ id }); },
+      }),
       el("div", { class: "row" },
         ["kanban","table","timeline","calendar","deps"].map(v => el("button", {
           class: `btn sm ${view === v ? "primary" : ""}`,
@@ -688,9 +721,14 @@ function openItem(itemId) {
   const descTextarea = textarea({ value: w.description || "" });
   const blockersInput = input({ value: (w.blockers || []).join(", ") });
 
-  modal({
+  drawer({
     title: `${w.id} — ${w.type}`,
     body: el("div", { class: "stack" }, [
+      el("div", { class: "row wrap" }, [
+        badge(w.status, "info"),
+        badge(w.severity, w.severity === "high" || w.severity === "critical" ? "danger" : w.severity === "medium" ? "warn" : "info"),
+        ...(w.assetIds || []).map(id => badge(`Asset ${id}`, "accent")),
+      ]),
       formRow("Title", titleInput),
       formRow("Status", statusSelect),
       formRow("Severity", severitySelect),

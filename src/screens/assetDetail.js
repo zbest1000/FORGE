@@ -180,30 +180,52 @@ function documentList(docs) {
   if (!docs.length) return el("div", { class: "muted tiny" }, ["No scoped documents."]);
   return el("div", { class: "stack" }, docs.map(doc =>
     el("button", { class: "activity-row", onClick: () => navigate(`/doc/${doc.id}`) }, [
-      badge(doc.scope || doc.discipline, doc.scope === "enterprise" ? "purple" : doc.scope === "asset" ? "accent" : "info"),
+      scopeBadge(doc),
       el("span", {}, [doc.name]),
       el("span", { class: "tiny muted" }, [doc.id]),
     ])
   ));
 }
 
+function scopeBadge(doc) {
+  const scope = doc.scope || "project";
+  const variant = scope === "enterprise" ? "purple" : scope === "asset" ? "accent" : scope === "site" ? "warn" : "info";
+  const title = scope === "enterprise" ? "Enterprise document: visible across the organization."
+    : scope === "site" ? "Site document inherited from this asset's site."
+    : scope === "asset" ? "Asset document directly linked to this asset."
+    : "Project document inherited through this asset's project.";
+  return badge(scope, variant, { title });
+}
+
 function signalHealthPanel(dataSources) {
   if (!dataSources.length) return el("div", { class: "muted tiny" }, ["No signal mappings yet."]);
   return el("div", { class: "stack" }, dataSources.map(ds => el("div", { class: "activity-row" }, [
-    badge(ds.status || ds.kind, dataVariant(ds.status || ds.quality)),
+    signalBadge(ds),
     el("span", { class: "mono tiny" }, [ds.endpoint]),
     el("span", { class: "tiny muted" }, [ds.lastValue || ds.quality || ds.integrationId]),
   ])));
 }
 
+function signalBadge(ds) {
+  const status = ds.status || ds.quality || ds.kind;
+  const label = status === "live" ? "Live"
+    : status === "stale" ? "Stale"
+    : status === "not_connected" ? "Not connected"
+    : status === "simulated" ? "Simulated"
+    : status === "historical" ? "Historical"
+    : status;
+  const title = `Source: ${ds.integrationId || "unknown"} · Quality: ${ds.quality || "unknown"} · Last seen: ${ds.lastSeen ? new Date(ds.lastSeen).toLocaleString() : "unknown"}`;
+  return badge(label, dataVariant(status), { title });
+}
+
 function workMaintenancePanel(tasks, maintenance) {
   const rows = [
-    ...tasks.map(w => ({ kind: w.type, text: `${w.id} · ${w.title}`, state: w.status, variant: w.severity === "high" ? "danger" : "info" })),
-    ...maintenance.map(m => ({ kind: m.source, text: `${m.id} · ${m.title}`, state: `${m.status} · ${m.priority}`, variant: m.priority === "high" ? "danger" : "warn" })),
+    ...tasks.map(w => ({ kind: w.type, text: `${w.id} · ${w.title}`, state: w.status, variant: w.severity === "high" ? "danger" : "info", title: "FORGE work item" })),
+    ...maintenance.map(m => ({ kind: m.source, text: `${m.externalId || m.id} · ${m.title}`, state: `${m.status} · ${m.priority}`, variant: m.priority === "high" ? "danger" : "warn", title: `${m.source} sync: ${m.syncStatus || "unknown"}` })),
   ];
   if (!rows.length) return el("div", { class: "muted tiny" }, ["No work or service linked."]);
   return el("div", { class: "stack" }, rows.map(r => el("div", { class: "activity-row" }, [
-    badge(r.kind, "info"),
+    badge(r.kind, r.kind === "MaintainX" || r.kind === "SAP PM" || r.kind === "UpKeep" ? "purple" : "info", { title: r.title }),
     el("span", {}, [r.text]),
     badge(r.state, r.variant),
   ])));

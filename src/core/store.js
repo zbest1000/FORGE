@@ -17,6 +17,7 @@ export const state = {
     showContextPanel: true,
     showHeader: true,
     focusMode: false,        // true → hide both side panels
+    fieldMode: false,        // larger touch targets and field-friendly density
     portalId: null,          // null = default rail; set to a portal id to filter
     selectedTeamSpaceId: null,
     selectedChannelId: null,

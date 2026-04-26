@@ -10,7 +10,7 @@
 //   * Object preview pane (spec layout: queue + preview)
 //   * Approver matrix enforcement via permissions.can()
 
-import { el, mount, card, badge, toast, modal, formRow, textarea, select } from "../core/ui.js";
+import { el, mount, card, badge, toast, drawer, formRow, textarea, select } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -138,8 +138,8 @@ function previewPane(a) {
       )) : el("div", { class: "muted tiny" }, ["No steps yet."]),
     ]),
     a.status === "pending" ? el("div", { class: "approval-actions" }, [
-      el("button", { class: "btn primary", disabled: !can("approve"), onClick: () => decide(a, "approved") }, ["Sign & approve"]),
-      el("button", { class: "btn danger", disabled: !can("approve"), onClick: () => decide(a, "rejected") }, ["Reject"]),
+      el("button", { class: "btn primary", disabled: !can("approve"), onClick: () => decideDrawer(a, "approved") }, ["Review approval"]),
+      el("button", { class: "btn danger", disabled: !can("approve"), onClick: () => decideDrawer(a, "rejected") }, ["Review rejection"]),
       el("button", { class: "btn", disabled: !can("approve"), onClick: () => delegate(a) }, ["Delegate"]),
       el("button", { class: "btn ghost", onClick: () => requestChanges(a) }, ["Request changes"]),
     ]) : null,
@@ -195,12 +195,24 @@ function expireOverdue() {
   });
 }
 
-async function decide(a, outcome) {
+function decideDrawer(a, outcome) {
   if (!can("approve")) { toast("Cannot approve", "warn"); return; }
   const notes = textarea({ placeholder: outcome === "approved" ? "Signature notes..." : "Reason for rejection..." });
-  modal({
+  const subj = resolveSubject(a.subject);
+  const impact = approvalImpact(a);
+  drawer({
     title: `${outcome === "approved" ? "Approve" : "Reject"} ${a.id}`,
     body: el("div", { class: "stack" }, [
+      el("div", { class: "approval-impact" }, [
+        badge(a.subject.kind, "info"),
+        el("span", { class: "mono small" }, [a.subject.id]),
+        subj.route ? el("button", { class: "btn sm", onClick: () => navigate(subj.route) }, ["Open subject"]) : null,
+      ]),
+      card("Impact preview", el("div", { class: "stack" }, impact.map(row => el("div", { class: "activity-row" }, [
+        badge(row.kind, row.variant),
+        el("span", {}, [row.text]),
+        el("span", { class: "tiny muted" }, [row.detail]),
+      ])))),
       formRow(outcome === "approved" ? "Signature notes" : "Reason", notes),
       el("div", { class: "tiny muted" }, [
         "This decision is signed with HMAC-SHA256 over the decision payload (signer, subject, outcome, notes, timestamp) and appended to the chain of custody.",
@@ -215,6 +227,26 @@ async function decide(a, outcome) {
       },
     ],
   });
+}
+
+function approvalImpact(a) {
+  if (a.subject.kind === "Revision") {
+    const r = getById("revisions", a.subject.id);
+    const doc = r ? getById("documents", r.docId) : null;
+    return [
+      { kind: "Revision", variant: "info", text: r ? `Rev ${r.label} moves from ${r.status}` : a.subject.id, detail: doc?.name || "Unknown document" },
+      { kind: "Audit", variant: "purple", text: "Signed chain-of-custody entry", detail: "HMAC + audit ledger" },
+      { kind: "Safety", variant: "warn", text: "Check linked assets and superseded revisions", detail: "Prevents old-package work" },
+    ];
+  }
+  if (a.subject.kind === "WorkItem") {
+    const w = getById("workItems", a.subject.id);
+    return [
+      { kind: "Work", variant: "info", text: w?.title || a.subject.id, detail: w ? `${w.type} · ${w.status}` : "Unknown item" },
+      { kind: "Audit", variant: "purple", text: "Decision recorded", detail: "Approval trail" },
+    ];
+  }
+  return [{ kind: "Object", variant: "info", text: `${a.subject.kind} ${a.subject.id}`, detail: "Review linked context" }];
 }
 
 async function finalize(a, outcome, notes) {

@@ -229,10 +229,10 @@ export function buildSeed() {
   ];
 
   const maintenanceItems = [
-    { id: "MX-1001", source: "MaintainX", assetId: "AS-2", projectId: "PRJ-1", type: "PM", title: "Inspect Feeder A1 bearings before SAT", status: "scheduled", priority: "medium", due: iso(60*24*4), ownerId: "U-3" },
-    { id: "MX-1002", source: "MaintainX", assetId: "AS-1", projectId: "PRJ-1", type: "Corrective", title: "Investigate HX-01 high-temp alarm trend", status: "open", priority: "high", due: iso(60*18), ownerId: "U-3" },
-    { id: "MX-1003", source: "SAP PM", assetId: "AS-4", projectId: "PRJ-3", type: "Inspection", title: "Boiler B-201 annual burner inspection", status: "due", priority: "high", due: iso(60*24*5), ownerId: "U-3" },
-    { id: "MX-1004", source: "UpKeep", assetId: "AS-6", projectId: null, type: "Calibration", title: "Lab humidity sensor calibration", status: "scheduled", priority: "low", due: iso(60*24*20), ownerId: "U-5" },
+    { id: "MX-1001", externalId: "WO-44281", source: "MaintainX", sourceUrl: "https://maintainx.example/work-orders/WO-44281", syncStatus: "synced", assetId: "AS-2", projectId: "PRJ-1", type: "PM", title: "Inspect Feeder A1 bearings before SAT", status: "scheduled", priority: "medium", due: iso(60*24*4), ownerId: "U-3" },
+    { id: "MX-1002", externalId: "WO-44293", source: "MaintainX", sourceUrl: "https://maintainx.example/work-orders/WO-44293", syncStatus: "needs review", assetId: "AS-1", projectId: "PRJ-1", type: "Corrective", title: "Investigate HX-01 high-temp alarm trend", status: "open", priority: "high", due: iso(60*18), ownerId: "U-3" },
+    { id: "MX-1003", externalId: "PM-70014", source: "SAP PM", sourceUrl: "https://sap.example/pm/PM-70014", syncStatus: "synced", assetId: "AS-4", projectId: "PRJ-3", type: "Inspection", title: "Boiler B-201 annual burner inspection", status: "due", priority: "high", due: iso(60*24*5), ownerId: "U-3" },
+    { id: "MX-1004", externalId: "UP-1902", source: "UpKeep", sourceUrl: "https://upkeep.example/work-orders/UP-1902", syncStatus: "synced", assetId: "AS-6", projectId: null, type: "Calibration", title: "Lab humidity sensor calibration", status: "scheduled", priority: "low", due: iso(60*24*20), ownerId: "U-5" },
   ];
 
   const incidents = [

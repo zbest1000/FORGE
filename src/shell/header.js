@@ -134,6 +134,10 @@ function viewMenu() {
         }, [state.ui.focusMode ? "Exit focus mode" : "Focus mode (hide side panels)"]),
         el("button", {
           class: "btn sm vm-row",
+          onClick: () => { update(s => { s.ui.fieldMode = !s.ui.fieldMode; }); },
+        }, [state.ui.fieldMode ? "Exit field mode" : "Field mode (touch-first)"]),
+        el("button", {
+          class: "btn sm vm-row",
           onClick: () => {
             update(s => {
               s.ui.showRail = true; s.ui.showLeftPanel = true; s.ui.showContextPanel = true;
