@@ -122,7 +122,7 @@ function modbusTab() {
           reg.assetId ? el("button", { class: "btn ghost sm", onClick: () => navigate(`/asset/${reg.assetId}`) }, [assetName(reg.assetId)]) : null,
         ]),
         el("span", { class: "strong" }, [reg.lastValue == null ? "—" : `${reg.lastValue} ${reg.unit || ""}`.trim()]),
-        el("button", { class: "btn sm", disabled: !can("integration.write"), onClick: () => simulateModbusRead(reg) }, ["Sim read"]),
+        el("button", { class: "btn sm", onClick: () => simulateModbusRead(reg) }, ["Sim read"]),
       ])
     ))),
   ]);
