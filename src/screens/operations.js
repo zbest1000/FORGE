@@ -97,13 +97,13 @@ function trendsTab() {
 function historianBackendsPanel(points) {
   const configured = new Set(points.map(p => p.historian || "sqlite"));
   const backends = [
-    { id: "sqlite", label: "SQLite", role: "local/dev/demo/recent cache", active: true },
-    { id: "influxdb", label: "InfluxDB", role: "high-volume time-series trends", active: configured.has("influxdb") || configured.has("influx") },
-    { id: "timebase", label: "Timebase", role: "enterprise historian integration", active: configured.has("timebase") },
-    { id: "mssql", label: "SQL Server", role: "recipes, batch records, regulated relational history", active: configured.has("mssql") || configured.has("sqlserver") },
+    { id: "sqlite", label: "SQLite", role: "Local cache and demo historian", active: true },
+    { id: "influxdb", label: "InfluxDB", role: "High-volume time-series trends", active: configured.has("influxdb") || configured.has("influx") },
+    { id: "timebase", label: "Timebase", role: "Enterprise historian connector", active: configured.has("timebase") },
+    { id: "mssql", label: "SQL Server", role: "Recipes, batches, regulated history", active: configured.has("mssql") || configured.has("sqlserver") },
   ];
   return el("div", { class: "stack" }, [
-        el("div", { class: "small" }, ["Local SQLite stores recent samples now; points carry a historian field so Timebase or another time-series backend can be selected without changing asset tags."]),
+        el("div", { class: "small" }, ["Each historian point declares its target backend; SQLite remains the local cache and external historians are enabled by environment configuration."]),
         ...Object.entries(groupBy(points, p => p.historian || "sqlite")).map(([name, rows]) =>
           el("div", { class: "activity-row" }, [
             badge(name, name === "sqlite" ? "accent" : "purple"),
