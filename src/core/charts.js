@@ -43,15 +43,18 @@ export function historianChart(samples, { title = "", unit = "", type = "line", 
   host.style.width = typeof width === "number" ? width + "px" : width;
   host.style.height = typeof height === "number" ? height + "px" : height;
   const values = samples.map(s => Number(s.value)).filter(Number.isFinite);
-  host.append(svgSpark(values, 640, 220));
+  host.append(svgChart(values, 640, 220, type));
   (async () => {
     try {
       const echarts = await vendor.echarts();
-      if (!echarts) return;
+      if (!echarts || !host.isConnected) return;
       host.replaceChildren();
       const chart = echarts.init(host, null, { renderer: "canvas" });
       const data = samples.map((s, i) => [s.ts || i, Number(s.value)]);
-      const seriesType = type === "area" ? "line" : type;
+      const isArea = type === "area";
+      const isScatter = type === "scatter";
+      const isBar = type === "bar";
+      const seriesType = isArea ? "line" : type;
       chart.setOption({
         backgroundColor: "transparent",
         color: ["#38bdf8"],
@@ -64,12 +67,12 @@ export function historianChart(samples, { title = "", unit = "", type = "line", 
           name: title || "value",
           type: seriesType,
           data,
-          symbol: type === "scatter" ? "circle" : "none",
-          symbolSize: type === "scatter" ? 8 : 0,
-          showSymbol: type === "scatter",
-          smooth: type === "line" || type === "area",
-          lineStyle: type === "scatter" ? { width: 0 } : undefined,
-          areaStyle: type === "area" ? { opacity: 0.18 } : undefined,
+          symbol: isScatter ? "circle" : "none",
+          symbolSize: isScatter ? 8 : 0,
+          showSymbol: isScatter,
+          smooth: !isScatter && !isBar,
+          lineStyle: isScatter ? { opacity: 0, width: 0 } : undefined,
+          areaStyle: isArea ? { opacity: 0.18 } : undefined,
           barMaxWidth: 18,
         }],
       }, true);
@@ -77,6 +80,12 @@ export function historianChart(samples, { title = "", unit = "", type = "line", 
     } catch { /* keep SVG fallback */ }
   })();
   return host;
+}
+
+function svgChart(series, W, H, type = "line") {
+  if (type === "scatter") return svgScatter(series, W, H);
+  if (type === "bar") return svgBars(series, W, H);
+  return svgSpark(series, W, H);
 }
 
 function svgSpark(series, W, H) {
@@ -99,5 +108,47 @@ function svgSpark(series, W, H) {
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
   svg.innerHTML = `<polyline points="${points}" fill="none" stroke="rgb(56,189,248)" stroke-width="1.5"/>`;
+  return svg;
+}
+
+function scaledPoints(series, W, H) {
+  const min = Math.min(...series), max = Math.max(...series);
+  const span = max - min || 1;
+  return series.map((v, i) => ({
+    x: (i / (series.length - 1 || 1)) * W,
+    y: H - ((v - min) / span) * (H - 8) - 4,
+  }));
+}
+
+function svgScatter(series, W, H) {
+  if (!series.length) return svgSpark(series, W, H);
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", String(W));
+  svg.setAttribute("height", String(H));
+  svg.innerHTML = scaledPoints(series, W, H)
+    .map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" fill="rgb(56,189,248)"/>`)
+    .join("");
+  return svg;
+}
+
+function svgBars(series, W, H) {
+  if (!series.length) return svgSpark(series, W, H);
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", String(W));
+  svg.setAttribute("height", String(H));
+  const min = Math.min(0, ...series), max = Math.max(...series);
+  const span = max - min || 1;
+  const gap = 2;
+  const bw = Math.max(2, (W / series.length) - gap);
+  svg.innerHTML = series.map((v, i) => {
+    const h = ((v - min) / span) * (H - 8);
+    const x = i * (W / series.length) + gap / 2;
+    const y = H - h - 4;
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, h).toFixed(1)}" fill="rgba(56,189,248,0.72)"/>`;
+  }).join("");
   return svg;
 }
