@@ -1,4 +1,4 @@
-import { el, mount, card, badge, kpi, tabs, toast } from "../core/ui.js";
+import { el, mount, card, badge, kpi, tabs } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -163,7 +163,6 @@ function simulateModbusRead(reg) {
     }
   });
   audit("modbus.register.read", reg.id, { rawValue: raw, value });
-  toast(`${reg.name}: ${value} ${reg.unit || ""}`.trim(), "success");
 }
 
 function latestValue(samples, unit) {
