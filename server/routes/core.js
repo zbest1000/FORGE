@@ -16,6 +16,17 @@ function mapRowJson(row, fields) {
   return out;
 }
 
+/**
+ * Resolve `?limit=` and `?offset=` from the request query, clamped to a
+ * sensible enterprise cap. Defaults to a high limit so existing clients
+ * keep working; callers that page should pass explicit values.
+ */
+function readPage(req, { defaultLimit = 200, maxLimit = 500 } = {}) {
+  const limit = Math.min(maxLimit, Math.max(1, Number(req.query?.limit || defaultLimit)));
+  const offset = Math.max(0, Number(req.query?.offset || 0));
+  return { limit, offset };
+}
+
 function docForRevision(revId) {
   return db.prepare(`SELECT d.* FROM documents d JOIN revisions r ON r.doc_id = d.id WHERE r.id = ?`).get(revId);
 }
@@ -78,7 +89,8 @@ export default async function coreRoutes(fastify) {
   // ---------- team spaces ----------
   fastify.get("/api/team-spaces", { preHandler: require_("view") }, async (req) => {
     const t = tenantWhere(req, "team_spaces");
-    const rows = db.prepare(`SELECT * FROM team_spaces WHERE ${t.where} ORDER BY name`).all(...t.params);
+    const { limit, offset } = readPage(req);
+    const rows = db.prepare(`SELECT * FROM team_spaces WHERE ${t.where} ORDER BY name LIMIT ? OFFSET ?`).all(...t.params, limit, offset);
     return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl", "labels"]));
   });
 
@@ -93,10 +105,11 @@ export default async function coreRoutes(fastify) {
   fastify.get("/api/projects", { preHandler: require_("view") }, async (req) => {
     const t = tenantWhere(req, "projects");
     const ts = req.query.teamSpaceId;
+    const { limit, offset } = readPage(req);
     const sql = ts
-      ? `SELECT * FROM projects WHERE team_space_id = ? AND ${t.where} ORDER BY name`
-      : `SELECT * FROM projects WHERE ${t.where} ORDER BY name`;
-    const params = ts ? [ts, ...t.params] : t.params;
+      ? `SELECT * FROM projects WHERE team_space_id = ? AND ${t.where} ORDER BY name LIMIT ? OFFSET ?`
+      : `SELECT * FROM projects WHERE ${t.where} ORDER BY name LIMIT ? OFFSET ?`;
+    const params = ts ? [ts, ...t.params, limit, offset] : [...t.params, limit, offset];
     const rows = db.prepare(sql).all(...params);
     return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl", "labels", "milestones"]));
   });
@@ -105,10 +118,11 @@ export default async function coreRoutes(fastify) {
   fastify.get("/api/channels", { preHandler: require_("view") }, async (req) => {
     const t = tenantWhere(req, "channels");
     const ts = req.query.teamSpaceId;
+    const { limit, offset } = readPage(req);
     const sql = ts
-      ? `SELECT * FROM channels WHERE team_space_id = ? AND ${t.where} ORDER BY name`
-      : `SELECT * FROM channels WHERE ${t.where} ORDER BY name`;
-    const params = ts ? [ts, ...t.params] : t.params;
+      ? `SELECT * FROM channels WHERE team_space_id = ? AND ${t.where} ORDER BY name LIMIT ? OFFSET ?`
+      : `SELECT * FROM channels WHERE ${t.where} ORDER BY name LIMIT ? OFFSET ?`;
+    const params = ts ? [ts, ...t.params, limit, offset] : [...t.params, limit, offset];
     const rows = db.prepare(sql).all(...params);
     return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl"]));
   });
@@ -141,7 +155,8 @@ export default async function coreRoutes(fastify) {
   // ---------- documents & revisions ----------
   fastify.get("/api/documents", { preHandler: require_("view") }, async (req) => {
     const t = tenantWhere(req, "documents");
-    const rows = db.prepare(`SELECT * FROM documents WHERE ${t.where} ORDER BY name`).all(...t.params);
+    const { limit, offset } = readPage(req);
+    const rows = db.prepare(`SELECT * FROM documents WHERE ${t.where} ORDER BY name LIMIT ? OFFSET ?`).all(...t.params, limit, offset);
     return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl", "labels"]));
   });
 
@@ -190,7 +205,8 @@ export default async function coreRoutes(fastify) {
   // ---------- assets ----------
   fastify.get("/api/assets", { preHandler: require_("view") }, async (req) => {
     const t = tenantWhere(req, "assets");
-    const rows = db.prepare(`SELECT * FROM assets WHERE ${t.where} ORDER BY name`).all(...t.params);
+    const { limit, offset } = readPage(req);
+    const rows = db.prepare(`SELECT * FROM assets WHERE ${t.where} ORDER BY name LIMIT ? OFFSET ?`).all(...t.params, limit, offset);
     return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl", "labels", "mqtt_topics", "opcua_nodes", "doc_ids"]));
   });
 
@@ -198,9 +214,10 @@ export default async function coreRoutes(fastify) {
   fastify.get("/api/work-items", { preHandler: require_("view") }, async (req) => {
     const t = tenantWhere(req, "work_items");
     const pid = req.query.projectId;
+    const { limit, offset } = readPage(req);
     const rows = pid
-      ? db.prepare(`SELECT * FROM work_items WHERE project_id = ? AND ${t.where} ORDER BY created_at DESC`).all(pid, ...t.params)
-      : db.prepare(`SELECT * FROM work_items WHERE ${t.where} ORDER BY created_at DESC`).all(...t.params);
+      ? db.prepare(`SELECT * FROM work_items WHERE project_id = ? AND ${t.where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(pid, ...t.params, limit, offset)
+      : db.prepare(`SELECT * FROM work_items WHERE ${t.where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...t.params, limit, offset);
     return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl", "labels", "blockers"]));
   });
 
@@ -246,7 +263,8 @@ export default async function coreRoutes(fastify) {
   // ---------- incidents ----------
   fastify.get("/api/incidents", { preHandler: require_("view") }, async (req) => {
     const t = tenantWhere(req, "incidents");
-    const rows = db.prepare(`SELECT * FROM incidents WHERE ${t.where} ORDER BY started_at DESC`).all(...t.params);
+    const { limit, offset } = readPage(req);
+    const rows = db.prepare(`SELECT * FROM incidents WHERE ${t.where} ORDER BY started_at DESC LIMIT ? OFFSET ?`).all(...t.params, limit, offset);
     return filterAllowed(rows, req.user, "view")
       .map(r => ({ ...r, timeline: JSON.parse(r.timeline || "[]"), checklist_state: JSON.parse(r.checklist_state || "{}"), roster: JSON.parse(r.roster || "{}") }));
   });

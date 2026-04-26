@@ -43,6 +43,7 @@ import { startMqttBridge } from "./connectors/mqtt.js";
 import { startOpcuaBridge } from "./connectors/opcua.js";
 import { startAlertWorker } from "./alerts.js";
 import { startRollupWorker, readSeries, listDailySnapshot } from "./metrics-rollup.js";
+import { startRetentionWorker } from "./retention.js";
 
 initTracing("forge-api");
 import { startOutboxWorker } from "./outbox.js";
@@ -311,6 +312,7 @@ startOpcuaBridge(app.log);
 startAlertWorker(app.log);
 startRollupWorker(app.log);
 startOutboxWorker(app.log);
+startRetentionWorker(app.log);
 
 // Record boot in the audit ledger.
 audit({ actor: "system", action: "server.start", subject: "forge", detail: { host: HOST, port: PORT, pid: process.pid } });

@@ -162,6 +162,28 @@ test("tenant data endpoints require auth and filter object ACLs", async () => {
   assert.equal(deniedPatch.status, 403);
 });
 
+test("list endpoints honour ?limit and ?offset", async () => {
+  // Seed 5 extra work items.
+  const { db: _db } = await import("../server/db.js");
+  const tsNow = new Date().toISOString();
+  for (let i = 0; i < 5; i++) {
+    _db.prepare("INSERT INTO work_items (id, project_id, type, title, assignee_id, status, severity, blockers, labels, acl, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(`WI-PG-${i}`, "PRJ-1", "Task", `paged ${i}`, "U-ADMIN", "Open", "low", "[]", "[]", "{}", tsNow, tsNow);
+  }
+  const page1 = await req("/api/work-items?projectId=PRJ-1&limit=2", { headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(page1.status, 200);
+  assert.equal(page1.body.length, 2);
+
+  const page2 = await req("/api/work-items?projectId=PRJ-1&limit=2&offset=2", { headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(page2.body.length, 2);
+  assert.notEqual(page1.body[0].id, page2.body[0].id);
+
+  // Upper bound of 500 is enforced.
+  const big = await req("/api/work-items?projectId=PRJ-1&limit=99999", { headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(big.status, 200);
+  assert.ok(big.body.length <= 500);
+});
+
 test("CRUD on work items (create, patch, list)", async () => {
   const create = await req("/api/work-items", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ projectId: "PRJ-1", title: "test WI", severity: "high" }) });
   assert.equal(create.status, 200);

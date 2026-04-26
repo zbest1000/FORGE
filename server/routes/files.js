@@ -13,6 +13,7 @@ import { audit } from "../audit.js";
 import { allows, requireAccess } from "../acl.js";
 import { require_ } from "../auth.js";
 import { orgForRow, tenantOrgId } from "../tenant.js";
+import { isHeld } from "../compliance.js";
 
 const DATA_DIR = process.env.FORGE_DATA_DIR || path.resolve(process.cwd(), "data");
 const FILES_DIR = path.join(DATA_DIR, "files");
@@ -200,6 +201,14 @@ export default async function fileRoutes(fastify) {
     const parent = resolveParent(row.parent_kind, row.parent_id);
     if (parent && !tenantOk(req, row.parent_kind, parent)) return reply.code(404).send({ error: "not found" });
     if (parent && !allows(req.user, parent.acl, "edit")) return reply.code(403).send({ error: "forbidden" });
+    // Legal-hold interlock: refuse to delete a file whose parent record
+    // (or the parent's parent) is under an active legal hold. This is
+    // the minimal viable hook; a richer implementation walks all
+    // relationships.
+    if (parent && (isHeld({ objectId: parent.id }) || isHeld({ objectId: row.id }) || isHeld({ scope: row.parent_kind }))) {
+      audit({ actor: req.user.id, action: "file.delete.blocked", subject: row.id, detail: { reason: "legal_hold" } });
+      return reply.code(423).send({ error: "legal hold blocks delete", reason: "legal_hold" });
+    }
     db.prepare("DELETE FROM files WHERE id = ?").run(row.id);
     audit({ actor: req.user.id, action: "file.delete", subject: row.id });
     return { ok: true };
