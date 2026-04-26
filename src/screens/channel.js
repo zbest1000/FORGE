@@ -9,7 +9,7 @@
 //   * Follow/unfollow channel
 //   * Decision markers
 
-import { el, mount, card, badge, toast, chip, modal, formRow, textarea, select, input } from "../core/ui.js";
+import { el, mount, card, badge, toast, chip, modal, formRow, textarea, select, input, prompt, dangerAction } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -252,8 +252,12 @@ function jumpById(id, d) {
   toast("Object not found in this workspace", "warn");
 }
 
-function linkObject(composer) {
-  const val = window.prompt("Link an object — enter ID (DOC-1, AS-1, WI-101, REV-2-C, INC-4412):");
+async function linkObject(composer) {
+  const val = await prompt({
+    title: "Link an object",
+    label: "Object ID",
+    placeholder: "DOC-1, AS-1, WI-101, REV-2-C, INC-4412",
+  });
   if (!val) return;
   composer.value += (composer.value ? " " : "") + `[${val.trim()}]`;
   composer.focus();
@@ -273,19 +277,26 @@ function addDecision(composer) {
 
 function addMention(composer) {
   const users = state.data.users || [];
-  const choice = window.prompt(
-    "Mention which user?\n" + users.map(u => `  ${u.initials.padEnd(4)} ${u.name} — ${u.role}`).join("\n"),
-    users[0]?.initials || ""
-  );
-  if (!choice) return;
-  const u = resolveMention(choice, users);
-  if (!u) { return; }
-  composer.value += (composer.value ? " " : "") + `@${u.initials}`;
-  composer.focus();
+  const sel = select(users.map(u => ({ value: u.initials, label: `${u.initials} — ${u.name} (${u.role})` })));
+  modal({
+    title: "Mention a user",
+    body: el("div", { class: "stack" }, [
+      formRow("User", sel),
+    ]),
+    actions: [
+      { label: "Cancel" },
+      { label: "Insert", variant: "primary", onClick: () => {
+        const u = resolveMention(sel.value, users);
+        if (!u) return;
+        composer.value += (composer.value ? " " : "") + `@${u.initials}`;
+        composer.focus();
+      }},
+    ],
+  });
 }
 
-function addCodeBlock(composer) {
-  const lang = window.prompt("Language (e.g. js, py, sql, json):", "js") || "";
+async function addCodeBlock(composer) {
+  const lang = (await prompt({ title: "Insert code block", label: "Language", defaultValue: "js", placeholder: "js, py, sql, json…" })) || "";
   const fenced = "\n```" + lang + "\n// your code\n```\n";
   composer.value += fenced;
   composer.focus();
@@ -298,9 +309,9 @@ function addDataBlock(composer) {
   composer.focus();
 }
 
-function convertToWorkItem(m) {
+async function convertToWorkItem(m) {
   if (!can("create")) { toast("No permission", "warn"); return; }
-  const title = window.prompt("Work item title:", (m.text || "").slice(0, 60));
+  const title = await prompt({ title: "Convert to work item", label: "Title", defaultValue: (m.text || "").slice(0, 60) });
   if (!title) return;
   const ch = (state.data.channels || []).find(c => c.id === m.channelId);
   const ts = (state.data.teamSpaces || []).find(t => t.id === ch.teamSpaceId);
@@ -319,9 +330,9 @@ function convertToWorkItem(m) {
   navigate(`/work-board/${project.id}`);
 }
 
-function escalateToIncident(m) {
+async function escalateToIncident(m) {
   if (!can("create")) { toast("No permission", "warn"); return; }
-  const title = window.prompt("Incident title:", (m.text || "").slice(0, 60));
+  const title = await prompt({ title: "Escalate to incident", label: "Incident title", defaultValue: (m.text || "").slice(0, 60) });
   if (!title) return;
   const ch = (state.data.channels || []).find(c => c.id === m.channelId);
   const id = "INC-" + Math.floor(Math.random() * 9000 + 1000);
@@ -360,8 +371,13 @@ function editMessage(m) {
   });
 }
 
-function deleteMessage(m) {
-  if (!window.confirm("Delete this message? It will be retained in the audit log.")) return;
+async function deleteMessage(m) {
+  const ok = await dangerAction({
+    title: "Delete this message?",
+    message: "The message will be hidden from the channel. The full text is retained in the audit log.",
+    confirmLabel: "Delete",
+  });
+  if (!ok) return;
   update(s => {
     const x = s.data.messages.find(y => y.id === m.id);
     if (!x) return;

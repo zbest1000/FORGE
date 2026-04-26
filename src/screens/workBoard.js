@@ -5,7 +5,7 @@
 // severity, bulk labels. Dependencies create blocked-by links.
 // Automation: default rules and per-project trigger viewer.
 
-import { el, mount, card, badge, kpi, toast, modal, drawer, formRow, input, select, textarea } from "../core/ui.js";
+import { el, mount, card, badge, kpi, toast, modal, drawer, formRow, input, select, textarea, prompt } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -367,8 +367,8 @@ function batchAssignee(ids, batchKey, projectId) {
     }},
   ] });
 }
-function batchAddLabel(ids, batchKey, projectId) {
-  const label = window.prompt("Label to add:");
+async function batchAddLabel(ids, batchKey, projectId) {
+  const label = await prompt({ title: `Add label to ${ids.length} item(s)`, label: "Label", placeholder: "e.g. line-A" });
   if (!label) return;
   update(s => { for (const id of ids) { const w = s.data.workItems.find(x => x.id === id); if (w) { w.labels = w.labels || []; if (!w.labels.includes(label)) w.labels.push(label); audit("workitem.label", id, { add: label }); } } });
   sessionStorage.setItem(batchKey, "[]"); renderWorkBoard({ id: projectId });

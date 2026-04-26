@@ -11,8 +11,8 @@ import { initAuditLedger } from "./src/core/audit.js";
 import { buildIndex, scheduleRebuild } from "./src/core/search.js";
 import { installHotkeys } from "./src/core/hotkeys.js";
 import { probe, mode, getToken, login, logout, api } from "./src/core/api.js";
-import { canAccessRoute } from "./src/core/groups.js";
-import { el, mount } from "./src/core/ui.js";
+import { canAccessRoute, requiredGroupsForRoute, effectiveGroupIds, currentUserId, currentUser } from "./src/core/groups.js";
+import { el, mount, toast } from "./src/core/ui.js";
 
 import { renderRail } from "./src/shell/rail.js";
 import { renderLeftPanel } from "./src/shell/leftPanel.js";
@@ -92,12 +92,33 @@ function applyTheme() {
   const cls = [state.ui.theme === "dark" ? "theme-dark" : "theme-light"];
   if (state.ui.focusMode) cls.push("focus-mode");
   if (!state.ui.showLeftPanel) cls.push("hide-left-panel");
-  if (!state.ui.showContextPanel) cls.push("hide-right-panel");
+  if (!state.ui.showContextPanel) cls.push("hide-right-panel", "hide-context-panel");
   if (!state.ui.showRail) cls.push("hide-rail");
   if (!state.ui.showHeader) cls.push("hide-header");
   if (state.ui.fieldMode) cls.push("field-mode");
   if (state.ui.portalId) cls.push("portal-mode", "portal-" + state.ui.portalId);
   document.body.className = cls.join(" ");
+}
+
+// Routes where the right context panel adds enough value that we auto-open
+// it on first navigation per session. Once a user manually toggles it via
+// the header "Details" button, we respect their choice for the rest of
+// the session.
+const RICH_CONTEXT_ROUTES = [
+  /^\/doc\//,
+  /^\/drawing\//,
+  /^\/asset\//,
+  /^\/incident\//,
+  /^\/work-board\//,
+];
+
+function maybeAutoOpenContextPanel() {
+  const route = (state.route || "").split("?")[0];
+  const rich = RICH_CONTEXT_ROUTES.some(r => r.test(route));
+  if (!rich) return;
+  if (sessionStorage.getItem("forge.contextPanelTouched") === "1") return;
+  if (state.ui.showContextPanel) return;
+  state.ui.showContextPanel = true;
 }
 
 function applyPortalFromUrl() {
@@ -185,6 +206,7 @@ async function boot() {
   // forbidden screen instead of the underlying content.
   onRouteChange(() => {
     // Sync layout chrome (rail/header) to the new route's portal id.
+    maybeAutoOpenContextPanel();
     applyTheme();
     renderShell();
 
@@ -192,15 +214,38 @@ async function boot() {
     if (!canAccessRoute(route)) {
       const root = document.getElementById("screenContainer");
       if (root) {
+        const required = requiredGroupsForRoute(route) || [];
+        const groupsById = Object.fromEntries((state.data?.groups || []).map(g => [g.id, g]));
+        const requiredLabels = required.map(id => groupsById[id]?.name || id);
+        const me = currentUser();
+        const myGroups = effectiveGroupIds(currentUserId());
+        const myLabels = myGroups.length
+          ? myGroups.map(id => groupsById[id]?.name || id).join(", ")
+          : "(no groups)";
         mount(root, [
           el("div", { class: "forbidden" }, [
             el("h2", {}, ["Restricted area"]),
             el("p", { class: "muted" }, [
-              "This route requires membership in a group you don't currently belong to. ",
-              "Ask an administrator to add you to the appropriate group, or pick a different portal from the Hub.",
+              "This route requires you to be a member of one of the groups below. ",
+              "Ask your administrator to add you, or open a different portal from the Hub.",
             ]),
-            el("div", { class: "row", style: { justifyContent: "center" } }, [
-              el("button", { class: "btn primary", onClick: () => location.hash = "#/hub" }, ["Go to Hub"]),
+            el("dl", { class: "forbidden-detail" }, [
+              el("dt", {}, ["Route"]),
+              el("dd", {}, [route]),
+              el("dt", {}, ["Required group(s) — any of"]),
+              el("dd", {}, [requiredLabels.length ? requiredLabels.join(", ") : "—"]),
+              el("dt", {}, ["Your effective groups"]),
+              el("dd", {}, [myLabels]),
+              el("dt", {}, ["Signed in as"]),
+              el("dd", {}, [me ? `${me.name} · ${me.role || state.ui.role}` : (state.ui.role || "demo user")]),
+            ]),
+            el("div", { class: "row wrap", style: { justifyContent: "center" } }, [
+              el("button", {
+                class: "btn primary",
+                onClick: () => requestAccess(route, required, requiredLabels),
+              }, ["Request access"]),
+              el("button", { class: "btn", onClick: () => location.hash = "#/hub" }, ["Go to Hub"]),
+              el("button", { class: "btn ghost", onClick: () => history.back() }, ["Back"]),
             ]),
           ]),
         ]);
@@ -220,7 +265,15 @@ async function boot() {
       try {
         const me = await api("/api/me");
         state.server.user = me.user;
-        console.info("[forge] signed in as", me.user.email);
+        // Adopt the server user's role unless the user has already manually
+        // overridden it via the header dropdown this session. Without this
+        // sync, group/route gates can wrongly forbid an admin who signed in
+        // through the server because state.ui.role still reflects the demo
+        // seed default.
+        if (me.user?.role && !state.ui.roleOverridden) {
+          state.ui.role = me.user.role;
+        }
+        console.info("[forge] signed in as", me.user.email, "role=", me.user.role);
       } catch {
         console.warn("[forge] stored token rejected; staying anonymous");
       }
@@ -233,6 +286,39 @@ async function boot() {
 }
 
 window.forge = { mode, login, logout, api };
+
+function requestAccess(route, requiredIds, requiredLabels) {
+  // Create a work item asking for access. Picks the first available project
+  // so the request is trackable through the existing Approval/Work flows.
+  const project = (state.data?.projects || [])[0];
+  if (!project) {
+    toast("Cannot file access request — no projects in this workspace.", "warn");
+    return;
+  }
+  const me = currentUser();
+  const id = "WI-AR-" + Math.floor(Math.random() * 9000 + 1000);
+  const item = {
+    id,
+    projectId: project.id,
+    type: "Action",
+    title: `Access request — ${route}`,
+    description: `User ${me?.name || state.ui.role} requests membership in one of: ${(requiredLabels || []).join(", ") || "(unspecified)"} to access ${route}.`,
+    assigneeId: "U-1",
+    status: "Open",
+    severity: "low",
+    due: null,
+    blockers: [],
+    labels: ["access-request", ...requiredIds],
+    created_at: new Date().toISOString(),
+  };
+  import("./src/core/store.js").then(({ update }) => {
+    update(s => { (s.data.workItems = s.data.workItems || []).push(item); });
+    import("./src/core/audit.js").then(({ audit }) => {
+      audit("access.request", id, { route, required: requiredIds });
+    });
+    toast(`Access request ${id} filed`, "success");
+  });
+}
 
 // Field mode (spec §12.5): register the service worker so the SPA shell is
 // available offline and queued writes can be replayed when connectivity

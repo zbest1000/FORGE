@@ -9,7 +9,7 @@
 //   * Audit ledger tamper check (verifyLedger) with visible result
 //   * Policy violations list
 
-import { el, mount, card, badge, toast, modal, formRow, input, select } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, input, select, dangerAction } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { ROLES } from "../core/permissions.js";
 import { exportAuditPack, verifyLedger, verifyAuditPack } from "../core/audit.js";
@@ -109,7 +109,12 @@ function apiTokensPanel() {
         badge((t.scopes || []).join(","), "info"),
         t.revoked_at ? badge("revoked", "danger") : t.expires_at ? badge(`exp ${new Date(t.expires_at).toLocaleDateString()}`, "warn") : badge("active", "success"),
         t.revoked_at ? null : el("button", { class: "btn sm danger", onClick: async () => {
-          if (!window.confirm(`Revoke token ${t.id}?`)) return;
+          const ok = await dangerAction({
+            title: `Revoke token ${t.id}?`,
+            message: `Token “${t.name}” will stop authenticating immediately. Existing sessions using this token will be rejected on their next request.`,
+            confirmLabel: "Revoke",
+          });
+          if (!ok) return;
           await api(`/api/tokens/${t.id}`, { method: "DELETE" });
           refresh();
         } }, ["Revoke"]),
@@ -162,7 +167,16 @@ function webhooksPanel() {
         ]),
         badge(w.enabled ? "enabled" : "disabled", w.enabled ? "success" : ""),
         el("button", { class: "btn sm", onClick: async () => { await api(`/api/webhooks/${w.id}`, { method: "PATCH", body: { enabled: !w.enabled } }); refresh(); } }, [w.enabled ? "Disable" : "Enable"]),
-        el("button", { class: "btn sm danger", onClick: async () => { if (!window.confirm("Delete webhook?")) return; await api(`/api/webhooks/${w.id}`, { method: "DELETE" }); refresh(); } }, ["×"]),
+        el("button", { class: "btn sm danger", onClick: async () => {
+          const ok = await dangerAction({
+            title: `Delete webhook ${w.id}?`,
+            message: `Endpoint ${w.url} will stop receiving events. Existing event records remain in the audit ledger.`,
+            confirmLabel: "Delete",
+          });
+          if (!ok) return;
+          await api(`/api/webhooks/${w.id}`, { method: "DELETE" });
+          refresh();
+        } }, ["×"]),
       ])) : [el("div", { class: "muted tiny" }, ["No webhooks."])]));
     } catch (e) { list.replaceChildren(el("div", { class: "muted tiny" }, ["Error: " + e.message])); }
   };

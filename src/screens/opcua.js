@@ -7,7 +7,7 @@
 //   * Write-node action gated to Integration Admin; confirmed via HMAC sig
 //   * Simulation: trigger state_change for a bound node → event pipeline
 
-import { el, mount, card, badge, toast, modal, formRow, input, select, textarea } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, input, select, textarea, prompt, dangerAction } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { can } from "../core/permissions.js";
@@ -145,11 +145,18 @@ function validate(node, transform) {
   toast(ok ? "Validation passed" : "Datatype incompatible with transform", ok ? "success" : "warn");
 }
 
-function simulate(nodeId, nodes) {
+async function simulate(nodeId, nodes) {
   const n = nodes.find(x => x.id === nodeId);
   if (!n) return;
-  const val = Number(window.prompt(`Value for ${n.id}:`, "101.2"));
-  if (Number.isNaN(val)) return;
+  const raw = await prompt({
+    title: `Simulate value for ${n.id}`,
+    label: "Value",
+    defaultValue: "101.2",
+    helpText: `Unit: ${n.unit || "(unknown)"}. Routed through the event pipeline as a state_change.`,
+    validate: (v) => Number.isNaN(Number(v)) ? "Must be a number" : null,
+  });
+  if (raw == null) return;
+  const val = Number(raw);
   const env = ingest({
     event_type: "state_change",
     severity: "info",
@@ -165,9 +172,27 @@ async function writeNode(nodeId, nodes) {
   const n = nodes.find(x => x.id === nodeId);
   if (!n) return;
   if (!can("integration.write")) return;
-  const val = window.prompt(`WRITE to ${n.id} (must be reviewed):`, "0");
+  const val = await prompt({
+    title: `Privileged write to ${n.id}`,
+    label: "Value",
+    defaultValue: "0",
+    helpText: `This writes to a live OPC UA node. The change is HMAC-signed and recorded in the audit ledger before any value is applied.`,
+  });
   if (val == null) return;
+  const ok = await dangerAction({
+    title: "Confirm OPC UA write",
+    message: `Write the value below to ${n.id}? The action will be signed and audited.`,
+    body: el("dl", { class: "forbidden-detail" }, [
+      el("dt", {}, ["Node"]), el("dd", {}, [n.id]),
+      el("dt", {}, ["Value"]), el("dd", {}, [String(val)]),
+      el("dt", {}, ["Bound asset"]), el("dd", {}, [n.assetId || "(unmapped)"]),
+      el("dt", {}, ["Actor"]), el("dd", {}, [state.ui.role]),
+    ]),
+    confirmLabel: "Sign & write",
+    details: "Signature is HMAC-SHA256 over the canonical payload (node, value, actor, timestamp).",
+  });
+  if (!ok) return;
   const sig = await signHMAC(canonicalJSON({ nodeId: n.id, value: val, actor: state.ui.role, ts: new Date().toISOString() }));
   audit("opcua.write", n.id, { value: val, signature: sig.signature.slice(0, 12), keyId: sig.keyId });
-  toast("Write accepted (signed)", "success");
+  toast(`Write accepted · keyId ${sig.keyId} · sig ${sig.signature.slice(0,8)}…`, "success");
 }

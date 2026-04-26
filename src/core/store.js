@@ -9,13 +9,24 @@ export const state = {
   ui: {
     role: "Engineer/Contributor",
     theme: "dark",
-    dockVisible: true,
+    // Operations notifications now surface through the header bell button.
+    // Older sessions used a permanent bottom dock — keeping the flag for
+    // backwards-compat with the View ▾ menu, but defaulting it to off.
+    dockVisible: false,
     workspaceId: "WS-1",
     // Layout toggles — let the user reclaim screen real estate.
     showRail: true,
     showLeftPanel: true,
-    showContextPanel: true,
+    // The right context panel is now on-demand; users open it from the
+    // header "Details" button. We auto-open it when navigating to an
+    // object route with rich detail (doc / drawing / asset / incident /
+    // work board) the first time per session — see `app.js`.
+    showContextPanel: false,
     showHeader: true,
+    // True once the user has manually changed `state.ui.role`. Prevents
+    // the post-login server role sync from blowing away an explicit
+    // override.
+    roleOverridden: false,
     focusMode: false,        // true → hide both side panels
     fieldMode: false,        // larger touch targets and field-friendly density
     portalId: null,          // null = default rail; set to a portal id to filter

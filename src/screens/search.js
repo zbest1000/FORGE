@@ -3,7 +3,7 @@
 // BM25 + substring fallback, ACL-filtered, with facet rail and saved
 // searches. Query state is deep-linkable via `#/search?q=...&kind=Asset`.
 
-import { el, mount, card, badge, toast, input } from "../core/ui.js";
+import { el, mount, card, badge, toast, input, prompt } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { query, saveSearch, listSavedSearches, deleteSavedSearch } from "../core/search.js";
@@ -102,8 +102,12 @@ function toggleFacet(params, key, val) {
   writeUrl(next);
 }
 
-function doSave(q, selected) {
-  const name = window.prompt("Name this saved search:");
+async function doSave(q, selected) {
+  const name = await prompt({
+    title: "Save search",
+    label: "Name",
+    placeholder: `e.g. ${q ? "“" + q.slice(0,32) + "”" : "My open RFIs"}`,
+  });
   if (!name) return;
   saveSearch(name, q, selected);
   toast("Saved", "success");

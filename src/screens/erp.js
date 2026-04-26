@@ -7,7 +7,7 @@
 //   * Writeback preview: the exact payload that would be sent to ERP
 //   * All writes gated by permissions and audited
 
-import { el, mount, card, badge, toast, modal, formRow, textarea, input } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, textarea, input, dangerAction } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { can } from "../core/permissions.js";
@@ -161,9 +161,14 @@ function runBackfill() {
   audit("erp.backfill.dry", "erp.s4", { rows: rows.length });
 }
 
-function commitBackfill() {
+async function commitBackfill() {
   if (!can("integration.write")) return;
-  if (!window.confirm("Commit backfill? This will create work items.")) return;
+  const ok = await dangerAction({
+    title: "Commit ERP backfill?",
+    message: "This creates new work items in FORGE for each rolled-back ERP record. Existing work items will not be deduplicated.",
+    confirmLabel: "Commit",
+  });
+  if (!ok) return;
   // Route two synthetic PO events.
   for (let i = 0; i < 2; i++) {
     ingest({
