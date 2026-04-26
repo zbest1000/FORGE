@@ -14,7 +14,7 @@
 // Geometry is stored as normalized [0..1] coordinates on the active sheet so
 // zoom/pan don't warp markups.
 
-import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea } from "../core/ui.js";
+import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea, prompt } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -548,9 +548,13 @@ function bookmarksCard(dr, sheetId) {
   try { list = JSON.parse(sessionStorage.getItem(key) || "[]"); } catch { list = []; }
   const sheetList = list.filter(b => b.sheetId === sheetId);
 
-  const captureCurrent = () => {
+  const captureCurrent = async () => {
     let view; try { view = JSON.parse(sessionStorage.getItem(SK(dr.id, "view")) || "{}"); } catch { view = {}; }
-    const name = window.prompt("Bookmark name:", `View ${sheetList.length + 1}`);
+    const name = await prompt({
+      title: "New bookmark",
+      label: "Name",
+      defaultValue: `View ${sheetList.length + 1}`,
+    });
     if (!name) return;
     const bookmark = {
       id: "BM-" + Math.random().toString(36).slice(2, 8).toUpperCase(),
@@ -632,7 +636,7 @@ function crossLinks(dr) {
   ].flat().filter(Boolean)), { subtitle: "drawing ↔ spec ↔ task ↔ asset ↔ discussion" });
 }
 function linkRow(kind, label, route) {
-  return el("div", { class: "activity-row", onClick: () => navigate(route) }, [
+  return el("button", { class: "activity-row", type: "button", onClick: () => navigate(route) }, [
     badge(kind, "info"),
     el("span", { class: "small" }, [label]),
   ]);
@@ -659,10 +663,12 @@ function histogramMarkupTypes(markups) {
 
 // ---------- IFC mode ----------
 async function loadCadFile(dr) {
-  const url = window.prompt(
-    "CAD file URL (CORS-enabled). Supported: " + supportedExtensions().join(", "),
-    dr.cadUrl || ""
-  );
+  const url = await prompt({
+    title: dr.cadUrl ? "Reload CAD" : "Attach CAD file",
+    label: "URL",
+    defaultValue: dr.cadUrl || "",
+    helpText: `Must be CORS-enabled. Supported: ${supportedExtensions().join(", ")}.`,
+  });
   if (!url) return;
   const detected = detectCad(url);
   if (!detected) { toast("Unsupported CAD format", "warn"); return; }
@@ -673,7 +679,7 @@ async function loadCadFile(dr) {
 }
 
 async function loadIfcFile(dr) {
-  const url = window.prompt("IFC file URL (CORS-enabled):", dr.ifcUrl || "");
+  const url = await prompt({ title: "Load IFC", label: "URL", defaultValue: dr.ifcUrl || "", helpText: "Must be CORS-enabled." });
   if (!url) return;
   update(s => { const x = s.data.drawings.find(y => y.id === dr.id); if (x) x.ifcUrl = url; });
   toast("Loading IFC via web-ifc (MPL 2.0)...", "info");
@@ -764,14 +770,19 @@ function findIfcNode(node, id) {
 }
 
 // ---------- actions ----------
-function createMarkup(drawingId, sheetId, kind, x, y) {
+async function createMarkup(drawingId, sheetId, kind, x, y) {
   if (!can("edit.markup") && !can("edit")) { toast("No markup permission", "warn"); return; }
 
   let extra = {};
-  if (kind === "text") extra.text = window.prompt("Text markup:") || "";
-  else if (kind === "stamp") extra.stampLabel = window.prompt("Stamp label:", "APPROVED") || "APPROVED";
-  else if (kind === "status") extra.statusColor = chooseStatusColor();
-  else extra.text = window.prompt("Markup comment (optional):") || "";
+  if (kind === "text") {
+    extra.text = await prompt({ title: "Text markup", label: "Text", placeholder: "Annotation text" }) || "";
+  } else if (kind === "stamp") {
+    extra.stampLabel = await prompt({ title: "Stamp label", label: "Label", defaultValue: "APPROVED" }) || "APPROVED";
+  } else if (kind === "status") {
+    extra.statusColor = await chooseStatusColor();
+  } else {
+    extra.text = await prompt({ title: "Markup comment", label: "Comment (optional)", placeholder: "What is this calling out?" }) || "";
+  }
 
   const existing = (state.data.markups || []).filter(m => m.drawingId === drawingId && m.sheetId === sheetId);
   const id = "MK-" + Math.floor(Math.random() * 90000 + 10000);
@@ -791,8 +802,19 @@ function createMarkup(drawingId, sheetId, kind, x, y) {
 }
 
 function chooseStatusColor() {
-  const pick = window.prompt("Status color: red/yellow/green", "yellow");
-  return pick === "red" ? "#ef4444" : pick === "green" ? "#22c55e" : "#f59e0b";
+  const sel = select(["yellow","red","green"], { value: "yellow" });
+  return new Promise((resolve) => {
+    modal({
+      title: "Status marker",
+      body: el("div", { class: "stack" }, [formRow("Color", sel)]),
+      actions: [
+        { label: "Cancel", onClick: () => resolve("#f59e0b") },
+        { label: "Place", variant: "primary", onClick: () => {
+          resolve(sel.value === "red" ? "#ef4444" : sel.value === "green" ? "#22c55e" : "#f59e0b");
+        }},
+      ],
+    });
+  });
 }
 
 function showMarkup(m) {
@@ -813,9 +835,13 @@ function showMarkup(m) {
   });
 }
 
-function convertMarkupToIssue(m) {
+async function convertMarkupToIssue(m) {
   if (!can("create")) { toast("No permission", "warn"); return; }
-  const title = window.prompt("Issue title:", m.text || `Markup ${m.id}`);
+  const title = await prompt({
+    title: "Convert markup to issue",
+    label: "Issue title",
+    defaultValue: m.text || `Markup ${m.id}`,
+  });
   if (!title) return;
   const dr = state.data.drawings.find(x => x.id === m.drawingId);
   const doc = dr ? state.data.documents.find(x => x.id === dr.docId) : null;

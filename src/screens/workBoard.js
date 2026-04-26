@@ -5,7 +5,7 @@
 // severity, bulk labels. Dependencies create blocked-by links.
 // Automation: default rules and per-project trigger viewer.
 
-import { el, mount, card, badge, kpi, toast, modal, drawer, formRow, input, select, textarea } from "../core/ui.js";
+import { el, mount, card, badge, kpi, toast, modal, drawer, formRow, input, select, textarea, prompt, tabs } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -74,35 +74,24 @@ function projectContext(project, items) {
   const maintenance = (d.maintenanceItems || []).filter(m => m.projectId === project.id || projectAssets.some(a => a.id === m.assetId));
   const incidents = (d.incidents || []).filter(i => projectAssets.some(a => a.id === i.assetId));
   const tabKey = `project.context.tab.${project.id}`;
-  const activeTab = sessionStorage.getItem(tabKey) || "overview";
-  const setTab = (tab) => {
-    sessionStorage.setItem(tabKey, tab);
-    renderWorkBoard({ id: project.id });
-  };
-  const tabs = [
-    { id: "overview", label: "Overview" },
-    { id: "assets", label: `Assets ${projectAssets.length}` },
-    { id: "docs", label: `Docs ${projectDocs.length}` },
-    { id: "signals", label: `Signals ${dataSources.length}` },
-    { id: "service", label: `Service ${maintenance.length}` },
-    { id: "activity", label: "Activity" },
-  ];
-  const tabContent = ({
-    overview: projectOverview(project, { orgName, site, loc, projectAssets, projectDocs, dataSources, maintenance, incidents }),
-    assets: card(`Linked assets (${projectAssets.length})`, assetList(projectAssets)),
-    docs: card(`Documents (${projectDocs.length})`, documentList(projectDocs, project, projectAssets)),
-    signals: card("Signal health", signalHealthList(dataSources), { actions: [
-      helpHint("Live operations signals from MQTT, OPC UA, ERP, or other connectors. Hover each status for source and quality."),
-    ]}),
-    service: card(`Service work (${maintenance.length})`, serviceWorkList(maintenance), { actions: [
-      helpHint("Service records can come from systems such as MaintainX, SAP PM, Fiix, UpKeep, or Maximo."),
-    ]}),
-    activity: card("Project activity", projectTimeline(project, { items, projectDocs, projectAssets, maintenance, incidents, dataSources })),
-  })[activeTab] || projectOverview(project, { orgName, site, loc, projectAssets, projectDocs, dataSources, maintenance, incidents });
-
+  const ctx = { orgName, site, loc, projectAssets, projectDocs, dataSources, maintenance, incidents, items };
   return el("div", { class: "stack project-context", style: { marginBottom: "16px" } }, [
-    contextTabs(tabs, activeTab, setTab),
-    tabContent,
+    tabs({
+      sessionKey: tabKey,
+      ariaLabel: "Project context",
+      tabs: [
+        { id: "overview", label: "Overview", content: () => projectOverview(project, ctx) },
+        { id: "assets", label: `Assets ${projectAssets.length}`, content: () => card(`Linked assets (${projectAssets.length})`, assetList(projectAssets)) },
+        { id: "docs", label: `Docs ${projectDocs.length}`, content: () => card(`Documents (${projectDocs.length})`, documentList(projectDocs, project, projectAssets)) },
+        { id: "signals", label: `Signals ${dataSources.length}`, content: () => card("Signal health", signalHealthList(dataSources), { actions: [
+          helpHint("Live operations signals from MQTT, OPC UA, ERP, or other connectors. Hover each status for source and quality."),
+        ]}) },
+        { id: "service", label: `Service ${maintenance.length}`, content: () => card(`Service work (${maintenance.length})`, serviceWorkList(maintenance), { actions: [
+          helpHint("Service records can come from systems such as MaintainX, SAP PM, Fiix, UpKeep, or Maximo."),
+        ]}) },
+        { id: "activity", label: "Activity", content: () => card("Project activity", projectTimeline(project, ctx)) },
+      ],
+    }),
   ]);
 }
 
@@ -122,17 +111,6 @@ function projectOverview(project, ctx) {
       kpi("Incidents", ctx.incidents.filter(i => i.status === "active").length, "active", ctx.incidents.some(i => i.status === "active") ? "down" : "up"),
     ]),
   ]));
-}
-
-function contextTabs(tabs, active, onPick) {
-  return el("div", { class: "context-tabs", role: "tablist" }, tabs.map(tab =>
-    el("button", {
-      class: `context-tab ${active === tab.id ? "active" : ""}`,
-      role: "tab",
-      "aria-selected": String(active === tab.id),
-      onClick: () => onPick(tab.id),
-    }, [tab.label])
-  ));
 }
 
 function locationById(id) {
@@ -367,8 +345,8 @@ function batchAssignee(ids, batchKey, projectId) {
     }},
   ] });
 }
-function batchAddLabel(ids, batchKey, projectId) {
-  const label = window.prompt("Label to add:");
+async function batchAddLabel(ids, batchKey, projectId) {
+  const label = await prompt({ title: `Add label to ${ids.length} item(s)`, label: "Label", placeholder: "e.g. line-A" });
   if (!label) return;
   update(s => { for (const id of ids) { const w = s.data.workItems.find(x => x.id === id); if (w) { w.labels = w.labels || []; if (!w.labels.includes(label)) w.labels.push(label); audit("workitem.label", id, { add: label }); } } });
   sessionStorage.setItem(batchKey, "[]"); renderWorkBoard({ id: projectId });

@@ -3,7 +3,7 @@
 // BM25 + substring fallback, ACL-filtered, with facet rail and saved
 // searches. Query state is deep-linkable via `#/search?q=...&kind=Asset`.
 
-import { el, mount, card, badge, toast, input } from "../core/ui.js";
+import { el, mount, card, badge, toast, input, prompt } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { query, saveSearch, listSavedSearches, deleteSavedSearch } from "../core/search.js";
@@ -51,7 +51,7 @@ export function renderSearch() {
       facetRail(result.facetCounts, selected, params),
       card("Results", el("div", { class: "stack" }, [
         qInput,
-        ...result.hits.map(h => el("div", { class: "activity-row", onClick: () => navigate(h.route) }, [
+        ...result.hits.map(h => el("button", { class: "activity-row", type: "button", onClick: () => navigate(h.route) }, [
           badge(h.kind, "info"),
           el("div", { class: "stack", style: { gap: "2px", flex: 1 } }, [
             el("span", { class: "small" }, [h.title]),
@@ -102,8 +102,12 @@ function toggleFacet(params, key, val) {
   writeUrl(next);
 }
 
-function doSave(q, selected) {
-  const name = window.prompt("Name this saved search:");
+async function doSave(q, selected) {
+  const name = await prompt({
+    title: "Save search",
+    label: "Name",
+    placeholder: `e.g. ${q ? "“" + q.slice(0,32) + "”" : "My open RFIs"}`,
+  });
   if (!name) return;
   saveSearch(name, q, selected);
   toast("Saved", "success");
@@ -112,7 +116,7 @@ function doSave(q, selected) {
 function savedSearchesCard() {
   const list = listSavedSearches();
   if (!list.length) return el("div", {});
-  return card("Saved searches", el("div", { class: "stack" }, list.map(s => el("div", { class: "activity-row", onClick: () => runSaved(s) }, [
+  return card("Saved searches", el("div", { class: "stack" }, list.map(s => el("button", { class: "activity-row", type: "button", onClick: () => runSaved(s) }, [
     badge("saved", "info"),
     el("span", { class: "small" }, [s.name]),
     el("span", { class: "tiny muted" }, [`q: "${s.query}"`]),

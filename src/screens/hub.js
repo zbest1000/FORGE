@@ -51,23 +51,23 @@ export function renderHub() {
 
 function portalTile(p) {
   const href = `#/home?portal=${p.id}`;
-  // Use a real anchor so target="_blank" / cmd-click work and the URL is
-  // shown in the browser's status bar like the user expects.
+  // Real anchor so cmd/ctrl-click still opens in a new tab and the URL
+  // appears in the status bar. Plain click navigates in the current tab so
+  // workspace continuity is preserved; modifier keys preserve the
+  // multi-tab workflow that power users rely on.
   const a = el("a", {
     class: "hub-tile",
     href,
-    target: "_blank",
     rel: "noopener",
     style: {
       "--portal-accent": p.accent,
     },
-    "aria-label": `Open ${p.label} in a new tab`,
+    "aria-label": `Open ${p.label}`,
+    title: `Open ${p.label} (Cmd/Ctrl-click for new tab)`,
     onClick: (e) => {
-      // Cmd/Ctrl click → let browser open in new tab/window naturally.
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
-      // Plain click should still open a new tab — that's the headline UX.
       e.preventDefault();
-      window.open(href, "_blank", "noopener");
+      location.hash = href.replace(/^#/, "");
     },
   }, [
     el("div", { class: "hub-tile-icon", "aria-hidden": "true" }, [p.icon]),

@@ -1,4 +1,4 @@
-import { el, mount, card, badge, kpi, toast, chip, modal, formRow, select } from "../core/ui.js";
+import { el, mount, card, badge, kpi, toast, chip, modal, formRow, select, tabs } from "../core/ui.js";
 import { state, update, getById, audit } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
@@ -125,29 +125,20 @@ function helpHint(text) {
 
 function assetContextTabs(asset, ctx) {
   const key = `asset.context.${asset.id}`;
-  const tabs = [
-    { id: "summary", label: "Summary", content: () => assetSummaryTab(asset, ctx) },
-    { id: "docs", label: `Docs (${ctx.linkedDocs.length})`, content: () => card("Linked documents", documentList(ctx.linkedDocs)) },
-    { id: "work", label: `Work (${ctx.tasks.length + ctx.maintenance.length})`, content: () => card("Work and service", workMaintenancePanel(ctx.tasks, ctx.maintenance)) },
-    { id: "signals", label: `Signals (${ctx.dataSources.length})`, content: () => el("div", { class: "two-col" }, [
-      card("Operations trend", telemetry(asset)),
-      card("Signal health", signalHealthPanel(ctx.dataSources)),
-    ]) },
-    { id: "activity", label: "Activity", content: () => card("Asset activity", assetTimeline(asset, ctx)) },
-  ];
-  const activeId = sessionStorage.getItem(key) || "summary";
-  const active = tabs.find(t => t.id === activeId) || tabs[0];
-  return el("section", { class: "context-tab-shell" }, [
-    el("div", { class: "context-tabs", role: "tablist", "aria-label": "Asset context" }, tabs.map(t =>
-      el("button", {
-        class: `context-tab ${active.id === t.id ? "active" : ""}`,
-        role: "tab",
-        "aria-selected": String(active.id === t.id),
-        onClick: () => { sessionStorage.setItem(key, t.id); renderAssetDetail({ id: asset.id }); },
-      }, [t.label])
-    )),
-    el("div", { class: "context-tab-panel", role: "tabpanel" }, [active.content()]),
-  ]);
+  return tabs({
+    sessionKey: key,
+    ariaLabel: "Asset context",
+    tabs: [
+      { id: "summary", label: "Summary", content: () => assetSummaryTab(asset, ctx) },
+      { id: "docs", label: `Docs (${ctx.linkedDocs.length})`, content: () => card("Linked documents", documentList(ctx.linkedDocs)) },
+      { id: "work", label: `Work (${ctx.tasks.length + ctx.maintenance.length})`, content: () => card("Work and service", workMaintenancePanel(ctx.tasks, ctx.maintenance)) },
+      { id: "signals", label: `Signals (${ctx.dataSources.length})`, content: () => el("div", { class: "two-col" }, [
+        card("Operations trend", telemetry(asset)),
+        card("Signal health", signalHealthPanel(ctx.dataSources)),
+      ]) },
+      { id: "activity", label: "Activity", content: () => card("Asset activity", assetTimeline(asset, ctx)) },
+    ],
+  });
 }
 
 function assetSummaryTab(asset, ctx) {

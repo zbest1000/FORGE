@@ -1,7 +1,7 @@
 // Unified Namespace browser.
 // Shows the hierarchical instance graph with live values pulled from the i3X server.
 
-import { el, mount, card, badge, chip, toast } from "../core/ui.js";
+import { el, mount, card, badge, chip, toast, prompt, dangerAction } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { i3x, getServer } from "../core/i3x/client.js";
@@ -65,8 +65,9 @@ function renderTree(objects, selectedId, onSelect) {
       ? roots
       : childrenOf(parentPathStr);
     for (const o of list) {
-      wrap.append(el("div", {
-        class: `tree-item ${o.elementId === selectedId ? "active" : ""}`,
+      wrap.append(el("button", {
+    type: "button",
+    class: `tree-item ${o.elementId === selectedId ? "active" : ""}`,
         style: { paddingLeft: (8 + indent * 12) + "px" },
         onClick: () => onSelect(o.elementId),
       }, [
@@ -116,7 +117,7 @@ function renderDetailCard(elementId, objects) {
       el("div", { class: "tiny muted" }, ["Relationships"]),
       el("div", { class: "stack", style: { gap: "2px" } }, rels.length ? rels.map(r => {
         const label = r.object.name || r.object.elementId;
-        return el("div", { class: "activity-row", onClick: () => {
+        return el("button", { class: "activity-row", type: "button", onClick: () => {
           sessionStorage.setItem("uns.selected", r.object.elementId);
           renderUNSIndex();
         }}, [
@@ -238,9 +239,21 @@ function sparkline(values) {
   return svg;
 }
 
-function writeValue(obj) {
-  const raw = window.prompt(`Write value for ${obj.name} (current unit: ${obj.attributes?.unit || "?"})`);
+async function writeValue(obj) {
+  const raw = await prompt({
+    title: `Write value to ${obj.name}`,
+    label: "Value",
+    defaultValue: "",
+    helpText: `Unit: ${obj.attributes?.unit || "(unknown)"} · Type: ${obj.attributes?.dataType || "auto"}. Routed through PUT /v1/objects/{id}/value.`,
+  });
   if (raw == null) return;
+  const ok = await dangerAction({
+    title: "Confirm UNS write",
+    message: `Write to ${obj.name} (${obj.elementId})?`,
+    confirmLabel: "Write",
+    details: "The change is recorded in the audit ledger.",
+  });
+  if (!ok) return;
   let parsed = raw;
   if (obj.attributes?.dataType === "Boolean") parsed = /^(1|true|yes)$/i.test(raw);
   else if (!isNaN(Number(raw))) parsed = Number(raw);

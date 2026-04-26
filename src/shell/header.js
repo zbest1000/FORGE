@@ -40,7 +40,7 @@ export function renderHeader() {
 
   const roleSelect = select(ROLES, {
     value: state.ui.role,
-    onChange: (e) => update(s => { s.ui.role = e.target.value; }),
+    onChange: (e) => update(s => { s.ui.role = e.target.value; s.ui.roleOverridden = true; }),
   });
 
   const searchInput = el("input", {
@@ -78,6 +78,8 @@ export function renderHeader() {
     ]),
     el("div", { class: "header-controls" }, [
       searchInput,
+      notifyBell(),
+      contextToggleBtn(),
       viewerHasIT() ? serverBadge() : authOnlyBadge(),
       el("button", { class: "btn sm", onClick: openPalette, title: "Command palette" }, ["⌘K"]),
       viewMenu(),
@@ -85,10 +87,94 @@ export function renderHeader() {
       el("button", {
         class: "btn sm ghost",
         title: "Reset demo data",
-        onClick: () => { if (window.confirm("Reset local demo data?")) resetState(); },
+        onClick: () => confirmReset(),
       }, ["Reset"]),
     ]),
   ]);
+}
+
+async function confirmReset() {
+  const { dangerAction } = await import("../core/ui.js");
+  const ok = await dangerAction({
+    title: "Reset local demo data?",
+    message: "This clears your local demo state (drafts, comments, mappings, audit chain). The server-side database is not affected.",
+    confirmLabel: "Reset",
+  });
+  if (ok) resetState();
+}
+
+function contextToggleBtn() {
+  const open = !!state.ui.showContextPanel;
+  return el("button", {
+    class: `btn sm ${open ? "primary" : ""}`,
+    title: open ? "Hide details panel" : "Show details panel",
+    "aria-pressed": String(open),
+    onClick: () => {
+      sessionStorage.setItem("forge.contextPanelTouched", "1");
+      update(s => { s.ui.showContextPanel = !s.ui.showContextPanel; });
+    },
+  }, ["Details"]);
+}
+
+function notifyBell() {
+  const d = state.data || {};
+  const items = [];
+  (d.incidents || []).filter(i => i.status === "active").forEach(i =>
+    items.push({ dot: "danger", text: `${i.id} · ${i.title}`, route: `/incident/${i.id}` })
+  );
+  (d.integrations || []).filter(i => i.status !== "connected").forEach(i =>
+    items.push({ dot: i.status === "failed" ? "danger" : "warn",
+      text: `${i.kind.toUpperCase()} · ${i.name} · ${i.status}`, route: `/integrations` })
+  );
+  (d.approvals || []).filter(a => a.status === "pending").forEach(a =>
+    items.push({ dot: "warn",
+      text: `Approval pending · ${a.id}`, route: `/approvals` })
+  );
+
+  const wrap = el("span", { class: "notify-wrap" });
+  let pop = null;
+  const close = () => {
+    if (pop) { pop.remove(); pop = null; }
+    document.removeEventListener("mousedown", onDoc, true);
+  };
+  const onDoc = (e) => { if (pop && !pop.contains(e.target) && !wrap.contains(e.target)) close(); };
+
+  const btn = el("button", {
+    class: "btn sm notify-btn",
+    title: items.length ? `${items.length} active alerts` : "No active alerts",
+    "aria-haspopup": "true",
+    "aria-expanded": "false",
+    "aria-label": items.length ? `Open notifications (${items.length})` : "Open notifications",
+    onClick: (e) => {
+      e.stopPropagation();
+      if (pop) { close(); return; }
+      pop = el("div", { class: "notify-popover", role: "menu" }, [
+        el("div", { class: "notify-popover-header" }, [
+          el("span", {}, ["Operations"]),
+          el("span", { class: "tiny" }, [items.length ? `${items.length} active` : "All clear"]),
+        ]),
+        items.length
+          ? el("div", { class: "dock-items" }, items.map(it =>
+              el("button", {
+                class: "dock-item",
+                onClick: () => { close(); navigate(it.route); },
+              }, [
+                el("span", { class: `dock-dot ${it.dot}` }),
+                el("span", {}, [it.text]),
+              ])
+            ))
+          : el("div", { class: "dock-empty tiny" }, ["No active incidents, pending approvals, or integration failures."]),
+      ]);
+      wrap.append(pop);
+      btn.setAttribute("aria-expanded", "true");
+      setTimeout(() => document.addEventListener("mousedown", onDoc, true), 0);
+    },
+  }, ["🔔"]);
+  if (items.length) {
+    btn.append(el("span", { class: "notify-count" }, [String(items.length)]));
+  }
+  wrap.append(btn);
+  return wrap;
 }
 
 function viewMenu() {
@@ -219,6 +305,9 @@ function signIn() {
         try {
           const user = await apiLogin(emailInput.value.trim(), pwInput.value);
           state.server = { ...(state.server || {}), user };
+          if (user?.role) {
+            update(s => { s.ui.role = user.role; s.ui.roleOverridden = false; });
+          }
           toast("Signed in as " + (user.name || user.email), "success");
           renderHeader();
         } catch (e) {
@@ -232,6 +321,7 @@ function signIn() {
 function signOut() {
   apiLogout();
   state.server = { ...(state.server || {}), user: null };
+  state.ui.roleOverridden = false;
   toast("Signed out", "info");
   renderHeader();
 }

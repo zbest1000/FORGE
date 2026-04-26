@@ -9,7 +9,7 @@
 //   * Audit ledger tamper check (verifyLedger) with visible result
 //   * Policy violations list
 
-import { el, mount, card, badge, toast, modal, formRow, input, select } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, input, select, dangerAction, tabs } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { ROLES } from "../core/permissions.js";
 import { exportAuditPack, verifyLedger, verifyAuditPack } from "../core/audit.js";
@@ -23,38 +23,36 @@ const ADMIN_SECTIONS = new Set(["identity", "access", "integrations", "audit", "
 export function renderAdmin(params = {}) {
   const root = document.getElementById("screenContainer");
   const d = state.data;
-  const sectionKey = "admin.section";
+  const sessionKey = "admin.section";
   const routeSection = ADMIN_SECTIONS.has(params.section) ? params.section : null;
-  const active = routeSection || sessionStorage.getItem(sectionKey) || "identity";
-  sessionStorage.setItem(sectionKey, active);
-  const setSection = (id) => {
-    sessionStorage.setItem(sectionKey, id);
-    navigate(id === "identity" ? "/admin" : `/admin/${id}`);
-  };
+  const initial = routeSection || sessionStorage.getItem(sessionKey) || "identity";
+  // Keep both URL routing and the shared Tabs primitive in sync. The URL
+  // is the source of truth when present, but the Tabs primitive persists
+  // the last view to sessionStorage on every click.
+  if (sessionStorage.getItem(sessionKey) !== initial) sessionStorage.setItem(sessionKey, initial);
+
   const sections = [
-    { id: "identity", label: "Identity" },
-    { id: "access", label: "Access" },
-    { id: "integrations", label: "Integrations" },
-    { id: "audit", label: "Audit" },
-    { id: "retention", label: "Retention" },
-    { id: "health", label: "System health" },
+    { id: "identity", label: "Identity", content: () => adminSection("identity", d) },
+    { id: "access", label: "Access", content: () => adminSection("access", d) },
+    { id: "integrations", label: "Integrations", content: () => adminSection("integrations", d) },
+    { id: "audit", label: "Audit", content: () => adminSection("audit", d) },
+    { id: "retention", label: "Retention", content: () => adminSection("retention", d) },
+    { id: "health", label: "System health", content: () => adminSection("health", d) },
   ];
 
   mount(root, [
-    adminTabs(sections, active, setSection),
-    adminSection(active, d),
+    tabs({
+      tabs: sections,
+      sessionKey,
+      ariaLabel: "Admin settings",
+      defaultId: initial,
+      onChange: (id) => {
+        // Reflect the section in the URL so deep links still work.
+        const target = id === "identity" ? "/admin" : `/admin/${id}`;
+        if ((state.route || "").split("?")[0] !== target) navigate(target);
+      },
+    }),
   ]);
-}
-
-function adminTabs(sections, active, onPick) {
-  return el("div", { class: "context-tabs", role: "tablist", "aria-label": "Admin settings" }, sections.map(s =>
-    el("button", {
-      class: `context-tab ${active === s.id ? "active" : ""}`,
-      role: "tab",
-      "aria-selected": String(active === s.id),
-      onClick: () => onPick(s.id),
-    }, [s.label])
-  ));
 }
 
 function adminSection(active, d) {
@@ -109,7 +107,12 @@ function apiTokensPanel() {
         badge((t.scopes || []).join(","), "info"),
         t.revoked_at ? badge("revoked", "danger") : t.expires_at ? badge(`exp ${new Date(t.expires_at).toLocaleDateString()}`, "warn") : badge("active", "success"),
         t.revoked_at ? null : el("button", { class: "btn sm danger", onClick: async () => {
-          if (!window.confirm(`Revoke token ${t.id}?`)) return;
+          const ok = await dangerAction({
+            title: `Revoke token ${t.id}?`,
+            message: `Token “${t.name}” will stop authenticating immediately. Existing sessions using this token will be rejected on their next request.`,
+            confirmLabel: "Revoke",
+          });
+          if (!ok) return;
           await api(`/api/tokens/${t.id}`, { method: "DELETE" });
           refresh();
         } }, ["Revoke"]),
@@ -162,7 +165,16 @@ function webhooksPanel() {
         ]),
         badge(w.enabled ? "enabled" : "disabled", w.enabled ? "success" : ""),
         el("button", { class: "btn sm", onClick: async () => { await api(`/api/webhooks/${w.id}`, { method: "PATCH", body: { enabled: !w.enabled } }); refresh(); } }, [w.enabled ? "Disable" : "Enable"]),
-        el("button", { class: "btn sm danger", onClick: async () => { if (!window.confirm("Delete webhook?")) return; await api(`/api/webhooks/${w.id}`, { method: "DELETE" }); refresh(); } }, ["×"]),
+        el("button", { class: "btn sm danger", onClick: async () => {
+          const ok = await dangerAction({
+            title: `Delete webhook ${w.id}?`,
+            message: `Endpoint ${w.url} will stop receiving events. Existing event records remain in the audit ledger.`,
+            confirmLabel: "Delete",
+          });
+          if (!ok) return;
+          await api(`/api/webhooks/${w.id}`, { method: "DELETE" });
+          refresh();
+        } }, ["×"]),
       ])) : [el("div", { class: "muted tiny" }, ["No webhooks."])]));
     } catch (e) { list.replaceChildren(el("div", { class: "muted tiny" }, ["Error: " + e.message])); }
   };

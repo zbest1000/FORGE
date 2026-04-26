@@ -10,7 +10,7 @@
 //   * Revision timeline with supersede chain markers
 //   * Approval banner + request-approval flow (delegated to /approvals)
 
-import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea } from "../core/ui.js";
+import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea, prompt } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -349,7 +349,7 @@ function commentsCard(doc, rev) {
   const comments = (state.data.comments || []).filter(c => c.docId === doc.id && c.revId === rev.id);
   return card(`Regional comments (${comments.length})`, el("div", { class: "stack" }, [
     comments.length
-      ? comments.map(c => el("div", { class: "activity-row", onClick: () => openComment(c) }, [
+      ? comments.map(c => el("button", { class: "activity-row", type: "button", onClick: () => openComment(c) }, [
           el("span", { class: "ts" }, [`p${c.page} #${c.seq}`]),
           el("span", { class: "small" }, [c.text || ""]),
           el("span", { class: "tiny muted" }, [c.author]),
@@ -381,10 +381,10 @@ function impactCard(rev) {
     el("div", { class: "small" }, [
       `Changing ${rev.id} may affect ${impact.tasks.length} task(s), ${impact.approvals.length} approval(s) and ${impact.assets.length} asset(s).`
     ]),
-    ...impact.tasks.slice(0, 4).map(w => el("div", { class: "activity-row", onClick: () => navigate(`/work-board/${w.projectId}`) }, [
+    ...impact.tasks.slice(0, 4).map(w => el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/work-board/${w.projectId}`) }, [
       badge("Task", "info"), el("span", { class: "small" }, [w.title]),
     ])),
-    ...impact.assets.slice(0, 4).map(a => el("div", { class: "activity-row", onClick: () => navigate(`/asset/${a.id}`) }, [
+    ...impact.assets.slice(0, 4).map(a => el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/asset/${a.id}`) }, [
       badge("Asset", "accent"), el("span", { class: "small" }, [a.name]),
     ])),
     el("div", { class: "tiny muted" }, [
@@ -398,10 +398,10 @@ function crossLinks(doc) {
   const drawings = d.drawings.filter(x => x.docId === doc.id);
   const assets = d.assets.filter(a => (a.docIds || []).includes(doc.id));
   return card("Cross-links", el("div", { class: "stack" }, [
-    ...drawings.map(dr => el("div", { class: "activity-row", onClick: () => navigate(`/drawing/${dr.id}`) }, [
+    ...drawings.map(dr => el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/drawing/${dr.id}`) }, [
       badge("Drawing", "info"), el("span", { class: "small" }, [dr.name]),
     ])),
-    ...assets.map(a => el("div", { class: "activity-row", onClick: () => navigate(`/asset/${a.id}`) }, [
+    ...assets.map(a => el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/asset/${a.id}`) }, [
       badge("Asset", "info"), el("span", { class: "small" }, [a.name]),
     ])),
   ]));
@@ -415,9 +415,14 @@ function askCard(doc, rev) {
 }
 
 // ---------- actions ----------
-function addCommentPin(docId, revId, page, presetX, presetY) {
+async function addCommentPin(docId, revId, page, presetX, presetY) {
   if (!can("create")) { toast("No permission", "warn"); return; }
-  const text = window.prompt("Regional comment:");
+  const text = await prompt({
+    title: "Regional comment",
+    label: "Comment",
+    placeholder: "Pinned to this page region",
+    multiline: true,
+  });
   if (!text) return;
   const x = presetX != null ? presetX : 0.25 + Math.random() * 0.5;
   const y = presetY != null ? presetY : 0.15 + Math.random() * 0.6;
@@ -469,10 +474,14 @@ function openComment(c) {
   });
 }
 
-function convertCommentToIssue(c) {
+async function convertCommentToIssue(c) {
   if (!can("create")) return;
   const doc = getById("documents", c.docId);
-  const title = window.prompt("Issue title:", c.text.slice(0, 60));
+  const title = await prompt({
+    title: "Convert to issue",
+    label: "Issue title",
+    defaultValue: c.text.slice(0, 60),
+  });
   if (!title) return;
   const projectId = doc?.projectId || (state.data.projects || [])[0]?.id;
   const id = "WI-" + Math.floor(Math.random() * 900 + 100);
@@ -489,12 +498,14 @@ function convertCommentToIssue(c) {
   navigate(`/work-board/${projectId}`);
 }
 
-function attachPdf(doc, rev) {
-  const url = window.prompt(
-    "Attach a URL — supported: PDF, image (png/jpg/svg), CSV, " +
-    "and CAD (" + supportedExtensions().join(", ") + ").\nMust be CORS-enabled.",
-    rev.pdfUrl || rev.assetUrl || "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf"
-  );
+async function attachPdf(doc, rev) {
+  const url = await prompt({
+    title: rev.pdfUrl || rev.assetUrl ? "Replace attached file" : "Attach file",
+    label: "URL",
+    defaultValue: rev.pdfUrl || rev.assetUrl || "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf",
+    helpText: `Supported: PDF, images (png/jpg/svg), CSV, and CAD (${supportedExtensions().join(", ")}). URL must be CORS-enabled.`,
+    validate: (v) => /^https?:\/\//i.test(v) ? null : "Must be an http(s) URL",
+  });
   if (!url) return;
   const cad = detectCad(url);
   const kind = cad ? cad.kind : detectKind(url);

@@ -40,14 +40,14 @@ export function renderTeamSpace({ id }) {
     ]), { subtitle: `ID ${ts.id}` }),
     el("div", { class: "two-col", style: { marginTop: "16px" } }, [
       card(`Channels (${channels.length})`, el("div", { class: "stack" }, channels.map(c =>
-        el("div", { class: "activity-row", onClick: () => navigate(`/channel/${c.id}`) }, [
+        el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/channel/${c.id}`) }, [
           badge(c.kind, "info"),
           el("span", {}, [`#${c.name}`]),
           c.unread ? badge(`${c.unread} new`, "warn") : null,
         ])
       ))),
       card(`Projects (${projects.length})`, el("div", { class: "stack" }, projects.map(p =>
-        el("div", { class: "activity-row", onClick: () => navigate(`/work-board/${p.id}`) }, [
+        el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/work-board/${p.id}`) }, [
           badge(p.status, p.status === "active" ? "success" : "info"),
           el("span", {}, [p.name]),
           el("span", { class: "tiny muted" }, [p.id]),
@@ -56,7 +56,7 @@ export function renderTeamSpace({ id }) {
     ]),
     el("div", { class: "two-col", style: { marginTop: "16px" } }, [
       card(`Docs (${docs.length})`, el("div", { class: "stack" }, docs.map(doc =>
-        el("div", { class: "activity-row", onClick: () => navigate(`/doc/${doc.id}`) }, [
+        el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/doc/${doc.id}`) }, [
           badge(doc.discipline, "info"),
           el("span", {}, [doc.name]),
           el("span", { class: "tiny muted" }, [doc.id]),

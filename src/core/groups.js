@@ -233,6 +233,18 @@ export function canAccessRoute(route) {
 }
 
 /**
+ * Returns the list of groupIds a user must be in to access `route`,
+ * or null if the route is unrestricted. Used by the forbidden page to
+ * tell the user *which* group to ask for.
+ */
+export function requiredGroupsForRoute(route) {
+  const keys = Object.keys(ROUTE_GROUPS).sort((a, b) => b.length - a.length);
+  const hit = keys.find(k => route === k || route.startsWith(k + "/"));
+  if (!hit) return null;
+  return ROUTE_GROUPS[hit].slice();
+}
+
+/**
  * True if the asset is assigned to the viewer or to one of their groups
  * (or it has no assignment at all). Assets without `assignedUserId` and
  * `assignedGroupId` are considered unassigned and visible to everyone.
