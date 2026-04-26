@@ -11,6 +11,7 @@ import {
   summaryFor,
   writeHistorianSample,
 } from "../historians/index.js";
+import { writeModbusValue } from "../connectors/modbus.js";
 
 function pointRow(row) {
   if (!row) return null;
@@ -226,5 +227,31 @@ export default async function operationsRoutes(fastify) {
     audit({ actor: req.user.id, action: "modbus.register.read", subject: reg.id, detail: { rawValue: raw, value, quality } });
     broadcast("modbus", { id: reg.id, value, ts, historian: historianResult?.backend || null });
     return { ...modbusRegisterRow(db.prepare("SELECT * FROM modbus_registers WHERE id = ?").get(reg.id)), historian_backend: historianResult?.backend || null };
+  });
+
+  fastify.post("/api/modbus/registers/:id/write", { preHandler: require_("integration.write") }, async (req, reply) => {
+    const reg = db.prepare("SELECT * FROM modbus_registers WHERE id = ?").get(req.params.id);
+    if (!reg) return reply.code(404).send({ error: "register not found" });
+    const device = db.prepare("SELECT * FROM modbus_devices WHERE id = ?").get(reg.device_id);
+    if (!device) return reply.code(404).send({ error: "device not found" });
+    const value = Number(req.body?.value);
+    if (!Number.isFinite(value)) return reply.code(400).send({ error: "value required" });
+    const ts = parseIso(req.body?.ts, now());
+    const quality = "Written";
+    const write = await writeModbusValue(device, reg, { value, rawValue: req.body?.rawValue });
+    let historianResult = null;
+    db.transaction(() => {
+      db.prepare("UPDATE modbus_registers SET last_value = ?, last_quality = ?, last_seen = ?, updated_at = ? WHERE id = ?")
+        .run(value, quality, ts, now(), reg.id);
+      db.prepare("UPDATE modbus_devices SET status = ?, last_poll_at = ?, updated_at = ? WHERE id = ?")
+        .run(write.written ? "connected" : "configured", ts, now(), reg.device_id);
+    })();
+    if (reg.point_id) {
+      const point = db.prepare("SELECT * FROM historian_points WHERE id = ?").get(reg.point_id);
+      if (point) historianResult = await writeHistorianSample(point, { ts, value, quality, sourceType: "modbus_tcp_write", rawPayload: { registerId: reg.id, write } });
+    }
+    audit({ actor: req.user.id, action: "modbus.register.write", subject: reg.id, detail: { value, write } });
+    broadcast("modbus", { id: reg.id, value, ts, write, historian: historianResult?.backend || null });
+    return { ...modbusRegisterRow(db.prepare("SELECT * FROM modbus_registers WHERE id = ?").get(reg.id)), write, historian_backend: historianResult?.backend || null };
   });
 }

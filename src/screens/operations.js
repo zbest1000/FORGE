@@ -1,4 +1,4 @@
-import { el, mount, card, badge, kpi, tabs, select, toast } from "../core/ui.js";
+import { el, mount, card, badge, kpi, tabs, select, toast, prompt } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -209,6 +209,7 @@ function modbusTab() {
         ]),
         el("span", { class: "strong" }, [reg.lastValue == null ? "—" : `${reg.lastValue} ${reg.unit || ""}`.trim()]),
         el("button", { class: "btn sm", onClick: () => simulateModbusRead(reg) }, ["Sim read"]),
+        el("button", { class: "btn sm primary", disabled: !can("integration.write"), onClick: () => simulateModbusWrite(reg) }, ["Write"]),
       ])
     ))),
   ]);
@@ -249,6 +250,39 @@ function simulateModbusRead(reg) {
     }
   });
   audit("modbus.register.read", reg.id, { rawValue: raw, value });
+}
+
+async function simulateModbusWrite(reg) {
+  const raw = await prompt({
+    title: `Write Modbus register ${reg.address}`,
+    label: `Value${reg.unit ? ` (${reg.unit})` : ""}`,
+    defaultValue: reg.lastValue == null ? "1" : String(reg.lastValue),
+    helpText: "Local demo writes are audited and update the mapped historian point. Server mode uses the Modbus write API.",
+    validate: v => Number.isNaN(Number(v)) ? "Must be a number" : null,
+  });
+  if (raw == null) return;
+  const value = Number(raw);
+  update(s => {
+    const row = s.data.modbusRegisters.find(r => r.id === reg.id);
+    if (!row) return;
+    row.lastValue = value;
+    row.lastQuality = "Written";
+    row.lastSeen = new Date().toISOString();
+    const point = row.pointId && s.data.historianPoints.find(p => p.id === row.pointId);
+    if (point) {
+      s.data.historianSamples.push({
+        id: `HS-${Date.now()}`,
+        pointId: point.id,
+        ts: row.lastSeen,
+        value,
+        quality: "Written",
+        sourceType: "modbus_tcp_write",
+        rawPayload: { registerId: row.id },
+      });
+    }
+  });
+  audit("modbus.register.write", reg.id, { value, mode: "demo" });
+  toast(`${reg.name} written: ${value} ${reg.unit || ""}`.trim(), "success");
 }
 
 function latestValue(samples, unit) {

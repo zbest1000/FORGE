@@ -279,7 +279,7 @@ test("recipes create versions and activate an approved version", async () => {
   assert.equal(activated.body.versions.find(v => v.id === activated.body.current_version_id).state, "active");
 });
 
-test("Modbus register reads update register state and append historian samples", async () => {
+test("Modbus register reads and writes update state and append historian samples", async () => {
   const point = await req("/api/historian/points", {
     method: "POST",
     headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
@@ -311,4 +311,19 @@ test("Modbus register reads update register state and append historian samples",
   assert.equal(samples.status, 200);
   assert.equal(samples.body.samples.length, 1);
   assert.equal(samples.body.samples[0].source_type, "modbus_tcp");
+
+  const write = await req(`/api/modbus/registers/${register.body.id}/write`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ value: 41.7, ts: "2026-04-26T00:15:00.000Z" }),
+  });
+  assert.equal(write.status, 200);
+  assert.equal(write.body.last_value, 41.7);
+  assert.equal(write.body.write.mode, "simulated");
+  assert.equal(write.body.write.applied, true);
+
+  const afterWrite = await req(`/api/historian/samples?pointId=${point.body.id}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(afterWrite.status, 200);
+  assert.equal(afterWrite.body.samples.length, 2);
+  assert.equal(afterWrite.body.samples[1].source_type, "modbus_tcp_write");
 });
