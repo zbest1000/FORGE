@@ -23,13 +23,13 @@ const ADMIN_SECTIONS = new Set(["identity", "access", "integrations", "audit", "
 export function renderAdmin(params = {}) {
   const root = document.getElementById("screenContainer");
   const d = state.data;
-  const sectionKey = "admin.section";
+  const sessionKey = "admin.section";
   const routeSection = ADMIN_SECTIONS.has(params.section) ? params.section : null;
-  const initial = routeSection || sessionStorage.getItem(sectionKey) || "identity";
+  const initial = routeSection || sessionStorage.getItem(sessionKey) || "identity";
   // Keep both URL routing and the shared Tabs primitive in sync. The URL
   // is the source of truth when present, but the Tabs primitive persists
   // the last view to sessionStorage on every click.
-  if (sessionStorage.getItem(sectionKey) !== initial) sessionStorage.setItem(sectionKey, initial);
+  if (sessionStorage.getItem(sessionKey) !== initial) sessionStorage.setItem(sessionKey, initial);
 
   const sections = [
     { id: "identity", label: "Identity", content: () => adminSection("identity", d) },
