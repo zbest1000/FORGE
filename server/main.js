@@ -40,11 +40,16 @@ import licenseRoutes from "./routes/license.js";
 import { config } from "./config.js";
 import { getLicense, requireFeature, FEATURES, pollLocalLicenseServer, loadPersistedActivation, localLicenseStatus } from "./license.js";
 
-import { startMqttBridge } from "./connectors/mqtt.js";
-import { startOpcuaBridge } from "./connectors/opcua.js";
-import { startAlertWorker } from "./alerts.js";
-import { startRollupWorker, readSeries, listDailySnapshot } from "./metrics-rollup.js";
-import { startRetentionWorker } from "./retention.js";
+import { startMqttBridge, stopMqttBridge } from "./connectors/mqtt.js";
+import { startOpcuaBridge, stopOpcuaBridge } from "./connectors/opcua.js";
+import { startAlertWorker, stopAlertWorker } from "./alerts.js";
+import { startRollupWorker, stopRollupWorker, readSeries, listDailySnapshot } from "./metrics-rollup.js";
+import { startRetentionWorker, stopRetentionWorker } from "./retention.js";
+import { stopOutboxWorker } from "./outbox.js";
+import { stopWebhookWorker } from "./webhooks.js";
+import { drain as drainAudit } from "./audit.js";
+import { shutdownSSE } from "./sse.js";
+import { shutdownTracing } from "./tracing.js";
 
 initTracing("forge-api");
 import { startOutboxWorker } from "./outbox.js";
@@ -386,10 +391,60 @@ try {
   process.exit(1);
 }
 
-function shutdown(sig) {
-  app.log.info({ sig }, "shutting down");
+// Graceful shutdown.
+//
+// Sequence is deliberate: stop accepting new connections first, then
+// close every long-running worker so no new background work is queued,
+// then drain whatever is in flight (audit hash queue + Fastify), and
+// finally hard-exit if any of the above hangs past the grace period.
+const SHUTDOWN_GRACE_MS = Number(process.env.FORGE_SHUTDOWN_GRACE_MS || 15_000);
+let _shuttingDown = false;
+
+async function shutdown(sig) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  app.log.info({ sig, graceMs: SHUTDOWN_GRACE_MS }, "shutting down");
   audit({ actor: "system", action: "server.stop", subject: "forge", detail: { sig } });
-  app.close().finally(() => process.exit(0));
+
+  // Force-exit timer in case any async step deadlocks.
+  const killSwitch = setTimeout(() => {
+    app.log.error({ sig }, "shutdown grace exceeded; forcing exit");
+    process.exit(1);
+  }, SHUTDOWN_GRACE_MS);
+  if (typeof killSwitch.unref === "function") killSwitch.unref();
+
+  try {
+    // 1) Drain SSE clients (sends `event: shutdown`, ends sockets).
+    await shutdownSSE({ logger: app.log });
+
+    // 2) Stop every background worker. Each is a synchronous interval
+    //    teardown today; promisified so future async closers fit in.
+    await Promise.allSettled([
+      Promise.resolve().then(() => stopWebhookWorker()),
+      Promise.resolve().then(() => stopOutboxWorker()),
+      Promise.resolve().then(() => stopAlertWorker()),
+      Promise.resolve().then(() => stopRetentionWorker()),
+      Promise.resolve().then(() => stopRollupWorker()),
+      Promise.resolve().then(() => stopMqttBridge()),
+      Promise.resolve().then(() => stopOpcuaBridge()),
+    ]);
+
+    // 3) Stop Fastify (closes the listener + pending requests).
+    await app.close();
+
+    // 4) Flush the audit hash queue so the last entries (including
+    //    `server.stop`) are persisted before we exit.
+    await drainAudit();
+
+    // 5) Flush OpenTelemetry traces if enabled.
+    await shutdownTracing();
+  } catch (err) {
+    app.log.error({ err: String(err?.message || err) }, "shutdown step failed");
+  } finally {
+    clearTimeout(killSwitch);
+    process.exit(0);
+  }
 }
+
 process.on("SIGINT",  () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));

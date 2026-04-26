@@ -1,11 +1,75 @@
-// Tiny SSE broadcaster. Each connected client gets every event; filtering is
-// done client-side. Connection management keeps a keepalive ping every 25s
-// so proxies don't time out.
+// Tiny SSE broadcaster. Each connected client gets every event; filtering
+// is done client-side. Connection management keeps a keepalive ping every
+// 25s so proxies don't time out.
+//
+// Backpressure
+// ------------
+// `broadcast()` used to write directly to every client socket on every
+// event. A slow consumer (mobile network, paused tab, debugger) backs up
+// Node's TCP send buffer until the process runs out of memory. Now each
+// client carries a bounded queue: writes that overflow the queue cause
+// the slowest events to be dropped, and clients that fail to drain a
+// full queue within a grace window are disconnected entirely. The
+// dispatcher emits a `dropped` SSE event so the client can refresh
+// state on its own.
+//
+// All limits are env-tunable for ops:
+//   FORGE_SSE_MAX_QUEUE        per-client queued events     (default 256)
+//   FORGE_SSE_DRAIN_TIMEOUT_MS time before a stuck client   (default 30000)
+//   FORGE_SSE_KEEPALIVE_MS     keepalive ping interval      (default 25000)
+
+const MAX_QUEUE = Number(process.env.FORGE_SSE_MAX_QUEUE || 256);
+const DRAIN_TIMEOUT_MS = Number(process.env.FORGE_SSE_DRAIN_TIMEOUT_MS || 30_000);
+const KEEPALIVE_MS = Number(process.env.FORGE_SSE_KEEPALIVE_MS || 25_000);
 
 const clients = new Set();
+let _shuttingDown = false;
+
+function makeId() { return Math.random().toString(36).slice(2, 8); }
+
+/**
+ * Try to flush the client's queue to the wire. Stops on the first failed
+ * write (back-pressure or socket error). Returns true if the queue is
+ * now empty.
+ */
+function flush(client) {
+  while (client.queue.length > 0) {
+    const line = client.queue[0];
+    let ok;
+    try { ok = client.reply.raw.write(line); }
+    catch { close(client, "write_error"); return false; }
+    client.queue.shift();
+    client.queuedBytes -= line.length;
+    if (!ok) return false;
+  }
+  return true;
+}
+
+function close(client, reason) {
+  if (!clients.has(client)) return;
+  clients.delete(client);
+  clearInterval(client.heartbeat);
+  if (client.drainTimer) clearTimeout(client.drainTimer);
+  try { client.reply.raw.end(); } catch { /* socket already gone */ }
+  client.reason = reason;
+}
+
+function armDrainWatch(client) {
+  if (client.drainTimer) return;
+  client.drainTimer = setTimeout(() => {
+    // Last chance: try once more, otherwise drop.
+    if (!flush(client) && client.queue.length > 0) close(client, "drain_timeout");
+    client.drainTimer = null;
+  }, DRAIN_TIMEOUT_MS);
+}
 
 export function attachSSE(fastify) {
   fastify.get("/api/events/stream", async (req, reply) => {
+    if (_shuttingDown) {
+      reply.code(503);
+      return reply.send({ error: "shutting down" });
+    }
+
     reply.raw.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
@@ -13,21 +77,87 @@ export function attachSSE(fastify) {
       "X-Accel-Buffering": "no",
     });
 
-    const client = { reply, id: Math.random().toString(36).slice(2, 8) };
+    const client = {
+      reply,
+      id: makeId(),
+      queue: [],
+      queuedBytes: 0,
+      heartbeat: null,
+      drainTimer: null,
+      reason: null,
+    };
     clients.add(client);
-    reply.raw.write(`event: hello\ndata: ${JSON.stringify({ ts: new Date().toISOString(), id: client.id })}\n\n`);
 
-    const heartbeat = setInterval(() => {
-      try { reply.raw.write(`:keepalive\n\n`); } catch { /* ignore */ }
-    }, 25_000);
+    // Hello frame goes through the normal path so it respects buffering.
+    enqueue(client, `event: hello\ndata: ${JSON.stringify({ ts: new Date().toISOString(), id: client.id })}\n\n`);
+    flush(client);
 
-    req.raw.on("close", () => { clients.delete(client); clearInterval(heartbeat); });
+    client.heartbeat = setInterval(() => {
+      if (!clients.has(client)) return;
+      enqueue(client, `:keepalive\n\n`);
+      flush(client);
+    }, KEEPALIVE_MS);
+
+    reply.raw.on("drain", () => { flush(client); });
+    req.raw.on("close", () => close(client, "client_closed"));
+    req.raw.on("error", () => close(client, "socket_error"));
   });
 }
 
+function enqueue(client, line) {
+  client.queue.push(line);
+  client.queuedBytes += line.length;
+  // Cap the queue: drop the oldest entries (FIFO) and tell the client
+  // it missed events so it can re-fetch from the REST API. Keeping the
+  // newest is the right policy for live dashboards — last-write-wins.
+  if (client.queue.length > MAX_QUEUE) {
+    const dropped = client.queue.length - MAX_QUEUE;
+    const removed = client.queue.splice(0, dropped);
+    for (const r of removed) client.queuedBytes -= r.length;
+    const note = `event: dropped\ndata: ${JSON.stringify({ count: dropped, reason: "queue_overflow" })}\n\n`;
+    client.queue.push(note);
+    client.queuedBytes += note.length;
+  }
+  if (client.queue.length > 0) armDrainWatch(client);
+}
+
+/**
+ * Push an event to every connected client. Per-client queues bound the
+ * memory cost so a slow consumer cannot exhaust the heap. Slow clients
+ * that fail to drain within `DRAIN_TIMEOUT_MS` are disconnected.
+ */
 export function broadcast(topic, data) {
+  if (_shuttingDown) return;
   const line = `event: ${topic}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const c of clients) {
-    try { c.reply.raw.write(line); } catch { clients.delete(c); }
+    enqueue(c, line);
+    flush(c);
   }
+}
+
+/**
+ * Stop accepting new SSE clients and gracefully close existing ones.
+ * Called from the server-shutdown sequence in `server/main.js`.
+ */
+export async function shutdownSSE({ logger } = {}) {
+  _shuttingDown = true;
+  const list = Array.from(clients);
+  for (const c of list) {
+    try {
+      enqueue(c, `event: shutdown\ndata: {}\n\n`);
+      flush(c);
+    } catch { /* ignore */ }
+    close(c, "server_shutdown");
+  }
+  logger?.info?.({ closed: list.length }, "SSE clients closed for shutdown");
+}
+
+/** Test-only stats. */
+export function _sseStats() {
+  return {
+    clients: clients.size,
+    queues: Array.from(clients).map(c => ({ id: c.id, queue: c.queue.length, bytes: c.queuedBytes })),
+    maxQueue: MAX_QUEUE,
+    drainTimeoutMs: DRAIN_TIMEOUT_MS,
+  };
 }

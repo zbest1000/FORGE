@@ -109,6 +109,16 @@ function ensureWorker() {
   if (typeof _workerHandle.unref === "function") _workerHandle.unref();
 }
 
+/**
+ * Stop the in-process delivery loop. Lets the current `tick()` finish so
+ * any HTTP fetch in flight is awaited; the next tick simply will not
+ * fire. Called from the graceful shutdown sequence.
+ */
+export function stopWebhookWorker() {
+  if (_workerHandle) clearInterval(_workerHandle);
+  _workerHandle = null;
+}
+
 async function tick() {
   // Pick up to 20 due deliveries in `pending` or `failed-retry` state.
   const due = db.prepare(`
