@@ -21,7 +21,7 @@ if (!self.workbox) {
   const { precaching, routing, strategies, expiration, backgroundSync } = workbox;
 
   // ---------- pre-cache the SPA shell ----------
-  const SHELL_REVISION = "enterprise-language-v1";
+  const SHELL_REVISION = "enterprise-tabs-v1";
 
   precaching.precacheAndRoute([
     { url: "/",                       revision: SHELL_REVISION },

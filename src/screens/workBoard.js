@@ -5,7 +5,7 @@
 // severity, bulk labels. Dependencies create blocked-by links.
 // Automation: default rules and per-project trigger viewer.
 
-import { el, mount, card, badge, toast, modal, formRow, input, select, textarea } from "../core/ui.js";
+import { el, mount, card, badge, kpi, toast, modal, formRow, input, select, textarea } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -70,29 +70,66 @@ function projectContext(project, items) {
   const dataSources = (d.dataSources || []).filter(ds => ds.projectId === project.id || projectAssets.some(a => a.id === ds.assetId));
   const maintenance = (d.maintenanceItems || []).filter(m => m.projectId === project.id || projectAssets.some(a => a.id === m.assetId));
   const incidents = (d.incidents || []).filter(i => projectAssets.some(a => a.id === i.assetId));
+  const tabKey = `project.context.tab.${project.id}`;
+  const activeTab = sessionStorage.getItem(tabKey) || "overview";
+  const setTab = (tab) => {
+    sessionStorage.setItem(tabKey, tab);
+    renderWorkBoard({ id: project.id });
+  };
+  const tabs = [
+    { id: "overview", label: "Overview" },
+    { id: "assets", label: `Assets ${projectAssets.length}` },
+    { id: "docs", label: `Docs ${projectDocs.length}` },
+    { id: "signals", label: `Signals ${dataSources.length}` },
+    { id: "service", label: `Service ${maintenance.length}` },
+    { id: "activity", label: "Activity" },
+  ];
+  const tabContent = ({
+    overview: projectOverview(project, { orgName, site, loc, projectAssets, projectDocs, dataSources, maintenance, incidents }),
+    assets: card(`Linked assets (${projectAssets.length})`, assetList(projectAssets)),
+    docs: card(`Documents (${projectDocs.length})`, documentList(projectDocs)),
+    signals: card("Signal health", signalHealthList(dataSources), { actions: [
+      helpHint("Live operations signals from MQTT, OPC UA, ERP, or other connectors. Hover each status for source and quality."),
+    ]}),
+    service: card(`Service work (${maintenance.length})`, serviceWorkList(maintenance), { actions: [
+      helpHint("Service records can come from systems such as MaintainX, SAP PM, Fiix, UpKeep, or Maximo."),
+    ]}),
+    activity: card("Project activity", projectTimeline(project, { items, projectDocs, projectAssets, maintenance, incidents, dataSources })),
+  })[activeTab] || projectOverview(project, { orgName, site, loc, projectAssets, projectDocs, dataSources, maintenance, incidents });
+
   return el("div", { class: "stack project-context", style: { marginBottom: "16px" } }, [
-    card(`${orgName} context`, el("div", { class: "stack" }, [
-      el("div", { class: "row wrap" }, [
-        chipText("Organization", orgName),
-        chipText("Site", site?.name || "—"),
-        chipText("Location", loc?.path || loc?.name || "—"),
-        chipText("Referenced assets", String(projectAssets.length), "Assets remain mastered by site/location. This project references the assets it affects."),
-      ]),
-    ])),
-    el("div", { class: "three-col" }, [
-      card(`Linked assets (${projectAssets.length})`, assetList(projectAssets)),
-      card(`Documents (${projectDocs.length})`, documentList(projectDocs)),
-      card("Signal health", signalHealthList(dataSources), { actions: [
-        helpHint("Live operations signals from MQTT, OPC UA, ERP, or other connectors. Hover each status for source and quality."),
-      ]}),
-    ]),
-    el("div", { class: "two-col", style: { marginTop: "16px" } }, [
-      card(`Service work (${maintenance.length})`, serviceWorkList(maintenance), { actions: [
-        helpHint("Service records can come from systems such as MaintainX, SAP PM, Fiix, UpKeep, or Maximo."),
-      ]}),
-      card("Project activity", projectTimeline(project, { items, projectDocs, projectAssets, maintenance, incidents, dataSources })),
-    ]),
+    contextTabs(tabs, activeTab, setTab),
+    tabContent,
   ]);
+}
+
+function projectOverview(project, ctx) {
+  return card(`${ctx.orgName} context`, el("div", { class: "stack" }, [
+    el("div", { class: "row wrap" }, [
+      chipText("Organization", ctx.orgName),
+      chipText("Site", ctx.site?.name || "—"),
+      chipText("Location", ctx.loc?.path || ctx.loc?.name || "—"),
+      chipText("Referenced assets", String(ctx.projectAssets.length), "Assets remain mastered by site/location. This project references the assets it affects."),
+    ]),
+    el("div", { class: "card-grid" }, [
+      kpi("Assets", ctx.projectAssets.length, "referenced", ""),
+      kpi("Documents", ctx.projectDocs.length, "scoped", ""),
+      kpi("Signals", ctx.dataSources.length, "live context", ctx.dataSources.some(ds => ds.status === "stale") ? "down" : "up"),
+      kpi("Service work", ctx.maintenance.length, "open / planned", ctx.maintenance.some(m => ["open","due"].includes(m.status)) ? "down" : "up"),
+      kpi("Incidents", ctx.incidents.filter(i => i.status === "active").length, "active", ctx.incidents.some(i => i.status === "active") ? "down" : "up"),
+    ]),
+  ]));
+}
+
+function contextTabs(tabs, active, onPick) {
+  return el("div", { class: "context-tabs", role: "tablist" }, tabs.map(tab =>
+    el("button", {
+      class: `context-tab ${active === tab.id ? "active" : ""}`,
+      role: "tab",
+      "aria-selected": String(active === tab.id),
+      onClick: () => onPick(tab.id),
+    }, [tab.label])
+  ));
 }
 
 function locationById(id) {

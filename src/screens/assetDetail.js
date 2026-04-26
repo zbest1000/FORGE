@@ -81,42 +81,17 @@ export function renderAssetDetail({ id }) {
       kpi("Open incidents", incidents.filter(i => i.status === "active").length, "", incidents.some(i => i.status === "active") ? "down" : "up"),
     ]),
 
-    card(`${d.organization?.name || "Enterprise"} hierarchy`, el("div", { class: "stack" }, [
-      el("div", { class: "row wrap" }, [
-        chipText("Organization", d.organization?.name || "—"),
-        chipText("Site", site?.name || "—"),
-        chipText("Location", loc?.path || loc?.name || a.hierarchy),
-        helpHint("Assets are mastered by organization, site, and location. Projects reference assets only while they affect work scope."),
-      ]),
-      linkedProjects.length
-        ? el("div", { class: "row wrap" }, linkedProjects.map(p =>
-            el("button", { class: "btn sm", onClick: () => navigate(`/work-board/${p.id}`) }, [`Project: ${p.name}`])
-          ))
-        : el("div", { class: "row wrap" }, [
-            badge("No active project", "info"),
-            helpHint("This asset remains available through the organization and site hierarchy even when no project references it."),
-          ]),
-    ])),
-
-    unsCard(a),
-
-    el("div", { class: "two-col", style: { marginTop: "16px" } }, [
-      card("Operations trend", telemetry(a)),
-      card("Signal health", signalHealthPanel(dataSources)),
-    ]),
-
-    el("div", { class: "two-col", style: { marginTop: "16px" } }, [
-      card(`Linked documents (${linkedDocs.length})`, el("div", { class: "stack" }, linkedDocs.map(doc =>
-        el("div", { class: "activity-row", onClick: () => navigate(`/doc/${doc.id}`) }, [
-          badge(doc.scope || doc.discipline, doc.scope === "enterprise" ? "purple" : doc.scope === "asset" ? "accent" : "info"),
-          el("span", {}, [doc.name]),
-          el("span", { class: "tiny muted" }, [doc.id]),
-        ])
-      ))),
-      card("Work and service", workMaintenancePanel(tasks, maintenance)),
-    ]),
-
-    card("Asset activity", assetTimeline(a, { tasks, maintenance, incidents, dataSources, linkedDocs })),
+    assetContextTabs(a, {
+      orgName: d.organization?.name || "Enterprise",
+      site,
+      loc,
+      linkedProjects,
+      linkedDocs,
+      dataSources,
+      tasks,
+      maintenance,
+      incidents,
+    }),
 
     assignmentCard(a),
 
@@ -146,6 +121,70 @@ function scopedAssetDocs(asset, projects) {
 
 function chipText(kind, value) {
   return el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, [kind]), value || "—"]);
+}
+
+function helpHint(text) {
+  return el("span", { class: "help-dot", title: text, "aria-label": text }, ["?"]);
+}
+
+function assetContextTabs(asset, ctx) {
+  const key = `asset.context.${asset.id}`;
+  const tabs = [
+    { id: "summary", label: "Summary", content: () => assetSummaryTab(asset, ctx) },
+    { id: "docs", label: `Docs (${ctx.linkedDocs.length})`, content: () => card("Linked documents", documentList(ctx.linkedDocs)) },
+    { id: "work", label: `Work (${ctx.tasks.length + ctx.maintenance.length})`, content: () => card("Work and service", workMaintenancePanel(ctx.tasks, ctx.maintenance)) },
+    { id: "signals", label: `Signals (${ctx.dataSources.length})`, content: () => el("div", { class: "two-col" }, [
+      card("Operations trend", telemetry(asset)),
+      card("Signal health", signalHealthPanel(ctx.dataSources)),
+    ]) },
+    { id: "activity", label: "Activity", content: () => card("Asset activity", assetTimeline(asset, ctx)) },
+  ];
+  const activeId = sessionStorage.getItem(key) || "summary";
+  const active = tabs.find(t => t.id === activeId) || tabs[0];
+  return el("section", { class: "context-tab-shell" }, [
+    el("div", { class: "context-tabs", role: "tablist", "aria-label": "Asset context" }, tabs.map(t =>
+      el("button", {
+        class: `context-tab ${active.id === t.id ? "active" : ""}`,
+        role: "tab",
+        "aria-selected": String(active.id === t.id),
+        onClick: () => { sessionStorage.setItem(key, t.id); renderAssetDetail({ id: asset.id }); },
+      }, [t.label])
+    )),
+    el("div", { class: "context-tab-panel", role: "tabpanel" }, [active.content()]),
+  ]);
+}
+
+function assetSummaryTab(asset, ctx) {
+  return el("div", { class: "stack" }, [
+    card(`${ctx.orgName} hierarchy`, el("div", { class: "stack" }, [
+      el("div", { class: "row wrap" }, [
+        chipText("Organization", ctx.orgName),
+        chipText("Site", ctx.site?.name || "—"),
+        chipText("Location", ctx.loc?.path || ctx.loc?.name || asset.hierarchy),
+        helpHint("Assets are mastered by organization, site, and location. Projects reference assets only while they affect work scope."),
+      ]),
+      ctx.linkedProjects.length
+        ? el("div", { class: "row wrap" }, ctx.linkedProjects.map(p =>
+            el("button", { class: "btn sm", onClick: () => navigate(`/work-board/${p.id}`) }, [`Project: ${p.name}`])
+          ))
+        : el("div", { class: "row wrap" }, [
+            badge("No active project", "info"),
+            helpHint("This asset remains available through the organization and site hierarchy even when no project references it."),
+          ]),
+    ])),
+    unsCard(asset),
+  ]);
+}
+
+function documentList(docs) {
+  if (!docs.length) return el("div", { class: "muted tiny" }, ["No scoped documents."]);
+  return el("div", { class: "stack" }, docs.map(doc =>
+    el("button", { class: "activity-row", onClick: () => navigate(`/doc/${doc.id}`) }, [
+      badge(doc.scope || doc.discipline, doc.scope === "enterprise" ? "purple" : doc.scope === "asset" ? "accent" : "info"),
+      el("span", {}, [doc.name]),
+      el("span", { class: "tiny muted" }, [doc.id]),
+    ])
+  ));
 }
 
 function signalHealthPanel(dataSources) {

@@ -538,6 +538,45 @@ button {
   cursor: help;
 }
 
+.context-tabs {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin: var(--space-3) 0;
+}
+
+.context-tabs.stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.context-tab-list {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.context-tab-panel {
+  min-width: 0;
+}
+
+.context-tab {
+  height: 30px;
+  padding: 0 var(--space-3);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0b1220;
+}
+
 /* KPI tile */
 .kpi {
   background: var(--surface);
