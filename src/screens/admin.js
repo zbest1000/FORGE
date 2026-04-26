@@ -17,8 +17,9 @@ import { canonicalJSON } from "../core/crypto.js";
 import { mode as apiMode, api } from "../core/api.js";
 import { listGroups, currentUserId, effectiveGroupIds, isOrgOwner } from "../core/groups.js";
 import { navigate } from "../core/router.js";
+import { license as currentLicense, refreshLicense, installLicense as installLic, uninstallLicense as uninstallLic, FEATURES } from "../core/license.js";
 
-const ADMIN_SECTIONS = new Set(["identity", "access", "integrations", "audit", "retention", "health"]);
+const ADMIN_SECTIONS = new Set(["identity", "access", "integrations", "audit", "retention", "health", "license"]);
 
 export function renderAdmin(params = {}) {
   const root = document.getElementById("screenContainer");
@@ -37,6 +38,7 @@ export function renderAdmin(params = {}) {
     { id: "integrations", label: "Integrations", content: () => adminSection("integrations", d) },
     { id: "audit", label: "Audit", content: () => adminSection("audit", d) },
     { id: "retention", label: "Retention", content: () => adminSection("retention", d) },
+    { id: "license", label: "License", content: () => adminSection("license", d) },
     { id: "health", label: "System health", content: () => adminSection("health", d) },
   ];
 
@@ -86,12 +88,155 @@ function adminSection(active, d) {
   }
   if (active === "audit") return card("Audit ledger", auditPanel());
   if (active === "retention") return card("Retention & compliance", el("div", { class: "stack" }, retentionEditor(d)));
+  if (active === "license") return licensePanel();
   if (active === "health") {
     return el("div", { class: "stack" }, [
       apiMode() === "server" ? card("Server admin - Metrics", metricsPanel()) : card("System health", el("div", { class: "muted tiny" }, ["Server metrics are available in server mode."])),
     ]);
   }
   return card("Admin", el("div", { class: "muted tiny" }, ["Choose a settings section."]));
+}
+
+// ---------- license panel ----------
+function licensePanel() {
+  if (apiMode() !== "server") {
+    return card("License", el("div", { class: "muted tiny" }, [
+      "License management is only available in server mode. Demo builds run with the full enterprise feature set for inspection.",
+    ]));
+  }
+  const lic = currentLicense();
+  const isOwner = state.ui?.role === "Organization Owner";
+
+  const summary = el("div", { class: "stack" }, [
+    el("div", { class: "row wrap" }, [
+      badge(`Tier: ${lic?.tier || "?"}`, statusKindForTier(lic?.tier)),
+      badge(`Edition: ${lic?.edition || "?"}`, "info"),
+      badge(`Term: ${lic?.term || "?"}`, lic?.term === "perpetual" ? "success" : "info"),
+      badge(`Source: ${lic?.source || "?"}`, lic?.source === "fallback" ? "warn" : "info"),
+      badge(`Status: ${lic?.status || "?"}`, lic?.status === "ok" ? "success" : "danger"),
+    ]),
+    el("dl", { class: "kv" }, [
+      kv("Customer", lic?.customer || "—"),
+      kv("License ID", lic?.license_id || "—"),
+      kv("Contact", lic?.contact || "—"),
+      kv("Issued", fmtDate(lic?.issued_at)),
+      kv("Starts", fmtDate(lic?.starts_at)),
+      kv("Expires", lic?.expires_at ? fmtDate(lic.expires_at) : "never (perpetual)"),
+      kv("Maintenance until", fmtDate(lic?.maintenance_until)),
+      kv("Deployment", lic?.deployment || "—"),
+      kv("Seats", `${lic?.usage?.active_users ?? "?"} / ${lic?.seats ?? "?"}` + (lic?.hard_seat_cap && lic.hard_seat_cap !== lic.seats ? ` (hard cap ${lic.hard_seat_cap})` : "")),
+      kv("Features", String(lic?.features?.length || 0) + " enabled"),
+    ]),
+    lic?.reasons?.length
+      ? el("div", { class: "callout warn tiny" }, ["Notes: " + lic.reasons.join(", ")])
+      : null,
+  ]);
+
+  const tokenInput = el("textarea", {
+    class: "ta",
+    placeholder: "forge1.<base64>.<base64> — paste full token here",
+    rows: "4",
+    style: { width: "100%", "font-family": "monospace" },
+  });
+
+  const actionRow = el("div", { class: "row wrap" }, [
+    el("button", {
+      class: "btn primary",
+      disabled: !isOwner,
+      title: isOwner ? "" : "Only the Organization Owner can install a license",
+      onClick: async () => {
+        if (!isOwner) return;
+        const tok = tokenInput.value.trim();
+        if (!tok) { toast("Paste a license token first", "warn"); return; }
+        try {
+          const result = await installLic(tok);
+          toast(`Installed: ${result.customer} (${result.tier})`, "success");
+          await refreshLicense();
+          navigate("/admin/license"); // re-render
+        } catch (err) {
+          const reasons = err?.body?.reasons?.join("; ") || err.message || String(err);
+          toast("Install failed: " + reasons, "danger");
+        }
+      },
+    }, ["Install / replace"]),
+    el("button", {
+      class: "btn danger",
+      disabled: !isOwner || lic?.source === "fallback",
+      onClick: async () => {
+        if (!isOwner) return;
+        const ok = await dangerAction({
+          title: "Uninstall the active license?",
+          message: "This installation will downgrade to the community tier immediately. All paid features will fail closed until a new license is installed.",
+          confirmLabel: "Uninstall",
+        });
+        if (!ok) return;
+        try {
+          await uninstallLic();
+          await refreshLicense();
+          toast("License removed; running on community tier.", "warn");
+          navigate("/admin/license");
+        } catch (err) {
+          toast("Uninstall failed: " + (err.message || err), "danger");
+        }
+      },
+    }, ["Uninstall"]),
+    el("button", {
+      class: "btn ghost",
+      onClick: () => {
+        api("/api/license/catalog").then(cat => {
+          modal({
+            title: "Feature catalog",
+            body: el("div", { class: "stack" }, [
+              el("p", { class: "tiny muted" }, [
+                "Tier defaults are starting points — your license may add or remove specific features.",
+              ]),
+              ...cat.tiers.map(tier => card(
+                `${tier} (${cat.tier_defaults[tier].length} features)`,
+                el("div", { class: "tags" }, cat.tier_defaults[tier].map(f => badge(f, "info"))),
+              )),
+            ]),
+          });
+        }).catch(err => toast("Catalog fetch failed: " + err.message, "danger"));
+      },
+    }, ["View feature catalog"]),
+  ]);
+
+  return el("div", { class: "stack" }, [
+    card("Active license", summary),
+    card("Install or replace license", el("div", { class: "stack" }, [
+      el("div", { class: "tiny muted" }, [
+        "Paste the full \"forge1.…\" token issued by your vendor. The token is signed with Ed25519 and verified locally — no phone-home, no internet required.",
+      ]),
+      tokenInput,
+      actionRow,
+      el("div", { class: "tiny muted" }, [
+        "Tip: licenses can also be deployed via the FORGE_LICENSE environment variable or a license.txt file in FORGE_DATA_DIR — handy for k8s and CI.",
+      ]),
+    ])),
+    card("Active features", el("div", { class: "tags" }, (lic?.features || []).map(f => badge(f, "success")))),
+  ]);
+}
+
+function statusKindForTier(t) {
+  switch (t) {
+    case "enterprise": return "success";
+    case "team":       return "info";
+    case "personal":   return "info";
+    case "community":  return "warn";
+    default:           return "";
+  }
+}
+
+function kv(k, v) {
+  return el("div", { class: "kv-row" }, [
+    el("dt", {}, [k]),
+    el("dd", {}, [v ?? "—"]),
+  ]);
+}
+
+function fmtDate(s) {
+  if (!s) return "—";
+  try { return new Date(s).toISOString().slice(0, 10); } catch { return String(s); }
 }
 
 // ---------- server admin panels (only in server mode) ----------
