@@ -1,6 +1,8 @@
 # Reference docker-compose for self-hosted FORGE.
-# `docker compose up -d` brings up the server + an optional Mosquitto
-# broker so the MQTT bridge has something to listen to.
+# `docker compose up -d` brings up the single-node bundle.
+# `docker compose --profile distributed up -d` adds distributed-ready
+# infrastructure (worker role, Postgres/NATS/OTel collector) used by the
+# outbox/connector extraction path.
 #
 # Run `docker compose run --rm forge node server/seed.js` once to seed.
 
@@ -23,12 +25,38 @@ services:
       # Talk to the n8n service over the internal network.
       FORGE_N8N_URL: http://n8n:5678
       FORGE_N8N_API_KEY: ${FORGE_N8N_API_KEY:-}
+      FORGE_OTEL_ENABLED: ${FORGE_OTEL_ENABLED:-0}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
       LOG_LEVEL: info
     volumes:
       - forge-data:/app/data
     depends_on:
       - mosquitto
       - n8n
+
+  forge-worker:
+    build: .
+    image: forge:local
+    profiles: ["distributed"]
+    restart: unless-stopped
+    command: ["node", "server/main.js"]
+    environment:
+      PORT: 3001
+      NODE_ENV: production
+      FORGE_JWT_SECRET: ${FORGE_JWT_SECRET:-change-me-in-production}
+      FORGE_TENANT_KEY: ${FORGE_TENANT_KEY:-change-me-in-production}
+      FORGE_DATA_DIR: /app/data
+      FORGE_WORKER_ROLE: outbox-connectors
+      FORGE_OTEL_ENABLED: ${FORGE_OTEL_ENABLED:-1}
+      OTEL_SERVICE_NAME: forge-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
+      LOG_LEVEL: info
+    volumes:
+      - forge-data:/app/data
+    depends_on:
+      - forge
+      - nats
+      - otel-collector
 
   mosquitto:
     image: eclipse-mosquitto:2
@@ -66,8 +94,42 @@ services:
       - n8n-data:/home/node/.n8n
       - ./deploy/n8n-templates:/templates:ro
 
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["distributed"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-forge}
+      POSTGRES_USER: ${POSTGRES_USER:-forge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-forge-dev-password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  nats:
+    image: nats:2-alpine
+    profiles: ["distributed"]
+    restart: unless-stopped
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    profiles: ["distributed"]
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./deploy/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "4318:4318"
+      - "4317:4317"
+
 volumes:
   forge-data:
   mosquitto-data:
   mosquitto-log:
   n8n-data:
+  postgres-data:

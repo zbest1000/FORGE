@@ -18,6 +18,24 @@ origin.
 
 Base: `/api` (FORGE) and `/v1` (CESMII i3X 1.0-Beta).
 
+### Enterprise integration & compliance
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST/PATCH | `/api/enterprise-systems` | Typed registry for ERP, MES, CMMS/EAM, EDMS/DMS, historian, identity, and compliance platforms. Secrets are references only (`secret_ref`) and are never returned. |
+| POST | `/api/enterprise-systems/:id/test` | Audited dry-run connector test; records a connector run. |
+| POST | `/api/enterprise-systems/:id/sync` | Queues/records an integration sync run. |
+| GET | `/api/enterprise-systems/:id/runs` | Connector run history. |
+| GET/POST | `/api/external-links` | Maps external records to FORGE object ids. |
+| GET/POST | `/api/compliance/processing-activities` | GDPR/ROPA processing records. |
+| GET/POST | `/api/compliance/dsar` | Data subject requests. |
+| GET | `/api/compliance/dsar/:id/export` | JSON DSAR bundle for a subject user. |
+| GET/POST/PATCH | `/api/compliance/legal-holds` | eDiscovery/legal hold tracking. |
+| GET/POST | `/api/compliance/evidence` | SOC 2 / ISO 27001 / NIS2 / DORA evidence records. |
+| GET/POST/PATCH | `/api/compliance/subprocessors` | Vendor/subprocessor risk register. |
+| GET/POST/PATCH | `/api/compliance/risks` | Cross-framework risk register. |
+| GET/POST | `/api/compliance/ai-systems` | EU AI Act / ISO 42001-oriented AI system inventory. |
+| POST | `/api/compliance/incidents/:id/regulatory-report` | Draft regulatory incident report with deadlines. |
+
 ### Auth
 | Method | Path | Notes |
 |---|---|---|

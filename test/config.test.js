@@ -22,7 +22,7 @@ test("strict config accepts explicit enterprise secrets and CORS origins", () =>
   });
   assert.equal(cfg.strict, true);
   assert.deepEqual(cfg.corsOrigin, ["https://forge.example.com", "https://admin.example.com"]);
-  assert.equal(cfg.rateLimitMax, 1200);
+  assert.equal(cfg.rateLimit.max, 1200);
 });
 
 test("development config keeps local defaults usable", () => {

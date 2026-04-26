@@ -7,8 +7,9 @@ const env = {
   ...process.env,
   NODE_ENV: "production",
   PORT: port,
-  FORGE_JWT_SECRET: process.env.FORGE_JWT_SECRET || "smoke-jwt-secret",
-  FORGE_TENANT_KEY: process.env.FORGE_TENANT_KEY || "smoke-tenant-key",
+  FORGE_JWT_SECRET: process.env.FORGE_JWT_SECRET || "smoke-jwt-secret-0123456789abcdef",
+  FORGE_TENANT_KEY: process.env.FORGE_TENANT_KEY || "smoke-tenant-key-0123456789abcdef",
+  FORGE_CORS_ORIGIN: process.env.FORGE_CORS_ORIGIN || `http://127.0.0.1:${port}`,
 };
 
 const server = spawn(process.execPath, ["server/main.js"], {

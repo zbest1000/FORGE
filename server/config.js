@@ -63,8 +63,10 @@ export function loadConfig(env = process.env) {
     tenantKey: env.FORGE_TENANT_KEY || DEFAULTS.tenantKey,
     tenantKeyId: env.FORGE_TENANT_KEY_ID || "key:forge:v1",
     corsOrigin: parseCorsOrigin(env.FORGE_CORS_ORIGIN),
-    rateLimitMax: readNumber(env.FORGE_RATELIMIT_MAX, DEFAULTS.rateLimitMax),
-    rateLimitWindow: env.FORGE_RATELIMIT_WINDOW || DEFAULTS.rateLimitWindow,
+    rateLimit: {
+      max: readNumber(env.FORGE_RATELIMIT_MAX, DEFAULTS.rateLimitMax),
+      timeWindow: env.FORGE_RATELIMIT_WINDOW || DEFAULTS.rateLimitWindow,
+    },
     logLevel: env.LOG_LEVEL || DEFAULTS.logLevel,
     serveSourceClient: boolEnv(env.FORGE_SERVE_SOURCE),
     otelEnabled: boolEnv(env.FORGE_OTEL_ENABLED),
