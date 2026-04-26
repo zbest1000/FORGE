@@ -6,6 +6,7 @@ import { navigate } from "../core/router.js";
 import { mode as apiMode, login as apiLogin, logout as apiLogout } from "../core/api.js";
 import { modal, formRow, input, toast } from "../core/ui.js";
 import { portalById, effectiveGroupIds, currentUserId, isOrgOwner } from "../core/groups.js";
+import { license as currentLicense, licenseBanner } from "../core/license.js";
 
 function viewerHasIT() {
   if (isOrgOwner()) return true;
@@ -78,6 +79,7 @@ export function renderHeader() {
     ]),
     el("div", { class: "header-controls" }, [
       searchInput,
+      licenseChip(),
       notifyBell(),
       contextToggleBtn(),
       viewerHasIT() ? serverBadge() : authOnlyBadge(),
@@ -90,6 +92,38 @@ export function renderHeader() {
         onClick: () => confirmReset(),
       }, ["Reset"]),
     ]),
+    licenseBannerStrip(),
+  ]);
+}
+
+function licenseChip() {
+  const lic = currentLicense();
+  if (!lic || lic.source === "demo") return null;
+  const cls = "license-chip " + (lic.tier || "community");
+  const tierName = lic.tier_label || (lic.tier ? lic.tier[0].toUpperCase() + lic.tier.slice(1) : "Community");
+  const label = lic.tier === "community"
+    ? "Community"
+    : `${tierName}${lic.usage?.active_users != null ? ` · ${lic.usage.active_users}/${lic.seats}` : ""}`;
+  const titleParts = [];
+  if (lic.customer && lic.customer !== "Unlicensed") titleParts.push(lic.customer);
+  if (lic.edition_label) titleParts.push(lic.edition_label);
+  if (lic.local_ls?.online) titleParts.push("online");
+  return el("button", {
+    class: cls,
+    title: titleParts.join(" · ") || "Manage license",
+    onClick: () => navigate("/admin/license"),
+  }, [label]);
+}
+
+function licenseBannerStrip() {
+  const banner = licenseBanner();
+  if (!banner) return null;
+  return el("div", { class: `license-banner ${banner.severity}` }, [
+    el("span", {}, [banner.text]),
+    el("button", {
+      class: "btn xs ghost",
+      onClick: () => navigate("/admin/license"),
+    }, ["Manage license"]),
   ]);
 }
 

@@ -1,0 +1,23 @@
+{
+  "name": "@forge/license-server",
+  "version": "0.4.0",
+  "private": true,
+  "description": "FORGE LLC central license server. Issues signed entitlement bundles to customer-deployed local license servers.",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node main.js",
+    "dev":   "node --watch main.js",
+    "test":  "node --test --test-concurrency=1 test/*.test.js",
+    "migrate": "node db.js --migrate-only",
+    "admin":   "node scripts/admin.js"
+  },
+  "dependencies": {
+    "fastify":            "^5.1.0",
+    "@fastify/helmet":    "^12.0.1",
+    "@fastify/rate-limit":"^10.3.0",
+    "@fastify/cors":      "^10.0.1",
+    "better-sqlite3":     "^11.3.0",
+    "pino":               "^9.5.0"
+  }
+}

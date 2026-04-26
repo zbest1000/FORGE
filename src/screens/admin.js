@@ -17,8 +17,9 @@ import { canonicalJSON } from "../core/crypto.js";
 import { mode as apiMode, api } from "../core/api.js";
 import { listGroups, currentUserId, effectiveGroupIds, isOrgOwner } from "../core/groups.js";
 import { navigate } from "../core/router.js";
+import { license as currentLicense, refreshLicense, installLicense as installLic, uninstallLicense as uninstallLic, reactivateLicense, releaseActivation as releaseAct, FEATURES } from "../core/license.js";
 
-const ADMIN_SECTIONS = new Set(["identity", "access", "integrations", "audit", "retention", "health"]);
+const ADMIN_SECTIONS = new Set(["identity", "access", "integrations", "audit", "retention", "health", "license"]);
 
 export function renderAdmin(params = {}) {
   const root = document.getElementById("screenContainer");
@@ -37,6 +38,7 @@ export function renderAdmin(params = {}) {
     { id: "integrations", label: "Integrations", content: () => adminSection("integrations", d) },
     { id: "audit", label: "Audit", content: () => adminSection("audit", d) },
     { id: "retention", label: "Retention", content: () => adminSection("retention", d) },
+    { id: "license", label: "License", content: () => adminSection("license", d) },
     { id: "health", label: "System health", content: () => adminSection("health", d) },
   ];
 
@@ -86,12 +88,310 @@ function adminSection(active, d) {
   }
   if (active === "audit") return card("Audit ledger", auditPanel());
   if (active === "retention") return card("Retention & compliance", el("div", { class: "stack" }, retentionEditor(d)));
+  if (active === "license") return licensePanel();
   if (active === "health") {
     return el("div", { class: "stack" }, [
       apiMode() === "server" ? card("Server admin - Metrics", metricsPanel()) : card("System health", el("div", { class: "muted tiny" }, ["Server metrics are available in server mode."])),
     ]);
   }
   return card("Admin", el("div", { class: "muted tiny" }, ["Choose a settings section."]));
+}
+
+// ---------- license panel ----------
+function licensePanel() {
+  if (apiMode() !== "server") {
+    return card("License", el("div", { class: "muted tiny" }, [
+      "License management is only available in server mode. Demo builds run with the full Enterprise feature set so you can inspect every screen.",
+    ]));
+  }
+  const lic = currentLicense();
+  const isOwner = state.ui?.role === "Organization Owner";
+  const isOnlineMode = !!(lic?.local_ls && lic.local_ls.configured);
+  const isOfflineMode = !isOnlineMode && lic?.source !== "fallback" && lic?.source !== "local_ls_unreachable";
+
+  const summary = el("div", { class: "stack" }, [
+    el("div", { class: "row wrap" }, [
+      badge(lic?.tier_label || lic?.tier || "?", statusKindForTier(lic?.tier)),
+      lic?.edition_label ? badge(lic.edition_label, "info") : null,
+      lic?.term_label ? badge(`${lic.term_label} term`, lic?.term === "perpetual" ? "success" : "info") : null,
+      badge(lic?.status_label || "Unknown status", lic?.status === "ok" ? "success" : "danger"),
+      badge(activationLabel(lic), isOnlineMode && lic?.local_ls?.online ? "success" : (lic?.source === "fallback" ? "warn" : "info")),
+    ]),
+    el("dl", { class: "kv" }, [
+      kv("Customer", lic?.customer || "—"),
+      kv("License ID", lic?.license_id || "—"),
+      kv("Contact email", lic?.contact || "—"),
+      kv("Issued", fmtDate(lic?.issued_at)),
+      kv("Starts", fmtDate(lic?.starts_at)),
+      kv("Expires", lic?.expires_at ? fmtDate(lic.expires_at) : "Never (perpetual)"),
+      kv("Maintenance through", fmtDate(lic?.maintenance_until)),
+      kv("Deployment", lic?.deployment_label || "—"),
+      kv("Seats in use", seatLabel(lic)),
+      kv("Features enabled", `${lic?.features?.length || 0} of ${lic?.feature_details?.length || lic?.features?.length || 0}`),
+    ]),
+    (lic?.reason_messages?.length || lic?.reasons?.length)
+      ? el("div", { class: "callout warn tiny" }, [
+          "Notice: " + (lic.reason_messages?.length ? lic.reason_messages.join(" ") : lic.reasons.join(", ")),
+        ])
+      : null,
+  ]);
+
+  // ---- Activation panel: online (local LS) vs offline (token paste) ----
+  const activationStatusLabel = onlineActivationStatusLabel(lic);
+  const isActivated = isOnlineMode && lic?.activation_id && (lic?.activation_status === "active" || lic?.local_ls?.activation_status === "active");
+  const isSuperseded = lic?.status === "superseded";
+  const isReleased   = lic?.status === "released";
+  const isRevoked    = lic?.status === "revoked";
+
+  const activationPanel = isOnlineMode
+    ? card("Online activation", el("div", { class: "stack" }, [
+        el("div", { class: "tiny muted" }, [
+          "This installation activates online once and then runs entirely from the cached, signed activation token. The activation only re-checks with FORGE LLC during a daily heartbeat — enough to learn if the seat has been moved to another machine or released by your operator.",
+        ]),
+        el("dl", { class: "kv" }, [
+          kv("Local server", lic.local_ls.url || "—"),
+          kv("Activation status", activationStatusLabel),
+          kv("Activation ID", lic.activation_id || lic.local_ls.activation_id || "—"),
+          kv("Token ID", lic.activation_token_id || lic.local_ls.activation_token_id || "—"),
+          kv("Activated at", fmtDateTime(lic.issued_at || lic.local_ls.issued_at)),
+          kv("Last heartbeat", fmtDateTime(lic.local_ls.last_fetch_at)),
+          (isSuperseded && lic.superseded_by) ? kv("Superseded by", lic.superseded_by) : null,
+          (isReleased && lic.released_at) ? kv("Released at", fmtDateTime(lic.released_at)) : null,
+          (isRevoked && lic.revoked_at) ? kv("Revoked at", fmtDateTime(lic.revoked_at)) : null,
+          lic.local_ls.last_error ? kv("Last error", lic.local_ls.last_error) : null,
+        ]),
+        (isSuperseded || isReleased || isRevoked)
+          ? el("div", { class: "callout warn tiny" }, [
+              isSuperseded
+                ? "This license is currently activated on another machine. Reactivate here to take the seat back — the previous machine will be downgraded the next time it heartbeats."
+                : isReleased
+                  ? "This activation was released back to the seat pool. Reactivate here to start using the license on this machine again."
+                  : "This activation was revoked by your FORGE LLC operator. Reactivation will create a fresh activation if your license still has a free seat.",
+            ])
+          : null,
+        el("div", { class: "row wrap" }, [
+          el("button", {
+            class: "btn primary",
+            disabled: !isOwner,
+            title: isOwner ? "" : "Only the Organization Owner can reactivate the license",
+            onClick: async () => {
+              try {
+                await reactivateLicense();
+                toast("Activated. This machine now holds a seat.", "success");
+                navigate("/admin/license");
+              } catch (err) {
+                const msg = err?.body?.message || err.message || String(err);
+                toast("Couldn't reactivate: " + msg, "danger");
+              }
+            },
+          }, [isSuperseded ? "Reactivate (take seat back)" : isActivated ? "Reactivate" : "Activate"]),
+          isActivated
+            ? el("button", {
+                class: "btn warn",
+                disabled: !isOwner,
+                title: isOwner
+                  ? "Releases this seat back to your license pool so you can use it on a different machine"
+                  : "Only the Organization Owner can release the activation",
+                onClick: async () => {
+                  if (!isOwner) return;
+                  const ok = await dangerAction({
+                    title: "Release this activation?",
+                    message: "This installation will return its seat to your license pool and drop to the Community plan immediately. You can move the license to another machine, or click Reactivate later to take the seat back here.",
+                    confirmLabel: "Release seat",
+                  });
+                  if (!ok) return;
+                  try {
+                    await releaseAct();
+                    toast("Seat released — running on Community plan.", "warn");
+                    navigate("/admin/license");
+                  } catch (err) {
+                    const msg = err?.body?.message || err.message || String(err);
+                    toast("Couldn't release: " + msg, "danger");
+                  }
+                },
+              }, ["Release this seat"])
+            : null,
+        ]),
+      ]))
+    : card("Offline activation", el("div", { class: "stack" }, [
+        el("div", { class: "tiny muted" }, [
+          "Paste the activation token issued by your FORGE LLC portal. The token is signed and verified locally — no internet connection is required to verify it.",
+        ]),
+        offlineTokenInput(isOwner, lic),
+        el("div", { class: "tiny muted" }, [
+          "Tip: activation tokens can also be deployed via the FORGE_LICENSE environment variable or a license.txt file in your data directory — handy for Kubernetes or air-gapped installs.",
+        ]),
+      ]));
+
+  // ---- Feature breakdown by category ----
+  const featuresPanel = card("Active features", featureGrid(lic));
+
+  // ---- Catalog modal trigger ----
+  const catalogBtn = el("button", {
+    class: "btn ghost",
+    onClick: () => {
+      api("/api/license/catalog").then(cat => {
+        const tierCards = cat.tiers.map(tier => card(
+          `${tier.label} — ${tier.feature_count} feature${tier.feature_count === 1 ? "" : "s"}`,
+          el("div", { class: "stack" }, [
+            el("p", { class: "tiny muted" }, [tier.description]),
+            el("div", { class: "tags" }, tier.features.map(f =>
+              el("span", { class: "feature-pill", title: f.description }, [f.name]))),
+          ]),
+        ));
+        modal({
+          title: "Plan & feature catalog",
+          body: el("div", { class: "stack" }, [
+            el("p", { class: "tiny muted" }, [
+              "These are the default features in each plan. A specific license can add or remove individual features per agreement with FORGE LLC.",
+            ]),
+            ...tierCards,
+          ]),
+        });
+      }).catch(err => toast("We couldn't load the catalog: " + (err.message || err), "danger"));
+    },
+  }, ["View plan & feature catalog"]);
+
+  return el("div", { class: "stack" }, [
+    card("Plan summary", summary),
+    activationPanel,
+    el("div", {}, [catalogBtn]),
+    featuresPanel,
+  ]);
+}
+
+function onlineActivationStatusLabel(lic) {
+  const s = lic?.activation_status || lic?.local_ls?.activation_status;
+  switch (s) {
+    case "active":     return "Active";
+    case "superseded": return "Superseded by another machine";
+    case "released":   return "Released to the pool";
+    case "revoked":    return "Revoked by operator";
+    case "cached":     return "Cached (offline)";
+    case "uninitialised": return "Not yet activated";
+    default:           return s || "—";
+  }
+}
+
+function activationLabel(lic) {
+  if (!lic) return "Unknown";
+  if (lic.source === "local_ls") return "Online activation";
+  if (lic.source === "local_ls_unreachable") return "Local server unreachable";
+  if (lic.source === "db") return "Offline token (admin-installed)";
+  if (lic.source === "env") return "Offline token (environment)";
+  if (lic.source === "file") return "Offline token (file)";
+  if (lic.source === "fallback") return "Unlicensed (Community)";
+  return lic.source || "Unknown";
+}
+
+function seatLabel(lic) {
+  if (!lic) return "—";
+  const used = lic.usage?.active_users ?? "?";
+  const total = lic.seats ?? "?";
+  const hard = lic.hard_seat_cap;
+  return `${used} of ${total}` + (hard && hard !== total ? ` (hard cap ${hard})` : "");
+}
+
+function featureGrid(lic) {
+  if (!lic?.feature_details?.length) {
+    return el("div", { class: "tiny muted" }, ["No features are currently enabled."]);
+  }
+  const byCategory = {};
+  for (const f of lic.feature_details) {
+    if (!byCategory[f.category]) byCategory[f.category] = [];
+    byCategory[f.category].push(f);
+  }
+  return el("div", { class: "stack" }, Object.keys(byCategory).map(cat =>
+    el("div", { class: "stack" }, [
+      el("div", { class: "feature-category-label" }, [cat]),
+      el("div", { class: "tags" }, byCategory[cat].map(f =>
+        el("span", { class: "feature-pill on", title: f.description }, [f.name]))),
+    ]),
+  ));
+}
+
+function offlineTokenInput(isOwner, lic) {
+  const tokenInput = el("textarea", {
+    class: "ta",
+    placeholder: "forge1.… — paste the token from your FORGE LLC portal",
+    rows: "4",
+    style: { width: "100%", "font-family": "monospace" },
+  });
+  return el("div", { class: "stack" }, [
+    tokenInput,
+    el("div", { class: "row wrap" }, [
+      el("button", {
+        class: "btn primary",
+        disabled: !isOwner,
+        title: isOwner ? "" : "Only the Organization Owner can install a license",
+        onClick: async () => {
+          if (!isOwner) return;
+          const tok = tokenInput.value.trim();
+          if (!tok) { toast("Paste a license token first.", "warn"); return; }
+          try {
+            const result = await installLic(tok);
+            toast(`Activated: ${result.customer} (${result.tier_label || result.tier})`, "success");
+            await refreshLicense();
+            navigate("/admin/license");
+          } catch (err) {
+            const msg = err?.body?.message || err.message || "Couldn't install the license.";
+            toast(msg, "danger");
+          }
+        },
+      }, ["Install activation token"]),
+      el("button", {
+        class: "btn danger",
+        disabled: !isOwner || !lic || lic.source === "fallback" || lic.source === "local_ls" || lic.source === "local_ls_unreachable",
+        onClick: async () => {
+          if (!isOwner) return;
+          const ok = await dangerAction({
+            title: "Remove the active license?",
+            message: "Your installation will downgrade to the Community plan immediately. Paid features will be unavailable until a new license is installed.",
+            confirmLabel: "Remove license",
+          });
+          if (!ok) return;
+          try {
+            await uninstallLic();
+            await refreshLicense();
+            toast("License removed — running on the Community plan.", "warn");
+            navigate("/admin/license");
+          } catch (err) {
+            toast("Couldn't remove the license: " + (err.message || err), "danger");
+          }
+        },
+      }, ["Remove license"]),
+    ]),
+  ]);
+}
+
+function statusKindForTier(t) {
+  switch (t) {
+    case "enterprise": return "success";
+    case "team":       return "info";
+    case "personal":   return "info";
+    case "community":  return "warn";
+    default:           return "";
+  }
+}
+
+function kv(k, v) {
+  return el("div", { class: "kv-row" }, [
+    el("dt", {}, [k]),
+    el("dd", {}, [v ?? "—"]),
+  ]);
+}
+
+function fmtDate(s) {
+  if (!s) return "—";
+  try { return new Date(s).toISOString().slice(0, 10); } catch { return String(s); }
+}
+
+function fmtDateTime(s) {
+  if (!s) return "—";
+  try {
+    const d = new Date(s);
+    return d.toISOString().slice(0, 10) + " " + d.toISOString().slice(11, 16) + " UTC";
+  } catch { return String(s); }
 }
 
 // ---------- server admin panels (only in server mode) ----------

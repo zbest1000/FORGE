@@ -12,6 +12,7 @@ import { buildIndex, scheduleRebuild } from "./src/core/search.js";
 import { installHotkeys } from "./src/core/hotkeys.js";
 import { probe, mode, getToken, login, logout, api } from "./src/core/api.js";
 import { canAccessRoute, requiredGroupsForRoute, effectiveGroupIds, currentUserId, currentUser } from "./src/core/groups.js";
+import { loadLicense, onLicenseChange } from "./src/core/license.js";
 import { el, mount, toast } from "./src/core/ui.js";
 
 import { renderRail } from "./src/shell/rail.js";
@@ -20,6 +21,8 @@ import { renderHeader } from "./src/shell/header.js";
 import { renderContextPanel } from "./src/shell/contextPanel.js";
 import { renderDock } from "./src/shell/dock.js";
 
+// Light, frequently-visited screens stay statically imported so the
+// initial bundle has them ready without an extra round-trip.
 import { renderHome } from "./src/screens/home.js";
 import { renderHub } from "./src/screens/hub.js";
 import { renderInbox } from "./src/screens/inbox.js";
@@ -28,21 +31,45 @@ import { renderTeamSpacesIndex, renderTeamSpace } from "./src/screens/teamSpaces
 import { renderChannel } from "./src/screens/channel.js";
 import { renderProjectsIndex, renderWorkBoard } from "./src/screens/workBoard.js";
 import { renderDocsIndex, renderDocViewer } from "./src/screens/docViewer.js";
-import { renderRevisionCompare } from "./src/screens/revisionCompare.js";
-import { renderDrawingsIndex, renderDrawingViewer } from "./src/screens/drawingViewer.js";
-import { renderAssetsIndex, renderAssetDetail } from "./src/screens/assetDetail.js";
-import { renderIncidentsIndex, renderIncident } from "./src/screens/incident.js";
 import { renderApprovals } from "./src/screens/approvals.js";
-import { renderAI } from "./src/screens/ai.js";
 import { renderIntegrations } from "./src/screens/integrations.js";
-import { renderMQTT } from "./src/screens/mqtt.js";
-import { renderOPCUA } from "./src/screens/opcua.js";
-import { renderERP } from "./src/screens/erp.js";
 import { renderAdmin } from "./src/screens/admin.js";
-import { renderDashboards } from "./src/screens/dashboards.js";
-import { renderSpec } from "./src/screens/spec.js";
-import { renderUNSIndex } from "./src/screens/uns.js";
-import { renderI3X } from "./src/screens/i3x.js";
+
+// Heavy / specialist screens are lazy-loaded the first time the user
+// navigates to them. This keeps the initial bundle small — the WebGL,
+// WebAssembly and PDF runtimes only land when needed.
+function lazy(loader, exportName, label) {
+  return (params) => {
+    const root = document.getElementById("screenContainer");
+    if (root) {
+      mount(root, [
+        el("div", { class: "stack", style: { padding: "24px", "max-width": "640px", margin: "32px auto" } }, [
+          el("div", { class: "tiny muted" }, [`Loading ${label}…`]),
+        ]),
+      ]);
+    }
+    loader().then((mod) => {
+      const fn = mod[exportName];
+      if (typeof fn !== "function") {
+        console.error(`[lazy] missing export ${exportName} in ${label}`);
+        return;
+      }
+      fn(params);
+    }).catch((err) => {
+      console.error(`[lazy] failed to load ${label}`, err);
+      if (root) {
+        mount(root, [
+          el("div", { class: "stack", style: { padding: "24px" } }, [
+            el("div", { class: "callout danger" }, [
+              `Failed to load the ${label} screen. Check your network connection and try again.`,
+            ]),
+            el("div", { class: "tiny muted" }, [String(err?.message || err)]),
+          ]),
+        ]);
+      }
+    });
+  };
+}
 
 function setupRoutes() {
   defineRoute("/hub", renderHub);
@@ -60,32 +87,48 @@ function setupRoutes() {
 
   defineRoute("/docs", renderDocsIndex);
   defineRoute("/doc/:id", renderDocViewer);
-  defineRoute("/compare/:left/:right", renderRevisionCompare);
+  defineRoute("/compare/:left/:right",
+    lazy(() => import("./src/screens/revisionCompare.js"), "renderRevisionCompare", "Revision Compare"));
 
-  defineRoute("/drawings", renderDrawingsIndex);
-  defineRoute("/drawing/:id", renderDrawingViewer);
+  // Drawings → pulls in pdfjs, web-ifc, three, online-3d-viewer, dxf-viewer
+  defineRoute("/drawings",
+    lazy(() => import("./src/screens/drawingViewer.js"), "renderDrawingsIndex", "Drawings"));
+  defineRoute("/drawing/:id",
+    lazy(() => import("./src/screens/drawingViewer.js"), "renderDrawingViewer", "Drawing viewer"));
 
-  defineRoute("/assets", renderAssetsIndex);
-  defineRoute("/asset/:id", renderAssetDetail);
+  defineRoute("/assets",
+    lazy(() => import("./src/screens/assetDetail.js"), "renderAssetsIndex", "Assets"));
+  defineRoute("/asset/:id",
+    lazy(() => import("./src/screens/assetDetail.js"), "renderAssetDetail", "Asset"));
 
-  defineRoute("/incidents", renderIncidentsIndex);
-  defineRoute("/incident/:id", renderIncident);
+  defineRoute("/incidents",
+    lazy(() => import("./src/screens/incident.js"), "renderIncidentsIndex", "Incidents"));
+  defineRoute("/incident/:id",
+    lazy(() => import("./src/screens/incident.js"), "renderIncident", "Incident"));
 
   defineRoute("/approvals", renderApprovals);
-  defineRoute("/ai", renderAI);
+  defineRoute("/ai",
+    lazy(() => import("./src/screens/ai.js"), "renderAI", "AI Workspace"));
 
   defineRoute("/integrations", renderIntegrations);
-  defineRoute("/integrations/mqtt", renderMQTT);
-  defineRoute("/integrations/opcua", renderOPCUA);
-  defineRoute("/integrations/erp", renderERP);
+  defineRoute("/integrations/mqtt",
+    lazy(() => import("./src/screens/mqtt.js"), "renderMQTT", "MQTT"));
+  defineRoute("/integrations/opcua",
+    lazy(() => import("./src/screens/opcua.js"), "renderOPCUA", "OPC UA"));
+  defineRoute("/integrations/erp",
+    lazy(() => import("./src/screens/erp.js"), "renderERP", "ERP"));
 
-  defineRoute("/dashboards", renderDashboards);
+  defineRoute("/dashboards",
+    lazy(() => import("./src/screens/dashboards.js"), "renderDashboards", "Dashboards"));
   defineRoute("/admin", renderAdmin);
   defineRoute("/admin/:section", renderAdmin);
-  defineRoute("/spec", renderSpec);
+  defineRoute("/spec",
+    lazy(() => import("./src/screens/spec.js"), "renderSpec", "Spec Reference"));
 
-  defineRoute("/uns", renderUNSIndex);
-  defineRoute("/i3x", renderI3X);
+  defineRoute("/uns",
+    lazy(() => import("./src/screens/uns.js"), "renderUNSIndex", "Unified Namespace"));
+  defineRoute("/i3x",
+    lazy(() => import("./src/screens/i3x.js"), "renderI3X", "i3X Explorer"));
 }
 
 function applyTheme() {
@@ -175,6 +218,13 @@ async function boot() {
   registerAuditImpl(auditMod);
   initAuditLedger();
   initI3X(state.data);
+
+  // Kick off license fetch (server mode only). We don't await it here so
+  // first paint is unblocked; screens that depend on entitlements wait
+  // on `loadLicense()` themselves. License changes re-render the shell.
+  await healthP;
+  loadLicense();
+  onLicenseChange(() => { renderShell(); rerenderCurrent(); });
   // Kick off index build; MiniSearch loads async, hand-rolled fallback is
   // used in the meantime for the first `query()` call.
   buildIndex();

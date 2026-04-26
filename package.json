@@ -12,6 +12,7 @@
     "dev:client": "vite --host 0.0.0.0",
     "build": "vite build",
     "release:check": "npm run build && npm test && npm run smoke:built",
+    "release:archive": "node scripts/release/pack-archive.js",
     "smoke:built": "node scripts/smoke-built.js",
     "preview": "vite preview --host 0.0.0.0",
     "start": "node server/main.js",
@@ -21,7 +22,10 @@
     "restore": "node server/backup.js restore",
     "test": "node --test --test-concurrency=1 test/*.test.js",
     "sbom": "cyclonedx-npm --output-file bom.json",
-    "audit:prod": "npm audit --omit=dev --audit-level=high"
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "license:keygen": "node scripts/license/keygen.js",
+    "license:issue":  "node scripts/license/issue.js",
+    "license:inspect":"node scripts/license/inspect.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",

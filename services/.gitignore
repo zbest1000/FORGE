@@ -1,0 +1,5 @@
+data/
+*-priv.pem
+test-priv.pem
+.env
+node_modules/

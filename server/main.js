@@ -35,7 +35,9 @@ import automationRoutes from "./routes/automations.js";
 import cadRoutes from "./routes/cad.js";
 import complianceRoutes from "./routes/compliance.js";
 import enterpriseSystemRoutes from "./routes/enterprise-systems.js";
+import licenseRoutes from "./routes/license.js";
 import { config } from "./config.js";
+import { getLicense, requireFeature, FEATURES, pollLocalLicenseServer, loadPersistedActivation, localLicenseStatus } from "./license.js";
 
 import { startMqttBridge } from "./connectors/mqtt.js";
 import { startOpcuaBridge } from "./connectors/opcua.js";
@@ -74,24 +76,46 @@ await app.register(cors, {
   origin: config.corsOrigin,
   credentials: true,
 });
-// Secure HTTP headers. Permissive CSP for the SPA (needs the ESM CDN for the
-// vendor import map) but locked down for XSS defaults.
+// Secure HTTP headers. The CSP differs by run mode:
+//   - Production (HAS_DIST=true, ALLOW_SOURCE_CLIENT=false): strict.
+//     Vite has bundled all third-party deps into /assets/*. No CDN
+//     origins are allowed. 'unsafe-eval' is still required by web-ifc
+//     (WebAssembly streaming) and a few worker bootstraps; 'unsafe-inline'
+//     is kept for inline event handlers in the legacy SPA shell — those
+//     are tracked for migration to nonces in `docs/SECURITY.md`.
+//   - Source / dev mode: also allow esm.sh because index.html's
+//     importmap loads ESM packages from there as a fallback.
+const CSP_BASE = {
+  defaultSrc: ["'self'"],
+  baseUri: ["'self'"],
+  imgSrc:    ["'self'", "data:", "blob:", "https:"],
+  fontSrc:   ["'self'", "https:", "data:"],
+  frameAncestors: ["'none'"],
+  formAction: ["'self'"],
+  objectSrc: ["'none'"],
+};
+const CSP_PROD = {
+  ...CSP_BASE,
+  scriptSrc: ["'self'", "blob:", "'wasm-unsafe-eval'", "'unsafe-inline'", "'unsafe-eval'"],
+  styleSrc:  ["'self'", "'unsafe-inline'"],
+  connectSrc:["'self'", "https://api.i3x.dev", "ws:", "wss:"],
+  workerSrc: ["'self'", "blob:"],
+};
+const CSP_DEV = {
+  ...CSP_BASE,
+  scriptSrc: ["'self'", "https://esm.sh", "https://storage.googleapis.com", "blob:", "'wasm-unsafe-eval'", "'unsafe-inline'", "'unsafe-eval'"],
+  styleSrc:  ["'self'", "https://esm.sh", "'unsafe-inline'"],
+  connectSrc:["'self'", "https://esm.sh", "https://storage.googleapis.com", "https://api.i3x.dev", "ws:", "wss:"],
+  workerSrc: ["'self'", "blob:", "https://esm.sh", "https://storage.googleapis.com"],
+};
 await app.register(helmet, {
   contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      baseUri: ["'self'"],
-      scriptSrc: ["'self'", "https://esm.sh", "https://storage.googleapis.com", "'unsafe-inline'", "'unsafe-eval'"],
-      styleSrc:  ["'self'", "https://esm.sh", "'unsafe-inline'"],
-      imgSrc:    ["'self'", "data:", "blob:", "https:"],
-      connectSrc:["'self'", "https://esm.sh", "https://storage.googleapis.com", "https://api.i3x.dev", "ws:", "wss:"],
-      fontSrc:   ["'self'", "https:", "data:"],
-      workerSrc: ["'self'", "blob:", "https://esm.sh", "https://storage.googleapis.com"],
-      frameAncestors: ["'none'"],
-    },
+    directives: (HAS_DIST && !ALLOW_SOURCE_CLIENT) ? CSP_PROD : CSP_DEV,
   },
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: "cross-origin" },
+  strictTransportSecurity: { maxAge: 31_536_000, includeSubDomains: true, preload: false },
+  referrerPolicy: { policy: "strict-origin-when-cross-origin" },
 });
 await app.register(rateLimit, {
   global: true,
@@ -150,29 +174,49 @@ app.get("/api/health", async () => ({
 
 // GraphQL — mercurius mounted at /graphql with the same auth context as REST.
 // Use `graphiql: true` only in non-production for the UX and tooling.
-await app.register(mercurius, {
-  schema: typeDefs,
-  resolvers,
-  graphiql: process.env.NODE_ENV !== "production",
-  ide: process.env.NODE_ENV !== "production",
-  context: (request) => ({ user: request.user, tokenScopes: request.tokenScopes || [] }),
-  errorFormatter: (err, ctx) => {
-    return { statusCode: err?.errors?.[0]?.extensions?.http?.status || 200, response: { errors: err?.errors || [], data: err?.data ?? null } };
-  },
+// The /graphql endpoint itself is gated by the GRAPHQL_API feature flag —
+// installations on community/personal tiers see a 402 instead.
+await app.register(async (scope) => {
+  scope.addHook("onRequest", requireFeature(FEATURES.GRAPHQL_API));
+  await scope.register(mercurius, {
+    schema: typeDefs,
+    resolvers,
+    graphiql: process.env.NODE_ENV !== "production",
+    ide: process.env.NODE_ENV !== "production",
+    context: (request) => ({ user: request.user, tokenScopes: request.tokenScopes || [] }),
+    errorFormatter: (err, ctx) => {
+      return { statusCode: err?.errors?.[0]?.extensions?.http?.status || 200, response: { errors: err?.errors || [], data: err?.data ?? null } };
+    },
+  });
 });
+
+// License plugin is always-on; everything else is gated by feature flags
+// so a downgraded / community license still serves /api/license itself.
+await app.register(licenseRoutes);
+
+// Per-feature plugin registration. We wrap each Fastify plugin in a
+// thin scope that adds a license-feature preHandler at the plugin root.
+// The plugin still runs (so the routes register) but every request is
+// short-circuited with a 402 if the active license lacks the feature.
+async function registerWithFeature(plugin, feature) {
+  await app.register(async (scope) => {
+    if (feature) scope.addHook("onRequest", requireFeature(feature));
+    await scope.register(plugin);
+  });
+}
 
 await app.register(authRoutes);
 await app.register(coreRoutes);
-await app.register(i3xRoutes);
+await registerWithFeature(i3xRoutes, FEATURES.I3X_API);
 await app.register(fileRoutes);
 await app.register(tokenRoutes);
-await app.register(webhookRoutes);
+await registerWithFeature(webhookRoutes, FEATURES.WEBHOOKS);
 await app.register(extrasRoutes);
-await app.register(aiRoutes);
-await app.register(automationRoutes);
-await app.register(cadRoutes);
-await app.register(complianceRoutes);
-await app.register(enterpriseSystemRoutes);
+await registerWithFeature(aiRoutes, FEATURES.AI_PROVIDERS);
+await registerWithFeature(automationRoutes, FEATURES.N8N_AUTOMATIONS);
+await registerWithFeature(cadRoutes, FEATURES.CAD_VIEWER);
+await registerWithFeature(complianceRoutes, FEATURES.COMPLIANCE_CONSOLE);
+await registerWithFeature(enterpriseSystemRoutes, FEATURES.ENTERPRISE_SYSTEMS);
 attachSSE(app);
 registerMetrics(app);
 
@@ -185,12 +229,31 @@ app.get("/api/metrics/series", async (req) => {
 app.get("/api/metrics/snapshot", async () => listDailySnapshot());
 
 // Serve the built client. Source serving is an explicit development fallback.
+//
+// Cache strategy:
+//   - /assets/*  hashed bundles → 1y immutable. Vite emits content-hashed
+//     filenames, so any code change produces a new URL and the old URL
+//     can be cached forever.
+//   - everything else (index.html, manifest, icon) → no-store so admins
+//     and reverse proxies always see the latest entry point.
 await app.register(fStatic, {
   root: CLIENT_ROOT,
   prefix: "/",
-  // Keep /api and /v1 reserved.
   constraints: {},
   decorateReply: false,
+  // Disable @fastify/static's default Cache-Control (it would otherwise
+  // overwrite our setHeaders values with `public, max-age=0`).
+  cacheControl: false,
+  setHeaders: (res, filePath) => {
+    const isAsset = /[\\/]assets[\\/]/.test(filePath);
+    if (isAsset) {
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    } else if (/index\.html?$/i.test(filePath)) {
+      res.setHeader("Cache-Control", "no-store, must-revalidate");
+    } else {
+      res.setHeader("Cache-Control", "public, max-age=300");
+    }
+  },
 });
 
 // SPA fallback: any non-API, non-file path that missed the static handler
@@ -220,8 +283,61 @@ startOutboxWorker(app.log);
 audit({ actor: "system", action: "server.start", subject: "forge", detail: { host: HOST, port: PORT, pid: process.pid } });
 
 try {
+  // 1) Restore the persisted activation token from disk (no network).
+  //    This means an already-activated FORGE app comes up at full
+  //    entitlement with zero outbound traffic.
+  loadPersistedActivation();
+
+  // 2) If we don't yet have a persisted activation but a local LS is
+  //    configured, pull once before listening so the very first
+  //    /api/license response reflects the real entitlement.
+  if (!getLicense().activation_id && process.env.FORGE_LOCAL_LS_URL) {
+    try { await pollLocalLicenseServer(); }
+    catch (err) { app.log.warn({ err: String(err.message || err) }, "initial local-LS pull failed; the FORGE app will keep trying via heartbeat"); }
+  }
+
+  // 3) Daily best-effort heartbeat. Detects supersession (the same
+  //    customer activated this license on another machine) or
+  //    operator-initiated release/revoke, so this app downgrades
+  //    itself promptly. Heartbeat failures are non-fatal — we
+  //    continue serving from the cached activation.
+  if (process.env.FORGE_LOCAL_LS_URL) {
+    const heartbeatMs = Number(process.env.FORGE_LOCAL_LS_HEARTBEAT_S || 86_400) * 1000;
+    if (heartbeatMs > 0) {
+      setInterval(() => {
+        pollLocalLicenseServer().catch((err) => app.log.warn({ err: String(err.message || err) }, "license heartbeat failed"));
+      }, heartbeatMs);
+    }
+  }
+
   await app.listen({ host: HOST, port: PORT });
   app.log.info(`FORGE server listening on http://${HOST}:${PORT}`);
+  const lic = getLicense();
+  app.log.info({
+    license_source: lic.source,
+    customer: lic.customer,
+    tier: lic.tier,
+    edition: lic.edition,
+    term: lic.term,
+    seats: lic.seats,
+    license_expires_at: lic.expires_at,
+    status: lic.status,
+    activation_status: lic.activation_status || null,
+    activation_id: lic.activation_id || null,
+    activation_token_id: lic.activation_token_id || null,
+    feature_count: lic.features.length,
+    local_ls: localLicenseStatus(),
+  }, lic.source === "fallback"
+    ? "no license installed; running on Community plan"
+    : lic.source === "local_ls_unreachable"
+      ? "local license server unreachable and no cached activation; running on Community plan until activation"
+      : lic.status === "superseded"
+        ? `activation ${lic.activation_id} has been superseded by another machine; running on Community plan`
+        : lic.status === "released"
+          ? `activation ${lic.activation_id} has been released to the pool; running on Community plan`
+          : lic.status === "revoked"
+            ? `activation ${lic.activation_id} has been revoked by the operator; running on Community plan`
+            : `licensed to ${lic.customer} (${lic.tier}) — activation ${lic.activation_id || "?"}`);
 } catch (err) {
   app.log.error(err);
   process.exit(1);

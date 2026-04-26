@@ -9,3 +9,16 @@ data
 /tmp
 *.log
 terminals
+bom.json
+trivy-*.sarif
+results.sarif
+build/
+forge-*.tar.gz
+forge-*.zip
+forge-*.sha256
+forge-*.sha512
+forge-*.cdx.json
+license.txt
+license-priv.pem
+license-pub.pem
+*-priv.pem

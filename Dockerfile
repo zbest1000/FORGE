@@ -22,12 +22,15 @@ RUN apt-get update -qq \
  && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
-RUN npm install --omit=optional --no-audit --no-fund
+# Keep optionalDependencies so platform-specific native bindings used by the
+# Vite/Rolldown build (e.g. @rolldown/binding-linux-x64-gnu) are installed.
+# `node-opcua` is the only declared optional runtime dep and is best-effort.
+RUN npm ci --no-audit --no-fund
 COPY index.html styles.css app.js manifest.webmanifest icon.svg ./
 COPY src ./src
 COPY vite.config.js ./
 RUN npm run build
-RUN npm prune --omit=dev --omit=optional --no-audit --no-fund
+RUN npm prune --omit=dev --no-audit --no-fund
 
 FROM node:20-bookworm-slim
 ENV NODE_ENV=production

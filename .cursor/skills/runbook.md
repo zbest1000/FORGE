@@ -301,6 +301,42 @@ in and check `LOG_LEVEL=debug` output.
 - **CORS in dev**: `FORGE_CORS_ORIGIN` defaults to permissive; don't set it
   unless you're reproducing a CORS bug.
 
+### Licensing (`server/license.js`)
+
+- A FORGE license is `forge1.<base64url(payload)>.<base64url(ed25519-sig)>`.
+- Tier defaults are in `TIER_DEFAULTS`; per-license `features.{add,remove}`
+  overrides apply on top.
+- For tests / local dev, sign with the bundled dev key:
+  ```bash
+  node scripts/license/issue.js \
+    --customer "Local Test" --tier enterprise --term annual --seats 5 \
+    --dev-key > license.txt
+  FORGE_LICENSE="$(cat license.txt)" npm start
+  ```
+- Verify with `node scripts/license/inspect.js --file license.txt`.
+- Active license can also live in `meta.license_token` (DB) or
+  `$FORGE_DATA_DIR/license.txt`. Resolution order: DB → env → file →
+  community fallback.
+- Per-route gating in `server/main.js` uses `registerWithFeature(plugin,
+  FEATURES.X)`; a missing feature returns 402 `feature_not_licensed`.
+- For air-gapped tests of expired-license behaviour, sign with
+  `expires_at` in the past — `server/license.js` will materialise as
+  `community` and `requireFeature(...)` will start returning 402 for
+  paid surfaces.
+
+### Release flow
+
+- Tag-driven: `git tag v0.4.0 && git push --tags` runs
+  `.github/workflows/release.yml`. To dry-run locally:
+  ```bash
+  npm run build
+  npm run release:archive -- --target linux-x64
+  # → build/forge-VERSION-linux-x64.tar.gz + sha256/sha512 manifests
+  ```
+- Cross-OS CI runs Node 22 on ubuntu/windows/macos and Node 20 on
+  ubuntu only. If a Windows-only failure appears, repro by enabling
+  `os: [windows-latest]` for the Node 20 row temporarily.
+
 ---
 
 ## Updating this skill
