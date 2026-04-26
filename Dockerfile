@@ -22,7 +22,12 @@ RUN apt-get update -qq \
  && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
-RUN npm install --omit=dev --omit=optional --no-audit --no-fund
+RUN npm install --omit=optional --no-audit --no-fund
+COPY index.html styles.css app.js manifest.webmanifest icon.svg ./
+COPY src ./src
+COPY vite.config.js ./
+RUN npm run build
+RUN npm prune --omit=dev --omit=optional --no-audit --no-fund
 
 FROM node:20-bookworm-slim
 ENV NODE_ENV=production
@@ -42,9 +47,8 @@ RUN apt-get update -qq \
  && mkdir -p /app/data && chown -R node:node /app
 
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json ./
-COPY --chown=node:node index.html styles.css app.js ./
-COPY --chown=node:node src ./src
 COPY --chown=node:node server ./server
 COPY --chown=node:node docs ./docs
 COPY --chown=node:node PRODUCT_SPEC.md README.md LICENSE ./

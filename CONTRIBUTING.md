@@ -30,6 +30,8 @@ Welcome — and thank you. Two things to read before you write any code:
 npm install
 npm run seed     # one-time
 npm run dev      # node --watch server/main.js
+npm run build    # production SPA bundle
+npm run verify   # build + tests + built-server smoke
 npm test         # node --test
 ```
 
@@ -42,7 +44,7 @@ npm test         # node --test
 
 ## Code style
 
-- ES modules, no transpiler.
+- ES modules with Vite for production bundling.
 - No new npm dep without a row in the OSS register.
 - Wrap third-party imports behind a single seam module so the rest of
   the codebase stays portable.

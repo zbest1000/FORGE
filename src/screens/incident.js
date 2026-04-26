@@ -17,6 +17,7 @@ import { can } from "../core/permissions.js";
 import { signHMAC, canonicalJSON } from "../core/crypto.js";
 import { recentEvents } from "../core/events.js";
 import { canTransitionIncident, INCIDENT_STATUSES } from "../core/fsm/incident.js";
+import { simulation } from "../core/simulation.js";
 
 export function renderIncidentsIndex() {
   const root = document.getElementById("screenContainer");
@@ -87,6 +88,7 @@ export function renderIncident({ id }) {
 
   mount(root, [
     severityBar(inc),
+    incidentCommandHeader(inc, asset),
     alarmsStrip(inc, asset),
     el("div", { class: "incident-layout" }, [
       el("div", { class: "stack" }, [
@@ -131,6 +133,39 @@ export function renderIncident({ id }) {
     audit("incident.entry", id);
     toast("Entry logged", "success");
   }
+}
+
+function incidentCommandHeader(inc, asset) {
+  const roster = inc.roster || {};
+  const checklist = COMMAND_CHECKLIST[inc.severity] || COMMAND_CHECKLIST["SEV-3"];
+  const done = Object.values(inc.checklistState || {}).filter(Boolean).length;
+  const latest = (inc.timeline || []).slice(-1)[0];
+  const objective = inc.status === "active" ? "Stabilize affected operation"
+    : inc.status === "escalated" ? "Contain scope and assign decision owner"
+    : inc.status === "stabilized" ? "Verify steady state before resolution"
+    : inc.status === "resolved" ? "Prepare postmortem and evidence export"
+    : "Maintain command record";
+  return card("Incident command", el("div", { class: "stack" }, [
+    el("div", { class: "card-grid" }, [
+      commandMetric("Commander", roster.Commander || inc.commanderId || "Unassigned", !roster.Commander && !inc.commanderId ? "warn" : "success"),
+      commandMetric("Current objective", objective, inc.status === "active" ? "danger" : "info"),
+      commandMetric("Active actions", `${done}/${checklist.length} complete`, done === checklist.length ? "success" : "warn"),
+      commandMetric("Linked asset", asset ? asset.name : "None", asset?.status === "alarm" ? "danger" : "info"),
+    ]),
+    latest ? el("div", { class: "activity-row" }, [
+      badge("latest", "info"),
+      el("span", {}, [latest.text]),
+      el("span", { class: "tiny muted" }, [new Date(latest.ts).toLocaleTimeString()]),
+    ]) : null,
+  ]));
+}
+
+function commandMetric(label, value, variant) {
+  return el("div", { class: "kpi" }, [
+    el("div", { class: "kpi-label" }, [label]),
+    el("div", { class: "small strong" }, [value]),
+    badge(variant === "danger" ? "attention" : variant === "warn" ? "pending" : "ok", variant),
+  ]);
 }
 
 function severityBar(inc) {
@@ -258,7 +293,7 @@ function createActionItem(inc) {
   const title = window.prompt("Action item title:");
   if (!title) return;
   const project = (state.data.projects || [])[0];
-  const id = "WI-" + Math.floor(Math.random()*900+100);
+  const id = simulation.demoId("WI", state.data.workItems || []);
   update(s => {
     s.data.workItems.push({
       id, projectId: project.id, type: "Action", title,
@@ -272,15 +307,14 @@ function createActionItem(inc) {
 }
 
 function aiCard(inc, asset) {
+  const rec = simulation.incidentRecommendation(inc, asset, state.data);
   return card("AI — Live summary & next steps", el("div", { class: "stack" }, [
     el("div", { class: "small" }, [
       `${inc.id} is ${inc.status}. ${(inc.timeline || []).length} timeline entries. `,
       asset ? `Asset ${asset.id} is in ${asset.status}.` : "No asset bound.",
     ]),
-    el("div", { class: "small" }, [
-      "Recommended next steps: follow the command checklist, capture telemetry around the asset's MQTT/OPC UA signals, and verify steady-state for 15 min before resolving.",
-    ]),
-    el("div", { class: "tiny muted" }, ["Citations: ", inc.id, asset ? ", " + asset.id : ""]),
+    el("div", { class: "small" }, [rec.nextSteps]),
+    el("div", { class: "tiny muted" }, ["Citations: ", rec.citations.join(", ")]),
   ]));
 }
 

@@ -39,11 +39,8 @@
     }
     </script>
 
-    <!-- rapidoc is a custom element; load as a classic module script so the tag works. -->
-    <script type="module" src="https://esm.sh/rapidoc@9.3.8?bundle"></script>
-
-    <!-- uPlot optional stylesheet. Fail-graceful: missing = no uPlot visual polish. -->
-    <link rel="stylesheet" href="https://esm.sh/uplot@1.6.31/dist/uPlot.min.css" onerror="this.remove()" />
+    <!-- Vendor packages and styles are bundled by Vite for production.
+      The import map remains as a source-serving fallback only. -->
   </head>
   <body class="theme-dark">
     <a href="#screenContainer" class="skip-link">Skip to main content</a>

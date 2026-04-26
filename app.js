@@ -81,6 +81,7 @@ function setupRoutes() {
 
   defineRoute("/dashboards", renderDashboards);
   defineRoute("/admin", renderAdmin);
+  defineRoute("/admin/:section", renderAdmin);
   defineRoute("/spec", renderSpec);
 
   defineRoute("/uns", renderUNSIndex);
@@ -94,6 +95,7 @@ function applyTheme() {
   if (!state.ui.showContextPanel) cls.push("hide-right-panel");
   if (!state.ui.showRail) cls.push("hide-rail");
   if (!state.ui.showHeader) cls.push("hide-header");
+  if (state.ui.fieldMode) cls.push("field-mode");
   if (state.ui.portalId) cls.push("portal-mode", "portal-" + state.ui.portalId);
   document.body.className = cls.join(" ");
 }

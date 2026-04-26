@@ -7,18 +7,15 @@ import { portalById, canAccessRoute, isOrgOwner } from "../core/groups.js";
 const DEFAULT_ITEMS = [
   { icon: "🏛", label: "Hub",      route: "/hub" },
   { icon: "🏠", label: "Home",     route: "/home" },
-  { icon: "📥", label: "Inbox",    route: "/inbox" },
-  { icon: "🔎", label: "Search",   route: "/search" },
-  { icon: "🗂",  label: "Spaces",   route: "/team-spaces" },
-  { icon: "🎯", label: "Projects", route: "/projects" },
+  { icon: "✓",  label: "Work",     route: "/projects" },
   { icon: "📑", label: "Docs",     route: "/docs" },
   { icon: "📐", label: "Drawings", route: "/drawings" },
   { icon: "⚙️", label: "Assets",   route: "/assets" },
-  { icon: "🌐", label: "UNS",      route: "/uns" },
-  { icon: "🧩", label: "i3X",      route: "/i3x" },
-  { icon: "📊", label: "Dash",     route: "/dashboards" },
-  { icon: "🔌", label: "Integ",    route: "/integrations" },
+  { icon: "🚨", label: "Incidents",route: "/incidents" },
+  { icon: "🗂",  label: "Teams",    route: "/team-spaces" },
+  { icon: "📥", label: "Inbox",    route: "/inbox" },
   { icon: "🤖", label: "AI",       route: "/ai" },
+  { icon: "🔌", label: "Integ",    route: "/integrations" },
   { icon: "🛡",  label: "Admin",    route: "/admin" },
 ];
 
@@ -66,7 +63,6 @@ export function renderRail() {
       title: "Toggle theme",
       onClick: () => {
         update(s => { s.ui.theme = s.ui.theme === "dark" ? "light" : "dark"; });
-        document.body.className = state.ui.theme === "dark" ? "theme-dark" : "theme-light";
       },
     }, [el("span", { class: "rail-icon" }, ["◐"]), el("span", {}, ["Theme"])]),
     el("button", {
@@ -82,6 +78,12 @@ function matches(path, route) {
   const p = (path || "").split("?")[0];
   if (route === "/home") return p === "/home";
   if (route === "/hub")  return p === "/hub";
+  if (route === "/docs") return p === "/docs" || p.startsWith("/doc/") || p.startsWith("/compare/");
+  if (route === "/drawings") return p === "/drawings" || p.startsWith("/drawing/");
+  if (route === "/projects") return p === "/projects" || p.startsWith("/work-board/") || p === "/approvals";
+  if (route === "/assets") return p === "/assets" || p.startsWith("/asset/") || p === "/uns" || p === "/i3x";
+  if (route === "/incidents") return p === "/incidents" || p.startsWith("/incident/");
+  if (route === "/team-spaces") return p === "/team-spaces" || p.startsWith("/team-space/") || p.startsWith("/channel/");
   const base = route.split("/")[1];
   return p.startsWith("/" + base);
 }

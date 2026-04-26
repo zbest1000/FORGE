@@ -16,13 +16,50 @@ import { exportAuditPack, verifyLedger, verifyAuditPack } from "../core/audit.js
 import { canonicalJSON } from "../core/crypto.js";
 import { mode as apiMode, api } from "../core/api.js";
 import { listGroups, currentUserId, effectiveGroupIds, isOrgOwner } from "../core/groups.js";
+import { navigate } from "../core/router.js";
 
-export function renderAdmin() {
+const ADMIN_SECTIONS = new Set(["identity", "access", "integrations", "audit", "retention", "health"]);
+
+export function renderAdmin(params = {}) {
   const root = document.getElementById("screenContainer");
   const d = state.data;
+  const sectionKey = "admin.section";
+  const routeSection = ADMIN_SECTIONS.has(params.section) ? params.section : null;
+  const active = routeSection || sessionStorage.getItem(sectionKey) || "identity";
+  sessionStorage.setItem(sectionKey, active);
+  const setSection = (id) => {
+    sessionStorage.setItem(sectionKey, id);
+    navigate(id === "identity" ? "/admin" : `/admin/${id}`);
+  };
+  const sections = [
+    { id: "identity", label: "Identity" },
+    { id: "access", label: "Access" },
+    { id: "integrations", label: "Integrations" },
+    { id: "audit", label: "Audit" },
+    { id: "retention", label: "Retention" },
+    { id: "health", label: "System health" },
+  ];
 
   mount(root, [
-    el("div", { class: "two-col" }, [
+    adminTabs(sections, active, setSection),
+    adminSection(active, d),
+  ]);
+}
+
+function adminTabs(sections, active, onPick) {
+  return el("div", { class: "context-tabs", role: "tablist", "aria-label": "Admin settings" }, sections.map(s =>
+    el("button", {
+      class: `context-tab ${active === s.id ? "active" : ""}`,
+      role: "tab",
+      "aria-selected": String(active === s.id),
+      onClick: () => onPick(s.id),
+    }, [s.label])
+  ));
+}
+
+function adminSection(active, d) {
+  if (active === "identity") {
+    return el("div", { class: "two-col" }, [
       card("Identity (SSO / SCIM / MFA)", el("div", { class: "stack" }, [
         el("div", { class: "row wrap" }, [
           badge("SAML SSO: connected", "success"),
@@ -32,18 +69,31 @@ export function renderAdmin() {
         ]),
         el("div", { class: "tiny muted" }, ["IdP: Keycloak-compatible · Realm: atlas-prod · SCIM endpoint: /scim/v2"]),
       ])),
-      card("Retention & compliance", el("div", { class: "stack" }, retentionEditor(d))),
-    ]),
-    card("Groups & memberships", groupsPanel(d), { subtitle: "Hierarchical groups gate portals, routes, and asset assignments." }),
-    card("RBAC matrix (roles × capabilities)", rbacMatrix()),
-    apiMode() === "server" ? card("Server admin — API tokens", apiTokensPanel()) : null,
-    apiMode() === "server" ? card("Server admin — Webhooks", webhooksPanel()) : null,
-    apiMode() === "server" ? card("Server admin — Automations (n8n)", automationsPanel()) : null,
-    apiMode() === "server" ? card("Server admin — Metrics", metricsPanel()) : null,
-    card("Audit ledger", auditPanel()),
-    card("Access review", accessReviewPanel(d)),
-    card("Policy violations", policyPanel(d)),
-  ]);
+      card("Policy violations", policyPanel(d)),
+    ]);
+  }
+  if (active === "access") {
+    return el("div", { class: "stack" }, [
+      card("Groups & memberships", groupsPanel(d), { subtitle: "Hierarchical groups gate portals, routes, and asset assignments." }),
+      card("RBAC matrix (roles x capabilities)", rbacMatrix()),
+      card("Access review", accessReviewPanel(d)),
+    ]);
+  }
+  if (active === "integrations") {
+    return el("div", { class: "stack" }, [
+      apiMode() === "server" ? card("Server admin - API tokens", apiTokensPanel()) : card("API tokens", el("div", { class: "muted tiny" }, ["Sign in to server mode to manage tokens."])),
+      apiMode() === "server" ? card("Server admin - Webhooks", webhooksPanel()) : null,
+      apiMode() === "server" ? card("Server admin - Automations (n8n)", automationsPanel()) : null,
+    ]);
+  }
+  if (active === "audit") return card("Audit ledger", auditPanel());
+  if (active === "retention") return card("Retention & compliance", el("div", { class: "stack" }, retentionEditor(d)));
+  if (active === "health") {
+    return el("div", { class: "stack" }, [
+      apiMode() === "server" ? card("Server admin - Metrics", metricsPanel()) : card("System health", el("div", { class: "muted tiny" }, ["Server metrics are available in server mode."])),
+    ]);
+  }
+  return card("Admin", el("div", { class: "muted tiny" }, ["Choose a settings section."]));
 }
 
 // ---------- server admin panels (only in server mode) ----------

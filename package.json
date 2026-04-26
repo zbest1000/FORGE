@@ -8,7 +8,12 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "node --watch server/main.js",
+    "dev": "FORGE_SERVE_SOURCE=1 node --watch server/main.js",
+    "dev:client": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "release:check": "npm run build && npm test && npm run smoke:built",
+    "smoke:built": "node scripts/smoke-built.js",
+    "preview": "vite preview --host 0.0.0.0",
     "start": "node server/main.js",
     "seed": "node server/seed.js",
     "migrate": "node server/db.js --migrate-only",
@@ -25,15 +30,34 @@
     "@fastify/static": "^8.0.3",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.3.0",
+    "date-fns": "^4.1.0",
+    "dexie": "^4.4.2",
+    "dompurify": "^3.4.1",
+    "dxf-viewer": "^1.0.47",
     "fastify": "^5.1.0",
+    "fuse.js": "^7.3.0",
     "graphql": "^16.13.2",
+    "marked": "^18.0.2",
     "mercurius": "^16.9.0",
+    "mermaid": "^11.14.0",
+    "minisearch": "^7.2.0",
     "mqtt": "^5.10.1",
+    "online-3d-viewer": "^0.18.0",
+    "papaparse": "^5.5.3",
+    "pdfjs-dist": "^5.6.205",
     "pino": "^9.5.0",
     "prom-client": "^15.1.3",
+    "rapidoc": "^9.3.8",
+    "svg-pan-zoom": "^3.6.2",
+    "three": "^0.184.0",
+    "uplot": "^1.6.32",
+    "web-ifc": "^0.0.77",
     "xstate": "^5.30.0"
   },
   "optionalDependencies": {
     "node-opcua": "^2.132.0"
+  },
+  "devDependencies": {
+    "vite": "^8.0.10"
   }
 }

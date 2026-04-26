@@ -15,6 +15,15 @@ export function renderIntegrations() {
   const d = state.data;
 
   mount(root, [
+    card("Mapping lifecycle", el("div", { class: "connector-lifecycle" }, [
+      ...["Draft", "Validate", "Review", "Publish", "Rollback"].map((step, i) =>
+        el("div", { class: "lifecycle-step" }, [
+          el("span", { class: "lifecycle-index" }, [String(i + 1)]),
+          el("span", {}, [step]),
+        ])
+      ),
+    ]), { subtitle: "Use this sequence for MQTT, OPC UA, ERP, and webhook mapping changes." }),
+
     el("div", { class: "card-grid" }, (d.integrations || []).map(i => {
       const variant = i.status === "connected" ? "success" : i.status === "failed" ? "danger" : "warn";
       return card(i.name, el("div", { class: "stack" }, [

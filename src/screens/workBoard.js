@@ -5,12 +5,13 @@
 // severity, bulk labels. Dependencies create blocked-by links.
 // Automation: default rules and per-project trigger viewer.
 
-import { el, mount, card, badge, toast, modal, formRow, input, select, textarea } from "../core/ui.js";
+import { el, mount, card, badge, kpi, toast, modal, drawer, formRow, input, select, textarea } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { renderMermaid } from "../core/mermaid.js";
+import { simulation } from "../core/simulation.js";
 
 const COLUMNS = ["Backlog", "Open", "In Progress", "In Review", "Approved", "Done"];
 
@@ -45,21 +46,242 @@ export function renderWorkBoard({ id }) {
   const batch = JSON.parse(sessionStorage.getItem(batchKey) || "[]");
 
   const items = filteredItems(id, filter);
+  const viewPreset = sessionStorage.getItem(`board.saved.${id}`) || "all";
+  const visibleItems = applySavedView(items, viewPreset);
 
   mount(root, [
-    header(project, view, filter, items.length, batch, viewKey, filterKey, batchKey, id),
+    header(project, view, filter, visibleItems.length, batch, viewKey, filterKey, batchKey, id, viewPreset),
+    projectContext(project, items),
     batchBar(batch, batchKey, id),
-    view === "kanban"   ? kanbanView(items, batch, batchKey) :
-    view === "table"    ? tableView(items, batch, batchKey) :
-    view === "timeline" ? timelineView(items) :
-    view === "calendar" ? calendarView(items, id) :
-    view === "deps"     ? dependencyView(items) :
-    kanbanView(items, batch, batchKey),
+    view === "kanban"   ? kanbanView(visibleItems, batch, batchKey) :
+    view === "table"    ? tableView(visibleItems, batch, batchKey) :
+    view === "timeline" ? timelineView(visibleItems) :
+    view === "calendar" ? calendarView(visibleItems, id) :
+    view === "deps"     ? dependencyView(visibleItems) :
+    kanbanView(visibleItems, batch, batchKey),
     automationCard(project, id),
   ]);
 }
 
-function header(project, view, filter, count, batch, viewKey, filterKey, batchKey, id) {
+function projectContext(project, items) {
+  const d = state.data;
+  const site = locationById(project.siteId);
+  const loc = locationById(project.locationId);
+  const orgName = d.organization?.name || "Enterprise";
+  const projectAssets = linkedProjectAssets(project);
+  const projectDocs = scopedProjectDocs(project, projectAssets);
+  const dataSources = (d.dataSources || []).filter(ds => ds.projectId === project.id || projectAssets.some(a => a.id === ds.assetId));
+  const maintenance = (d.maintenanceItems || []).filter(m => m.projectId === project.id || projectAssets.some(a => a.id === m.assetId));
+  const incidents = (d.incidents || []).filter(i => projectAssets.some(a => a.id === i.assetId));
+  const tabKey = `project.context.tab.${project.id}`;
+  const activeTab = sessionStorage.getItem(tabKey) || "overview";
+  const setTab = (tab) => {
+    sessionStorage.setItem(tabKey, tab);
+    renderWorkBoard({ id: project.id });
+  };
+  const tabs = [
+    { id: "overview", label: "Overview" },
+    { id: "assets", label: `Assets ${projectAssets.length}` },
+    { id: "docs", label: `Docs ${projectDocs.length}` },
+    { id: "signals", label: `Signals ${dataSources.length}` },
+    { id: "service", label: `Service ${maintenance.length}` },
+    { id: "activity", label: "Activity" },
+  ];
+  const tabContent = ({
+    overview: projectOverview(project, { orgName, site, loc, projectAssets, projectDocs, dataSources, maintenance, incidents }),
+    assets: card(`Linked assets (${projectAssets.length})`, assetList(projectAssets)),
+    docs: card(`Documents (${projectDocs.length})`, documentList(projectDocs, project, projectAssets)),
+    signals: card("Signal health", signalHealthList(dataSources), { actions: [
+      helpHint("Live operations signals from MQTT, OPC UA, ERP, or other connectors. Hover each status for source and quality."),
+    ]}),
+    service: card(`Service work (${maintenance.length})`, serviceWorkList(maintenance), { actions: [
+      helpHint("Service records can come from systems such as MaintainX, SAP PM, Fiix, UpKeep, or Maximo."),
+    ]}),
+    activity: card("Project activity", projectTimeline(project, { items, projectDocs, projectAssets, maintenance, incidents, dataSources })),
+  })[activeTab] || projectOverview(project, { orgName, site, loc, projectAssets, projectDocs, dataSources, maintenance, incidents });
+
+  return el("div", { class: "stack project-context", style: { marginBottom: "16px" } }, [
+    contextTabs(tabs, activeTab, setTab),
+    tabContent,
+  ]);
+}
+
+function projectOverview(project, ctx) {
+  return card(`${ctx.orgName} context`, el("div", { class: "stack" }, [
+    el("div", { class: "row wrap" }, [
+      chipText("Organization", ctx.orgName),
+      chipText("Site", ctx.site?.name || "—"),
+      chipText("Location", ctx.loc?.path || ctx.loc?.name || "—"),
+      chipText("Referenced assets", String(ctx.projectAssets.length), "Assets remain mastered by site/location. This project references the assets it affects."),
+    ]),
+    el("div", { class: "card-grid" }, [
+      kpi("Assets", ctx.projectAssets.length, "referenced", ""),
+      kpi("Documents", ctx.projectDocs.length, "scoped", ""),
+      kpi("Signals", ctx.dataSources.length, "live context", ctx.dataSources.some(ds => ds.status === "stale") ? "down" : "up"),
+      kpi("Service work", ctx.maintenance.length, "open / planned", ctx.maintenance.some(m => ["open","due"].includes(m.status)) ? "down" : "up"),
+      kpi("Incidents", ctx.incidents.filter(i => i.status === "active").length, "active", ctx.incidents.some(i => i.status === "active") ? "down" : "up"),
+    ]),
+  ]));
+}
+
+function contextTabs(tabs, active, onPick) {
+  return el("div", { class: "context-tabs", role: "tablist" }, tabs.map(tab =>
+    el("button", {
+      class: `context-tab ${active === tab.id ? "active" : ""}`,
+      role: "tab",
+      "aria-selected": String(active === tab.id),
+      onClick: () => onPick(tab.id),
+    }, [tab.label])
+  ));
+}
+
+function locationById(id) {
+  return (state.data?.locations || []).find(l => l.id === id) || null;
+}
+
+function linkedProjectAssets(project) {
+  const ids = new Set(project.assetIds || []);
+  return (state.data.assets || []).filter(a => ids.has(a.id) || (a.projectIds || []).includes(project.id));
+}
+
+function scopedProjectDocs(project, assets) {
+  const assetIds = new Set(assets.map(a => a.id));
+  return (state.data.documents || []).filter(doc =>
+    doc.scope === "enterprise" ||
+    doc.projectId === project.id ||
+    doc.siteId === project.siteId ||
+    (doc.assetIds || []).some(id => assetIds.has(id))
+  );
+}
+
+function chipText(kind, value, help) {
+  return el("span", { class: "chip", title: help || "" }, [
+    el("span", { class: "chip-kind" }, [kind]),
+    value || "—",
+    help ? helpIcon(help) : null,
+  ]);
+}
+
+function helpIcon(text) {
+  return el("span", { class: "help-dot", title: text, "aria-label": text }, ["?"]);
+}
+
+function helpHint(text) {
+  return el("span", { class: "help-dot", title: text, "aria-label": text }, ["?"]);
+}
+
+function assetList(assets) {
+  if (!assets.length) return el("div", { class: "muted tiny" }, ["No assets explicitly linked to this project."]);
+  return el("div", { class: "stack" }, assets.map(a => el("button", {
+    class: "activity-row",
+    onClick: () => navigate(`/asset/${a.id}`),
+  }, [
+    badge(a.status.toUpperCase(), statusVariant(a.status)),
+    el("span", {}, [a.name]),
+    el("span", { class: "tiny muted" }, [a.maintenanceStatus || "—"]),
+  ])));
+}
+
+function documentList(docs, project, assets = []) {
+  if (!docs.length) return el("div", { class: "muted tiny" }, ["No scoped documents."]);
+  const assetIds = new Set(assets.map(a => a.id));
+  return el("div", { class: "stack" }, docs.map(doc => el("button", {
+    class: "activity-row",
+    onClick: () => navigate(`/doc/${doc.id}`),
+  }, [
+    scopeBadge(doc, project, assetIds),
+    el("span", {}, [doc.name]),
+    el("span", { class: "tiny muted" }, [doc.discipline || doc.kind || doc.id]),
+  ])));
+}
+
+function scopeBadge(doc, project, assetIds) {
+  const scope = doc.scope || "project";
+  const reason = scope === "enterprise" ? "Enterprise document: visible across the organization."
+    : doc.projectId === project.id ? `Project document for ${project.name}.`
+    : doc.siteId === project.siteId ? "Site document inherited from this project's site."
+    : (doc.assetIds || []).some(id => assetIds.has(id)) ? "Asset document inherited from a linked asset."
+    : "Document matched this context.";
+  const variant = scope === "enterprise" ? "purple" : scope === "asset" ? "accent" : scope === "site" ? "warn" : "info";
+  return badge(scope, variant, { title: reason });
+}
+
+function signalHealthList(sources) {
+  if (!sources.length) return el("div", { class: "muted tiny" }, ["No live operations signals linked."]);
+  return el("div", { class: "stack" }, sources.map(ds => el("div", { class: "activity-row" }, [
+    signalBadge(ds),
+    el("span", { class: "mono tiny" }, [ds.endpoint]),
+    el("span", { class: "tiny muted" }, [ds.lastValue || ds.kind]),
+  ])));
+}
+
+function signalBadge(ds) {
+  const label = ds.status === "live" ? "Live"
+    : ds.status === "stale" ? "Stale"
+    : ds.status === "not_connected" ? "Not connected"
+    : ds.status || ds.quality || ds.kind;
+  const title = `Source: ${ds.integrationId || "unknown"} · Quality: ${ds.quality || "unknown"} · Last seen: ${ds.lastSeen ? new Date(ds.lastSeen).toLocaleString() : "unknown"}`;
+  return el("span", { class: `badge ${dataVariant(ds.status || ds.quality)}`, title }, [label]);
+}
+
+function serviceWorkList(items) {
+  if (!items.length) return el("div", { class: "muted tiny" }, ["No maintenance items linked."]);
+  return el("div", { class: "stack" }, items.map(m => el("div", { class: "activity-row" }, [
+    badge(m.source, "purple", { title: `External ${m.source} record ${m.externalId || m.id} · sync ${m.syncStatus || "unknown"}` }),
+    el("span", {}, [m.title]),
+    badge(`${m.status} · ${m.priority}`, m.priority === "high" ? "danger" : m.priority === "medium" ? "warn" : "info"),
+  ])));
+}
+
+function projectTimeline(project, ctx) {
+  const rows = [
+    ...ctx.projectDocs.map(doc => ({ ts: revisionTs(doc.currentRevisionId), kind: "Document", text: `${doc.name} current revision`, route: `/doc/${doc.id}` })),
+    ...ctx.items.map(w => ({ ts: w.due, kind: w.type, text: `${w.id} · ${w.title}`, route: null })),
+    ...ctx.maintenance.map(m => ({ ts: m.due, kind: "Service", text: `${m.source} · ${m.title}`, route: `/asset/${m.assetId}` })),
+    ...ctx.incidents.flatMap(i => (i.timeline || []).map(t => ({ ts: t.ts, kind: "Incident", text: `${i.id} · ${t.text}`, route: `/incident/${i.id}` }))),
+    ...ctx.dataSources.map(ds => ({ ts: ds.lastSeen, kind: "Signal", text: `${ds.endpoint} · ${ds.lastValue || ds.status}`, route: ds.assetId ? `/asset/${ds.assetId}` : null })),
+  ].filter(r => r.ts).sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts)).slice(-8);
+  if (!rows.length) return el("div", { class: "muted tiny" }, ["No timeline events yet."]);
+  return el("div", { class: "stack" }, rows.map(r => el(r.route ? "button" : "div", {
+    class: "activity-row",
+    onClick: r.route ? () => navigate(r.route) : null,
+  }, [
+    el("span", { class: "ts" }, [new Date(r.ts).toLocaleDateString()]),
+    el("span", {}, [r.text]),
+    badge(r.kind, "info"),
+  ])));
+}
+
+function revisionTs(revId) {
+  return (state.data.revisions || []).find(r => r.id === revId)?.createdAt || null;
+}
+
+function statusVariant(s) {
+  return s === "alarm" ? "danger" : s === "warning" ? "warn" : s === "offline" ? "" : "success";
+}
+
+function dataVariant(s) {
+  return s === "live" || s === "Good" || s === "connected" ? "success"
+    : s === "stale" || s === "Uncertain" || s === "GoodNoData" ? "warn"
+    : s === "not_connected" || s === "failed" ? "danger"
+    : "info";
+}
+
+const SAVED_VIEWS = [
+  { id: "all", label: "All", test: () => true },
+  { id: "mine", label: "My work", test: w => w.assigneeId === state.data?.currentUserId },
+  { id: "blocked", label: "Blocked", test: w => (w.blockers || []).length > 0 },
+  { id: "due", label: "Due soon", test: w => w.due && Date.parse(w.due) <= Date.now() + 7 * 86400_000 },
+  { id: "asset", label: "Asset-linked", test: w => (w.assetIds || []).length > 0 },
+  { id: "approval", label: "Needs approval", test: w => ["In Review", "Approved"].includes(w.status) },
+];
+
+function applySavedView(items, viewId) {
+  const view = SAVED_VIEWS.find(v => v.id === viewId) || SAVED_VIEWS[0];
+  return items.filter(view.test);
+}
+
+function header(project, view, filter, count, batch, viewKey, filterKey, batchKey, id, viewPreset) {
   const searchInput = input({ placeholder: "Filter by title/ID/label...", value: filter });
   searchInput.addEventListener("input", () => {
     sessionStorage.setItem(filterKey, searchInput.value);
@@ -72,6 +294,11 @@ function header(project, view, filter, count, batch, viewKey, filterKey, batchKe
     ]),
     el("div", { class: "row" }, [
       searchInput,
+      select(SAVED_VIEWS.map(v => ({ value: v.id, label: v.label })), {
+        value: viewPreset,
+        title: "Saved view",
+        onChange: (e) => { sessionStorage.setItem(`board.saved.${id}`, e.target.value); renderWorkBoard({ id }); },
+      }),
       el("div", { class: "row" },
         ["kanban","table","timeline","calendar","deps"].map(v => el("button", {
           class: `btn sm ${view === v ? "primary" : ""}`,
@@ -463,7 +690,7 @@ function automationCard(project, projectId) {
   const rules = [
     "Any ERP event → Task",
     "Alarm SEV-1/SEV-2 → Incident",
-    "OPC UA state_change → Asset timeline",
+    "OPC UA state_change → Asset activity",
     "Approved revision → auto-supersede prior IFC",
   ];
   return card("Automation rules (§6.2 / §9.3)", el("div", { class: "stack" }, [
@@ -495,9 +722,14 @@ function openItem(itemId) {
   const descTextarea = textarea({ value: w.description || "" });
   const blockersInput = input({ value: (w.blockers || []).join(", ") });
 
-  modal({
+  drawer({
     title: `${w.id} — ${w.type}`,
     body: el("div", { class: "stack" }, [
+      el("div", { class: "row wrap" }, [
+        badge(w.status, "info"),
+        badge(w.severity, w.severity === "high" || w.severity === "critical" ? "danger" : w.severity === "medium" ? "warn" : "info"),
+        ...(w.assetIds || []).map(id => badge(`Asset ${id}`, "accent")),
+      ]),
       formRow("Title", titleInput),
       formRow("Status", statusSelect),
       formRow("Severity", severitySelect),
@@ -565,7 +797,7 @@ function openNewItem(projectId) {
       { label: "Cancel" },
       { label: "Create", variant: "primary", onClick: () => {
         if (!titleInput.value.trim()) { toast("Title required", "warn"); return false; }
-        const id = "WI-" + Math.floor(Math.random()*900+100);
+        const id = simulation.demoId("WI", state.data.workItems || []);
         const item = {
           id, projectId, type: typeSelect.value, title: titleInput.value.trim(),
           assigneeId: assigneeSelect.value, status: "Open", severity: severitySelect.value,

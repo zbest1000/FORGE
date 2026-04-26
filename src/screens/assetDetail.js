@@ -5,6 +5,7 @@ import { can } from "../core/permissions.js";
 import { getServer } from "../core/i3x/client.js";
 import { sparkline } from "../core/charts.js";
 import { canSeeAsset, listGroups, getGroup } from "../core/groups.js";
+import { simulation } from "../core/simulation.js";
 
 export function renderAssetsIndex() {
   const root = document.getElementById("screenContainer");
@@ -51,69 +52,210 @@ export function renderAssetDetail({ id }) {
     ]));
   }
 
-  const linkedDocs = (d.documents || []).filter(doc => a.docIds?.includes(doc.id));
+  const linkedProjects = (d.projects || []).filter(p => (a.projectIds || []).includes(p.id) || (p.assetIds || []).includes(a.id));
+  const linkedDocs = scopedAssetDocs(a, linkedProjects);
   const dataSources = (d.dataSources || []).filter(ds => ds.assetId === a.id);
   const incidents = (d.incidents || []).filter(i => i.assetId === a.id);
-  const tasks = (d.workItems || []).filter(w => (w.description || "").includes(a.id));
+  const tasks = (d.workItems || []).filter(w => (w.assetIds || []).includes(a.id) || (w.description || "").includes(a.id));
+  const maintenance = (d.maintenanceItems || []).filter(m => m.assetId === a.id);
+  const site = locationById(a.siteId);
+  const loc = locationById(a.locationId);
 
   mount(root, [
     el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
       el("div", {}, [
         el("div", { class: "strong" }, [a.name]),
-        el("div", { class: "tiny muted" }, [a.hierarchy, " · ", a.id]),
+        el("div", { class: "tiny muted" }, [site?.name || "Unassigned site", " · ", loc?.path || a.hierarchy, " · ", a.id]),
       ]),
       el("div", { class: "row" }, [
         badge(a.status.toUpperCase(), statusVariant(a.status)),
+        badge(`Signals ${a.daqStatus || "unknown"}`, dataVariant(a.daqStatus)),
+        badge(`Service ${a.maintenanceStatus || "none"}`, maintenanceVariant(a.maintenanceStatus)),
         el("button", { class: "btn sm danger", disabled: !can("incident.respond"), onClick: () => openWarRoom(a) }, ["🚨 War room"]),
       ]),
     ]),
     el("div", { class: "card-grid" }, [
-      kpi("MQTT topics", (a.mqttTopics || []).length, "", ""),
-      kpi("OPC UA nodes", (a.opcuaNodes || []).length, "", ""),
+      kpi("Projects", linkedProjects.length, "", ""),
       kpi("Linked docs", linkedDocs.length, "", ""),
+      kpi("Operations signals", dataSources.length, a.daqStatus || "", dataSources.some(ds => ds.status === "stale") ? "down" : "up"),
+      kpi("Service work", maintenance.length, a.maintenanceStatus || "", maintenance.some(m => ["open","due"].includes(m.status)) ? "down" : "up"),
       kpi("Open incidents", incidents.filter(i => i.status === "active").length, "", incidents.some(i => i.status === "active") ? "down" : "up"),
     ]),
 
-    unsCard(a),
-
-    el("div", { class: "two-col", style: { marginTop: "16px" } }, [
-      card("Telemetry (mock)", telemetry(a)),
-      card("Data source mappings", el("div", { class: "stack" }, [
-        ...dataSources.map(ds => el("div", { class: "activity-row" }, [
-          badge(ds.kind, "info"),
-          el("span", { class: "mono small" }, [ds.endpoint]),
-          el("span", { class: "tiny muted" }, [ds.integrationId]),
-        ])),
-        dataSources.length ? null : el("div", { class: "muted tiny" }, ["No mappings yet."]),
-      ])),
-    ]),
-
-    el("div", { class: "two-col", style: { marginTop: "16px" } }, [
-      card(`Linked documents (${linkedDocs.length})`, el("div", { class: "stack" }, linkedDocs.map(doc =>
-        el("div", { class: "activity-row", onClick: () => navigate(`/doc/${doc.id}`) }, [
-          badge(doc.discipline, "info"),
-          el("span", {}, [doc.name]),
-          el("span", { class: "tiny muted" }, [doc.id]),
-        ])
-      ))),
-      card("Incidents", el("div", { class: "stack" }, incidents.map(i =>
-        el("div", { class: "activity-row", onClick: () => navigate(`/incident/${i.id}`) }, [
-          badge(i.severity, "danger"),
-          el("span", {}, [i.title]),
-          badge(i.status, i.status === "active" ? "danger" : "success"),
-        ])
-      ).concat(incidents.length ? [] : [el("div", { class: "muted tiny" }, ["No incidents."])]))),
-    ]),
+    assetContextTabs(a, {
+      orgName: d.organization?.name || "Enterprise",
+      site,
+      loc,
+      linkedProjects,
+      linkedDocs,
+      dataSources,
+      tasks,
+      maintenance,
+      incidents,
+    }),
 
     assignmentCard(a),
 
-    card("AI — What changed in 24h?", el("div", { class: "stack" }, [
-      el("div", { class: "small" }, [
-        `${a.name}: feeder current exceeded baseline by ~12% for 12s; temperature drift observed on HX-01. No trips.`,
-      ]),
-      el("div", { class: "tiny muted" }, ["Citations: AS-1, AS-2, DS-1, DS-3"]),
-    ])),
+    assetBriefCard(a, { dataSources, incidents, maintenance }),
   ]);
+}
+
+function locationById(id) {
+  return (state.data?.locations || []).find(l => l.id === id) || null;
+}
+
+function scopedAssetDocs(asset, projects) {
+  const projectIds = new Set(projects.map(p => p.id));
+  return (state.data.documents || []).filter(doc =>
+    doc.scope === "enterprise" ||
+    (doc.assetIds || []).includes(asset.id) ||
+    (doc.siteId && doc.siteId === asset.siteId) ||
+    (doc.projectId && projectIds.has(doc.projectId)) ||
+    (asset.docIds || []).includes(doc.id)
+  );
+}
+
+function chipText(kind, value) {
+  return el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, [kind]), value || "—"]);
+}
+
+function helpHint(text) {
+  return el("span", { class: "help-dot", title: text, "aria-label": text }, ["?"]);
+}
+
+function assetContextTabs(asset, ctx) {
+  const key = `asset.context.${asset.id}`;
+  const tabs = [
+    { id: "summary", label: "Summary", content: () => assetSummaryTab(asset, ctx) },
+    { id: "docs", label: `Docs (${ctx.linkedDocs.length})`, content: () => card("Linked documents", documentList(ctx.linkedDocs)) },
+    { id: "work", label: `Work (${ctx.tasks.length + ctx.maintenance.length})`, content: () => card("Work and service", workMaintenancePanel(ctx.tasks, ctx.maintenance)) },
+    { id: "signals", label: `Signals (${ctx.dataSources.length})`, content: () => el("div", { class: "two-col" }, [
+      card("Operations trend", telemetry(asset)),
+      card("Signal health", signalHealthPanel(ctx.dataSources)),
+    ]) },
+    { id: "activity", label: "Activity", content: () => card("Asset activity", assetTimeline(asset, ctx)) },
+  ];
+  const activeId = sessionStorage.getItem(key) || "summary";
+  const active = tabs.find(t => t.id === activeId) || tabs[0];
+  return el("section", { class: "context-tab-shell" }, [
+    el("div", { class: "context-tabs", role: "tablist", "aria-label": "Asset context" }, tabs.map(t =>
+      el("button", {
+        class: `context-tab ${active.id === t.id ? "active" : ""}`,
+        role: "tab",
+        "aria-selected": String(active.id === t.id),
+        onClick: () => { sessionStorage.setItem(key, t.id); renderAssetDetail({ id: asset.id }); },
+      }, [t.label])
+    )),
+    el("div", { class: "context-tab-panel", role: "tabpanel" }, [active.content()]),
+  ]);
+}
+
+function assetSummaryTab(asset, ctx) {
+  return el("div", { class: "stack" }, [
+    card(`${ctx.orgName} hierarchy`, el("div", { class: "stack" }, [
+      el("div", { class: "row wrap" }, [
+        chipText("Organization", ctx.orgName),
+        chipText("Site", ctx.site?.name || "—"),
+        chipText("Location", ctx.loc?.path || ctx.loc?.name || asset.hierarchy),
+        helpHint("Assets are mastered by organization, site, and location. Projects reference assets only while they affect work scope."),
+      ]),
+      ctx.linkedProjects.length
+        ? el("div", { class: "row wrap" }, ctx.linkedProjects.map(p =>
+            el("button", { class: "btn sm", onClick: () => navigate(`/work-board/${p.id}`) }, [`Project: ${p.name}`])
+          ))
+        : el("div", { class: "row wrap" }, [
+            badge("No active project", "info"),
+            helpHint("This asset remains available through the organization and site hierarchy even when no project references it."),
+          ]),
+    ])),
+    unsCard(asset),
+  ]);
+}
+
+function documentList(docs) {
+  if (!docs.length) return el("div", { class: "muted tiny" }, ["No scoped documents."]);
+  return el("div", { class: "stack" }, docs.map(doc =>
+    el("button", { class: "activity-row", onClick: () => navigate(`/doc/${doc.id}`) }, [
+      scopeBadge(doc),
+      el("span", {}, [doc.name]),
+      el("span", { class: "tiny muted" }, [doc.id]),
+    ])
+  ));
+}
+
+function scopeBadge(doc) {
+  const scope = doc.scope || "project";
+  const variant = scope === "enterprise" ? "purple" : scope === "asset" ? "accent" : scope === "site" ? "warn" : "info";
+  const title = scope === "enterprise" ? "Enterprise document: visible across the organization."
+    : scope === "site" ? "Site document inherited from this asset's site."
+    : scope === "asset" ? "Asset document directly linked to this asset."
+    : "Project document inherited through this asset's project.";
+  return badge(scope, variant, { title });
+}
+
+function signalHealthPanel(dataSources) {
+  if (!dataSources.length) return el("div", { class: "muted tiny" }, ["No signal mappings yet."]);
+  return el("div", { class: "stack" }, dataSources.map(ds => el("div", { class: "activity-row" }, [
+    signalBadge(ds),
+    el("span", { class: "mono tiny" }, [ds.endpoint]),
+    el("span", { class: "tiny muted" }, [ds.lastValue || ds.quality || ds.integrationId]),
+  ])));
+}
+
+function signalBadge(ds) {
+  const status = ds.status || ds.quality || ds.kind;
+  const label = status === "live" ? "Live"
+    : status === "stale" ? "Stale"
+    : status === "not_connected" ? "Not connected"
+    : status === "simulated" ? "Simulated"
+    : status === "historical" ? "Historical"
+    : status;
+  const title = `Source: ${ds.integrationId || "unknown"} · Quality: ${ds.quality || "unknown"} · Last seen: ${ds.lastSeen ? new Date(ds.lastSeen).toLocaleString() : "unknown"}`;
+  return badge(label, dataVariant(status), { title });
+}
+
+function workMaintenancePanel(tasks, maintenance) {
+  const rows = [
+    ...tasks.map(w => ({ kind: w.type, text: `${w.id} · ${w.title}`, state: w.status, variant: w.severity === "high" ? "danger" : "info", title: "FORGE work item" })),
+    ...maintenance.map(m => ({ kind: m.source, text: `${m.externalId || m.id} · ${m.title}`, state: `${m.status} · ${m.priority}`, variant: m.priority === "high" ? "danger" : "warn", title: `${m.source} sync: ${m.syncStatus || "unknown"}` })),
+  ];
+  if (!rows.length) return el("div", { class: "muted tiny" }, ["No work or service linked."]);
+  return el("div", { class: "stack" }, rows.map(r => el("div", { class: "activity-row" }, [
+    badge(r.kind, r.kind === "MaintainX" || r.kind === "SAP PM" || r.kind === "UpKeep" ? "purple" : "info", { title: r.title }),
+    el("span", {}, [r.text]),
+    badge(r.state, r.variant),
+  ])));
+}
+
+function assetBriefCard(asset, context) {
+  const brief = simulation.assetBrief(asset, context);
+  return card("AI — What changed in 24h?", el("div", { class: "stack" }, [
+    ...brief.bullets.map(text => el("div", { class: "small" }, [text])),
+    el("div", { class: "tiny muted" }, ["Citations: ", brief.citations.join(", ")]),
+  ]));
+}
+
+function assetTimeline(asset, ctx) {
+  const rows = [
+    ...ctx.linkedDocs.map(doc => ({ ts: revisionTs(doc.currentRevisionId), kind: "Document", text: `${doc.name} current revision`, route: `/doc/${doc.id}` })),
+    ...ctx.tasks.map(w => ({ ts: w.due, kind: w.type, text: `${w.id} · ${w.title}`, route: `/work-board/${w.projectId}` })),
+    ...ctx.maintenance.map(m => ({ ts: m.due, kind: "Service", text: `${m.source} · ${m.title}`, route: null })),
+    ...ctx.incidents.flatMap(i => (i.timeline || []).map(t => ({ ts: t.ts, kind: "Incident", text: `${i.id} · ${t.text}`, route: `/incident/${i.id}` }))),
+    ...ctx.dataSources.map(ds => ({ ts: ds.lastSeen, kind: "Signal", text: `${ds.endpoint} · ${ds.lastValue || ds.status}`, route: null })),
+  ].filter(r => r.ts).sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts)).slice(-10);
+  if (!rows.length) return el("div", { class: "muted tiny" }, [`No timeline events for ${asset.id}.`]);
+  return el("div", { class: "stack" }, rows.map(r => el(r.route ? "button" : "div", {
+    class: "activity-row",
+    onClick: r.route ? () => navigate(r.route) : null,
+  }, [
+    el("span", { class: "ts" }, [new Date(r.ts).toLocaleDateString()]),
+    el("span", {}, [r.text]),
+    badge(r.kind, "info"),
+  ])));
+}
+
+function revisionTs(revId) {
+  return (state.data.revisions || []).find(r => r.id === revId)?.createdAt || null;
 }
 
 function assignmentCard(a) {
@@ -170,14 +312,7 @@ function editAssignment(a) {
 }
 
 function telemetry(a) {
-  const ticks = 60;
-  const data = [];
-  let v = 50 + (a.id.charCodeAt(a.id.length - 1) % 20);
-  for (let i = 0; i < ticks; i++) {
-    v += (Math.random() - 0.5) * 8;
-    v = Math.max(10, Math.min(95, v));
-    data.push(v);
-  }
+  const data = simulation.telemetrySeries(a);
   return el("div", { class: "stack" }, [
     sparkline(data, { width: 360, height: 90 }),
     el("div", { class: "row wrap" }, (a.mqttTopics || []).map(t => el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["MQTT"]), t]))),
@@ -190,7 +325,7 @@ function openWarRoom(a) {
   if (!can("incident.respond")) { toast("No incident capability", "warn"); return; }
   const existing = (state.data.incidents || []).find(i => i.assetId === a.id && i.status === "active");
   if (existing) return navigate(`/incident/${existing.id}`);
-  const id = "INC-" + Math.floor(Math.random()*9000+1000);
+  const id = simulation.nextId("INC", state.data.incidents);
   const inc = {
     id,
     title: `${a.name} — new incident`,
@@ -209,6 +344,19 @@ function openWarRoom(a) {
 
 function statusVariant(s) {
   return s === "alarm" ? "danger" : s === "warning" ? "warn" : s === "offline" ? "" : "success";
+}
+
+function dataVariant(s) {
+  return s === "live" || s === "Good" || s === "connected" ? "success"
+    : s === "stale" || s === "Uncertain" || s === "GoodNoData" ? "warn"
+    : s === "not_connected" || s === "failed" || s === "disconnected" ? "danger"
+    : "info";
+}
+
+function maintenanceVariant(s) {
+  return s === "open" || s === "due" ? "danger"
+    : s === "watch" || s === "planned" || s === "scheduled" ? "warn"
+    : "success";
 }
 
 function unsCard(asset) {

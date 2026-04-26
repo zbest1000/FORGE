@@ -2,14 +2,12 @@
 
 FORGE is built on top of a curated set of MIT / Apache 2.0 / BSD / MPL
 licensed open-source projects, mapped against the OSS reference list in
-`PRODUCT_SPEC.md §16`. All of them are **browser ESM** imports loaded from
-`esm.sh` via the import map in `index.html`. The client still runs from
-`python3 -m http.server` with no build step; if a CDN is unreachable every
-feature degrades to the hand-rolled fallback.
+`PRODUCT_SPEC.md §16`. Enterprise builds bundle browser dependencies with
+Vite into `dist/`. The `index.html` import map remains only as a local
+source-serving fallback for `FORGE_SERVE_SOURCE=1` development.
 
-All dependencies are runtime-only (no bundler). Each integration lives
-behind a seam (`src/core/vendor.js`) so versions can be pinned per module
-or swapped for self-hosted copies without touching call sites.
+Each integration lives behind a seam (`src/core/vendor.js`) so versions can be
+pinned through npm and swapped without touching call sites.
 
 ## Pinned versions
 
@@ -42,7 +40,7 @@ or swapped for self-hosted copies without touching call sites.
 | [eclipse-mosquitto](https://github.com/eclipse/mosquitto) | EPL-2.0 / EDL-1.0 | MQTT broker dev sibling |
 | [LibreDWG](https://www.gnu.org/software/libredwg/) (`libredwg-tools`) | **GPL-3.0** (deployed-service exception — runs as a subprocess; FORGE code is not derived) | `dwg2dxf` CLI used by `server/converters/dwg.js` to convert DWG → DXF on the server |
 
-### Client-side (browser, ES module import map)
+### Client-side (browser, bundled by Vite)
 
 | Package | Version | License | Purpose | Spec clause |
 |---|---|---|---|---|
@@ -83,15 +81,14 @@ clear which parts of the stack they cover.
 
 ## Loading strategy
 
-- **Import map**: declared once in `index.html`. Modules are resolved at
-  runtime, no bundler involved.
+- **Build-first**: `npm run build` bundles browser dependencies into hashed
+  assets under `dist/`.
 - **Lazy / dynamic**: heavy modules (`pdfjs-dist`, `web-ifc`, `mermaid`,
-  `mqtt`) are loaded on demand via `src/core/vendor.js`, which caches
-  promises and, on any import failure, records an `audit` event and
-  switches the caller to its hand-rolled fallback.
-- **Offline-friendly**: once `esm.sh` has served a module the browser
-  caches it. For strict air-gapped deployments, replace the import map
-  URLs with a self-hosted `/vendor/` path; nothing else changes.
+  `mqtt`) are loaded on demand via `src/core/vendor.js`, which caches promises
+  and lets callers fall back to hand-rolled behavior when a feature module is
+  unavailable.
+- **Source fallback**: the import map in `index.html` exists only for explicit
+  source-module development (`FORGE_SERVE_SOURCE=1`), not for release builds.
 
 ## License compatibility
 
