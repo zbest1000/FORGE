@@ -64,39 +64,30 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Authoritative list of feature flags. Adding a new gated feature means
- * adding it here and to the appropriate tier defaults below. Server
- * routes and client screens should call `hasFeature(name)`; never
- * hard-code tier comparisons.
+ * adding it here, in `FEATURE_CATALOG` below, and to the appropriate
+ * tier defaults. Server routes and client screens should call
+ * `hasFeature(name)`; never hard-code tier comparisons.
  */
 export const FEATURES = Object.freeze({
-  // Core (always-on, here for completeness; gating these would brick the app)
   CORE_AUTH:                 "core.auth",
   CORE_DOCS:                 "core.docs",
   CORE_TEAM_SPACES:          "core.team_spaces",
   CORE_AUDIT_VIEW:           "core.audit.view",
   CORE_SEARCH:               "core.search",
-
-  // Engineering surfaces
   CAD_VIEWER:                "cad.viewer",
   CAD_DWG_CONVERSION:        "cad.dwg_conversion",
   BIM_IFC_VIEWER:            "bim.ifc_viewer",
   PDF_VIEWER:                "pdf.viewer",
   MERMAID_DIAGRAMS:          "diagrams.mermaid",
   THREE_D_VIEWER:            "viewer.three_d",
-
-  // Workflow
   REVIEW_CYCLES:             "workflow.review_cycles",
   COMMISSIONING_CHECKLISTS:  "workflow.commissioning",
   RFI_LINKS:                 "workflow.rfi_links",
   FORM_SUBMISSIONS:          "workflow.forms",
-
-  // Industrial / IoT
   MQTT_BRIDGE:               "industrial.mqtt",
   OPCUA_BRIDGE:              "industrial.opcua",
   I3X_API:                   "industrial.i3x",
   UNS_BROWSER:               "industrial.uns",
-
-  // Enterprise integrations
   ERP_CONNECTORS:            "enterprise.erp",
   ENTERPRISE_SYSTEMS:        "enterprise.systems",
   WEBHOOKS:                  "enterprise.webhooks",
@@ -104,8 +95,6 @@ export const FEATURES = Object.freeze({
   AI_PROVIDERS:              "enterprise.ai",
   GRAPHQL_API:               "enterprise.graphql",
   EXTERNAL_LINKS:            "enterprise.external_links",
-
-  // Compliance / governance
   COMPLIANCE_CONSOLE:        "governance.compliance",
   AUDIT_PACK_EXPORT:         "governance.audit_pack",
   RETENTION_POLICIES:        "governance.retention",
@@ -114,12 +103,217 @@ export const FEATURES = Object.freeze({
   SSO_OIDC:                  "governance.sso_oidc",
   SCIM_PROVISIONING:         "governance.scim",
   MFA_ENFORCEMENT:           "governance.mfa_enforce",
-
-  // Scale / ops
   SSE_STREAMS:               "ops.sse",
   PROMETHEUS_METRICS:        "ops.prom",
   OTEL_TRACING:              "ops.otel",
   HA_DEPLOYMENT:             "ops.ha",
+});
+
+/**
+ * Human-readable feature catalog. Every gated feature has a stable id
+ * (the `FEATURES.*` value), a category, an English display name, and a
+ * one-sentence description suitable for a customer-facing tooltip or
+ * upgrade prompt. The shape is intentionally simple JSON so the central
+ * license server, the local license server, and the FORGE client can
+ * all use the same source of truth.
+ *
+ * Categories are ordered top-down in the admin UI.
+ */
+export const FEATURE_CATALOG = Object.freeze([
+  // Core --------------------------------------------------------------
+  { id: FEATURES.CORE_AUTH,        category: "Core",
+    name: "Sign-in & sessions",
+    description: "Email + password authentication, JWT sessions, and machine API tokens.",
+    tier_floor: "community" },
+  { id: FEATURES.CORE_DOCS,        category: "Core",
+    name: "Documents & revisions",
+    description: "Create, version, and review engineering documents and revisions.",
+    tier_floor: "community" },
+  { id: FEATURES.CORE_TEAM_SPACES, category: "Core",
+    name: "Team Spaces & projects",
+    description: "Workspaces, projects, channels, and member management.",
+    tier_floor: "community" },
+  { id: FEATURES.CORE_AUDIT_VIEW,  category: "Core",
+    name: "Audit log",
+    description: "Read-only access to the tamper-evident activity ledger.",
+    tier_floor: "community" },
+  { id: FEATURES.CORE_SEARCH,      category: "Core",
+    name: "Search",
+    description: "Full-text search across documents, drawings, work items, and assets.",
+    tier_floor: "community" },
+
+  // Viewers -----------------------------------------------------------
+  { id: FEATURES.PDF_VIEWER,        category: "Viewers",
+    name: "PDF viewer",
+    description: "View PDF drawings and documents inline with annotations.",
+    tier_floor: "community" },
+  { id: FEATURES.MERMAID_DIAGRAMS,  category: "Viewers",
+    name: "Mermaid diagrams",
+    description: "Render Mermaid flowcharts, sequence diagrams, and gantt charts.",
+    tier_floor: "community" },
+  { id: FEATURES.THREE_D_VIEWER,    category: "Viewers",
+    name: "3D model viewer",
+    description: "Interactive 3D viewer for STEP, OBJ, GLTF, and STL models.",
+    tier_floor: "personal" },
+  { id: FEATURES.CAD_VIEWER,        category: "Viewers",
+    name: "CAD drawing viewer",
+    description: "View DWG, DXF, and other 2D CAD drawings with markups.",
+    tier_floor: "personal" },
+  { id: FEATURES.CAD_DWG_CONVERSION,category: "Viewers",
+    name: "DWG to DXF conversion",
+    description: "Server-side conversion of DWG drawings into DXF for the viewer.",
+    tier_floor: "team" },
+  { id: FEATURES.BIM_IFC_VIEWER,    category: "Viewers",
+    name: "BIM / IFC viewer",
+    description: "Building Information Modeling viewer for IFC architectural models.",
+    tier_floor: "personal" },
+
+  // Workflow ----------------------------------------------------------
+  { id: FEATURES.REVIEW_CYCLES,            category: "Workflow",
+    name: "Document review cycles",
+    description: "Multi-reviewer approval cycles with sign-off and reminders.",
+    tier_floor: "personal" },
+  { id: FEATURES.COMMISSIONING_CHECKLISTS, category: "Workflow",
+    name: "Commissioning checklists",
+    description: "Punch-list style commissioning, hand-over, and start-up checklists.",
+    tier_floor: "team" },
+  { id: FEATURES.RFI_LINKS,                category: "Workflow",
+    name: "RFI cross-linking",
+    description: "Link Requests for Information to drawings, documents, and work items.",
+    tier_floor: "personal" },
+  { id: FEATURES.FORM_SUBMISSIONS,         category: "Workflow",
+    name: "Forms & submissions",
+    description: "Custom forms, submissions, and signed responses.",
+    tier_floor: "personal" },
+
+  // Industrial / IoT --------------------------------------------------
+  { id: FEATURES.UNS_BROWSER, category: "Industrial / IoT",
+    name: "Unified Namespace browser",
+    description: "Browse the in-product Unified Namespace and ISA-95 hierarchy.",
+    tier_floor: "community" },
+  { id: FEATURES.MQTT_BRIDGE, category: "Industrial / IoT",
+    name: "MQTT bridge",
+    description: "Stream telemetry and events from MQTT brokers into FORGE.",
+    tier_floor: "team" },
+  { id: FEATURES.OPCUA_BRIDGE,category: "Industrial / IoT",
+    name: "OPC UA bridge",
+    description: "Read and write tags on OPC UA servers from FORGE.",
+    tier_floor: "enterprise" },
+  { id: FEATURES.I3X_API,     category: "Industrial / IoT",
+    name: "i3X API (CESMII 1.0)",
+    description: "REST API exposing FORGE objects in the CESMII i3X 1.0 envelope.",
+    tier_floor: "team" },
+
+  // Enterprise integrations ------------------------------------------
+  { id: FEATURES.WEBHOOKS,           category: "Enterprise integrations",
+    name: "Outbound webhooks",
+    description: "Send signed webhooks to external systems on FORGE events.",
+    tier_floor: "team" },
+  { id: FEATURES.N8N_AUTOMATIONS,    category: "Enterprise integrations",
+    name: "n8n automations",
+    description: "Visual automation flows backed by an embedded n8n instance.",
+    tier_floor: "team" },
+  { id: FEATURES.AI_PROVIDERS,       category: "Enterprise integrations",
+    name: "AI providers",
+    description: "Connect OpenAI, Anthropic, or self-hosted models for AI workflows.",
+    tier_floor: "team" },
+  { id: FEATURES.GRAPHQL_API,        category: "Enterprise integrations",
+    name: "GraphQL API",
+    description: "GraphQL endpoint for read and write access to all core data.",
+    tier_floor: "team" },
+  { id: FEATURES.ERP_CONNECTORS,     category: "Enterprise integrations",
+    name: "ERP connectors",
+    description: "Pre-built connectors for SAP, Oracle Fusion, and Microsoft Dynamics.",
+    tier_floor: "enterprise" },
+  { id: FEATURES.ENTERPRISE_SYSTEMS, category: "Enterprise integrations",
+    name: "Enterprise system registry",
+    description: "Register, test, and orchestrate runs against external enterprise systems.",
+    tier_floor: "enterprise" },
+  { id: FEATURES.EXTERNAL_LINKS,     category: "Enterprise integrations",
+    name: "External object links",
+    description: "Cross-reference FORGE objects to records in external enterprise systems.",
+    tier_floor: "enterprise" },
+
+  // Governance -------------------------------------------------------
+  { id: FEATURES.AUDIT_PACK_EXPORT,  category: "Governance & compliance",
+    name: "Audit pack export",
+    description: "Export a signed, tamper-evident archive of activity for auditors.",
+    tier_floor: "team" },
+  { id: FEATURES.RETENTION_POLICIES, category: "Governance & compliance",
+    name: "Retention policies",
+    description: "Define and enforce retention windows for documents, messages, and audit data.",
+    tier_floor: "team" },
+  { id: FEATURES.LEGAL_HOLD,         category: "Governance & compliance",
+    name: "Legal hold",
+    description: "Suspend retention deletion for items under litigation hold.",
+    tier_floor: "enterprise" },
+  { id: FEATURES.COMPLIANCE_CONSOLE, category: "Governance & compliance",
+    name: "Compliance console",
+    description: "Operate processing activities, DSARs, subprocessors, and risk register.",
+    tier_floor: "enterprise" },
+  { id: FEATURES.SSO_SAML,           category: "Governance & compliance",
+    name: "SAML single sign-on",
+    description: "Enterprise SSO via SAML 2.0 with assertion-based RBAC.",
+    tier_floor: "enterprise" },
+  { id: FEATURES.SSO_OIDC,           category: "Governance & compliance",
+    name: "OIDC single sign-on",
+    description: "Enterprise SSO via OpenID Connect with claim-based RBAC.",
+    tier_floor: "enterprise" },
+  { id: FEATURES.SCIM_PROVISIONING,  category: "Governance & compliance",
+    name: "SCIM user provisioning",
+    description: "Automated user lifecycle from your IdP via SCIM 2.0.",
+    tier_floor: "enterprise" },
+  { id: FEATURES.MFA_ENFORCEMENT,    category: "Governance & compliance",
+    name: "Mandatory MFA",
+    description: "Require multi-factor authentication for selected roles or all users.",
+    tier_floor: "enterprise" },
+
+  // Operations / scale -----------------------------------------------
+  { id: FEATURES.SSE_STREAMS,        category: "Operations & scale",
+    name: "Live event streams",
+    description: "Server-Sent Events for live updates in dashboards and screens.",
+    tier_floor: "team" },
+  { id: FEATURES.PROMETHEUS_METRICS, category: "Operations & scale",
+    name: "Prometheus metrics",
+    description: "Operational metrics exported in Prometheus text format.",
+    tier_floor: "team" },
+  { id: FEATURES.OTEL_TRACING,       category: "Operations & scale",
+    name: "OpenTelemetry tracing",
+    description: "Distributed tracing exported via OTLP to your APM.",
+    tier_floor: "enterprise" },
+  { id: FEATURES.HA_DEPLOYMENT,      category: "Operations & scale",
+    name: "High-availability deployment",
+    description: "Multi-replica deployment with PostgreSQL, NATS, and a worker pool.",
+    tier_floor: "enterprise" },
+]);
+
+const CATALOG_BY_ID = Object.fromEntries(FEATURE_CATALOG.map(f => [f.id, f]));
+
+/** Look up a feature's display metadata by its id. Returns a synthetic
+ *  fallback entry for unknown ids so the UI never crashes on a future
+ *  flag the running version doesn't know about yet. */
+export function describeFeature(id) {
+  return CATALOG_BY_ID[id] || {
+    id, category: "Other", name: id,
+    description: "Feature shipped in a newer FORGE version.",
+    tier_floor: "enterprise",
+  };
+}
+
+/** Friendly tier display names. */
+export const TIER_LABELS = Object.freeze({
+  community:  "Community",
+  personal:   "Personal",
+  team:       "Team",
+  enterprise: "Enterprise",
+});
+
+/** One-line tier descriptions for the upgrade prompt. */
+export const TIER_DESCRIPTIONS = Object.freeze({
+  community:  "Free single-team usage — read-only viewers and core collaboration.",
+  personal:   "Single user, full viewer suite plus review cycles.",
+  team:       "Up to a few dozen users, industrial bridges, automations, GraphQL, and audit-pack export.",
+  enterprise: "Unlimited seats, SSO/SCIM, full compliance console, OPC UA, OTel, and HA deployment.",
 });
 
 const ALL_FEATURES = Object.values(FEATURES);
@@ -522,16 +716,28 @@ export function hasFeature(featureName, license = getLicense()) {
  * Fastify pre-handler: requires that the active license includes the
  * given feature. Designed to be combined with `require_(capability)`
  * which already enforces RBAC.
+ *
+ * The 402 response uses the English feature name and a contextual
+ * message, so SPA toasts and API consumers get a sentence they can
+ * show to a user without translation.
  */
 export function requireFeature(featureName) {
   return async (req, reply) => {
     const lic = getLicense();
     if (!hasFeature(featureName, lic)) {
+      const meta = describeFeature(featureName);
+      const requiredTier = TIER_LABELS[meta.tier_floor] || meta.tier_floor;
+      const currentTier = TIER_LABELS[lic.tier] || lic.tier;
       reply.code(402).send({
         error: "feature_not_licensed",
         feature: featureName,
-        tier: lic.tier,
-        edition: lic.edition,
+        feature_name: meta.name,
+        feature_description: meta.description,
+        required_tier: meta.tier_floor,
+        required_tier_label: requiredTier,
+        current_tier: lic.tier,
+        current_tier_label: currentTier,
+        message: `“${meta.name}” isn't included in your ${currentTier} plan. Upgrade to ${requiredTier} to enable it.`,
         upgrade_url: process.env.FORGE_UPGRADE_URL || "https://forge.local/upgrade",
       });
       return reply;
@@ -542,16 +748,25 @@ export function requireFeature(featureName) {
 /**
  * Public "what does this installation have?" payload, suitable for
  * sending to authenticated clients. Strips the raw token.
+ *
+ * Each feature is returned both as its stable id ("industrial.mqtt")
+ * and with the catalog metadata (display name, description, category,
+ * tier floor) so the UI can render English-language descriptions
+ * without re-fetching the catalog.
  */
 export function publicEntitlements(license = getLicense()) {
+  const features = license.features.slice();
   return {
     source: license.source,
     customer: license.customer,
     contact: license.contact,
     license_id: license.license_id,
     tier: license.tier,
+    tier_label: TIER_LABELS[license.tier] || license.tier,
     edition: license.edition,
+    edition_label: humanEdition(license),
     term: license.term,
+    term_label: license.term === "perpetual" ? "Perpetual" : "Annual",
     seats: license.seats,
     hard_seat_cap: license.hard_seat_cap,
     issued_at: license.issued_at,
@@ -559,10 +774,40 @@ export function publicEntitlements(license = getLicense()) {
     expires_at: license.expires_at,
     maintenance_until: license.maintenance_until,
     deployment: license.deployment,
-    features: license.features.slice(),
+    deployment_label: license.deployment === "cloud" ? "Cloud" : "Self-hosted",
+    features,
+    feature_details: features.map(describeFeature),
     status: license.status,
+    status_label: humanStatus(license),
     reasons: license.reasons.slice(),
+    reason_messages: license.reasons.map(humanReason),
   };
+}
+
+function humanEdition(license) {
+  const tierLabel = TIER_LABELS[license.tier] || license.tier;
+  if (!license.edition || license.edition === license.tier) return tierLabel + " edition";
+  return license.edition;
+}
+
+function humanStatus(license) {
+  switch (license.status) {
+    case "ok": return "Active";
+    case "expired": return "Expired";
+    case "not_yet_active": return "Starts in the future";
+    case "invalid": return "Invalid signature";
+    default: return license.status || "Unknown";
+  }
+}
+
+function humanReason(r) {
+  if (typeof r !== "string") return String(r);
+  const m = /^expires_in_(\d+)_days$/.exec(r);
+  if (m) return `Expires in ${m[1]} day${m[1] === "1" ? "" : "s"}.`;
+  if (r.startsWith("signature_invalid")) return "License signature did not match the bundled vendor key.";
+  if (r.startsWith("expired_at ")) return `Annual license expired on ${r.slice("expired_at ".length, "expired_at ".length + 10)}.`;
+  if (r.startsWith("starts_at ")) return `License is not active until ${r.slice("starts_at ".length, "starts_at ".length + 10)}.`;
+  return r;
 }
 
 /** Active (non-disabled) user count, used to enforce seats. */

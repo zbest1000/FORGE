@@ -7,7 +7,8 @@
 import { require_, can } from "../auth.js";
 import {
   getLicense, installLicense, uninstallLicense,
-  publicEntitlements, FEATURES, TIER_DEFAULTS, TIERS,
+  publicEntitlements, FEATURES, FEATURE_CATALOG, TIER_DEFAULTS, TIERS,
+  TIER_LABELS, TIER_DESCRIPTIONS, describeFeature,
   activeUserCount,
 } from "../license.js";
 import { audit } from "../audit.js";
@@ -24,12 +25,20 @@ export default async function licenseRoutes(app) {
   });
 
   // Static catalog so the admin UI can render the full feature list,
-  // including ones the current license does NOT have.
+  // including ones the current license does NOT have. Returns the
+  // English-language display names and descriptions so customers see
+  // friendly text everywhere — never raw flag ids like "industrial.mqtt".
   app.get("/api/license/catalog", { preHandler: require_() }, async () => {
     return {
-      tiers: TIERS,
-      tier_defaults: TIER_DEFAULTS,
-      features: FEATURES,
+      tiers: TIERS.map(t => ({
+        id: t,
+        label: TIER_LABELS[t],
+        description: TIER_DESCRIPTIONS[t],
+        feature_count: (TIER_DEFAULTS[t] || []).length,
+        features: (TIER_DEFAULTS[t] || []).map(describeFeature),
+      })),
+      features: FEATURE_CATALOG,
+      categories: groupByCategory(FEATURE_CATALOG),
     };
   });
 
@@ -54,6 +63,9 @@ export default async function licenseRoutes(app) {
     } catch (err) {
       return reply.code(422).send({
         error: err.code === "ERR_FORGE_LICENSE_INVALID" ? "license_invalid" : "license_error",
+        message: err.code === "ERR_FORGE_LICENSE_INVALID"
+          ? "We couldn't verify this license — the signature didn't match. Make sure you're pasting the entire activation token from your portal."
+          : "Couldn't install the license. Check the server log for details.",
         reasons: err.reasons || [String(err.message || err)],
       });
     }
@@ -72,4 +84,13 @@ export default async function licenseRoutes(app) {
     });
     return publicEntitlements(after);
   });
+}
+
+function groupByCategory(catalog) {
+  const out = {};
+  for (const f of catalog) {
+    if (!out[f.category]) out[f.category] = [];
+    out[f.category].push(f);
+  }
+  return out;
 }
