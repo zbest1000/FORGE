@@ -15,6 +15,14 @@ import {
   disableMfa,
   getMfaState,
 } from "../mfa.js";
+import {
+  createSession,
+  rotateRefresh,
+  revokeSession,
+  revokeAllForUser,
+  listSessions,
+  ACCESS_JWT_EXPIRES_IN,
+} from "../sessions.js";
 
 function hashEmailForAudit(email) {
   if (!email) return "anonymous";
@@ -24,8 +32,28 @@ function hashEmailForAudit(email) {
   return "email:" + crypto.createHash("sha256").update(String(email).toLowerCase()).digest("hex").slice(0, 16);
 }
 
-async function issueJwt(reply, user) {
-  return reply.jwtSign({ sub: user.id, role: user.role }, { expiresIn: "12h" });
+/**
+ * Mint an access JWT bound to a fresh session, alongside a refresh
+ * token. Returns the same shape `/api/auth/login` historically returned
+ * (`{ token, user }`) plus `refreshToken` and the access/refresh
+ * expiries so callers can drive their own renewal timers.
+ */
+async function issueSessionPair(reply, req, user, mfaMethod = null) {
+  const ip = req.ip || null;
+  const userAgent = req.headers?.["user-agent"] || null;
+  const session = createSession({ userId: user.id, mfa: mfaMethod, ip, userAgent });
+  const token = await reply.jwtSign(
+    { sub: user.id, role: user.role, sid: session.sessionId, jti: session.accessJti },
+    { expiresIn: ACCESS_JWT_EXPIRES_IN }
+  );
+  return {
+    token,
+    user,
+    refreshToken: session.refreshToken,
+    sessionId: session.sessionId,
+    accessExpiresAt: session.accessExpiresAt,
+    refreshExpiresAt: session.refreshExpiresAt,
+  };
 }
 
 export default async function authRoutes(fastify) {
@@ -63,9 +91,9 @@ export default async function authRoutes(fastify) {
           return reply.code(401).send({ error: "invalid mfa code" });
         }
         resetLockout(subjectKey, ip);
-        const token = await issueJwt(reply, user);
-        audit({ actor: user.id, action: "auth.login", subject: user.id, detail: { mfa: ok.method } });
-        return { token, user };
+        const pair = await issueSessionPair(reply, req, user, ok.method);
+        audit({ actor: user.id, action: "auth.login", subject: user.id, detail: { mfa: ok.method, sid: pair.sessionId } });
+        return pair;
       }
 
       // Path B: hand back a challenge so the client can prompt the user.
@@ -83,9 +111,9 @@ export default async function authRoutes(fastify) {
     }
 
     resetLockout(subjectKey, ip);
-    const token = await issueJwt(reply, user);
-    audit({ actor: user.id, action: "auth.login", subject: user.id });
-    return { token, user };
+    const pair = await issueSessionPair(reply, req, user);
+    audit({ actor: user.id, action: "auth.login", subject: user.id, detail: { sid: pair.sessionId } });
+    return pair;
   });
 
   // Second leg of the two-step login. Caller passes the challenge token
@@ -113,14 +141,73 @@ export default async function authRoutes(fastify) {
       return reply.code(401).send({ error: "invalid mfa code" });
     }
     resetLockout(subjectKey, ip);
-    const token = await issueJwt(reply, user);
-    audit({ actor: user.id, action: "auth.login", subject: user.id, detail: { mfa: ok.method } });
-    return { token, user };
+    const pair = await issueSessionPair(reply, req, user, ok.method);
+    audit({ actor: user.id, action: "auth.login", subject: user.id, detail: { mfa: ok.method, sid: pair.sessionId } });
+    return pair;
   });
 
+  // Refresh-token rotation. Returns a new access JWT + a new refresh
+  // token; the old refresh token becomes invalid immediately. Replaying
+  // a stale refresh token revokes the entire session.
+  fastify.post("/api/auth/refresh", async (req, reply) => {
+    const { refreshToken } = req.body || {};
+    if (!refreshToken) return reply.code(400).send({ error: "refreshToken required" });
+    const r = rotateRefresh(refreshToken);
+    if (r.error) {
+      audit({ actor: "system", action: "auth.refresh.fail", subject: "auth", detail: { error: r.error } });
+      const code = r.error === "session_revoked" || r.error === "refresh_expired" ? 401 : 400;
+      return reply.code(code).send({ error: r.error });
+    }
+    const user = userById(r.userId);
+    if (!user) return reply.code(401).send({ error: "user not found" });
+    const token = await reply.jwtSign(
+      { sub: user.id, role: user.role, sid: r.sessionId, jti: r.accessJti },
+      { expiresIn: ACCESS_JWT_EXPIRES_IN }
+    );
+    return {
+      token,
+      user,
+      refreshToken: r.refreshToken,
+      sessionId: r.sessionId,
+      accessExpiresAt: r.accessExpiresAt,
+      refreshExpiresAt: r.refreshExpiresAt,
+    };
+  });
+
+  // Logout revokes the caller's current session, killing both the
+  // access JWT and any outstanding refresh token. Idempotent — calling
+  // logout twice is fine.
   fastify.post("/api/auth/logout", async (req, reply) => {
-    if (req.user) audit({ actor: req.user.id, action: "auth.logout", subject: req.user.id });
+    if (!req.user) return { ok: true };
+    if (req.sessionId) revokeSession(req.sessionId, "logout", req.user.id);
+    audit({ actor: req.user.id, action: "auth.logout", subject: req.user.id, detail: { sid: req.sessionId || null } });
     return { ok: true };
+  });
+
+  // List the caller's active + past sessions. Useful for the SPA's
+  // "Devices" or "Sessions" admin screen.
+  fastify.get("/api/auth/sessions", async (req, reply) => {
+    if (!req.user) return reply.code(401).send({ error: "unauthenticated" });
+    const rows = listSessions(req.user.id);
+    return rows.map((r) => ({ ...r, current: r.id === req.sessionId }));
+  });
+
+  // Revoke one specific session. Caller can only revoke their own.
+  fastify.delete("/api/auth/sessions/:id", async (req, reply) => {
+    if (!req.user) return reply.code(401).send({ error: "unauthenticated" });
+    const target = listSessions(req.user.id).find((s) => s.id === req.params.id);
+    if (!target) return reply.code(404).send({ error: "not found" });
+    revokeSession(req.params.id, "user_revoked", req.user.id);
+    return { ok: true };
+  });
+
+  // "Sign out everywhere" — revoke every session for the caller. The
+  // current session is also revoked, so the next request from this
+  // browser will return 401 and the client must re-login.
+  fastify.post("/api/auth/sessions/revoke-all", async (req, reply) => {
+    if (!req.user) return reply.code(401).send({ error: "unauthenticated" });
+    const count = revokeAllForUser(req.user.id, "revoke_all", req.user.id);
+    return { ok: true, revoked: count };
   });
 
   // Operational helper: returns lockout state for the current request.

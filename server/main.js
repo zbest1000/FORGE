@@ -16,6 +16,7 @@ import { db } from "./db.js";
 import { audit } from "./audit.js";
 import { userById } from "./auth.js";
 import { resolveToken } from "./tokens.js";
+import { authenticateAccess } from "./sessions.js";
 import { attachSSE } from "./sse.js";
 import { register_ as registerMetrics } from "./metrics.js";
 
@@ -162,12 +163,19 @@ app.addHook("onRequest", async (req) => {
   // 2) JWT bearer (interactive clients).
   try {
     const decoded = app.jwt.verify(token);
-    if (decoded?.sub) {
-      const user = userById(decoded.sub);
-      req.user = user || null;
-    } else {
-      req.user = null;
+    if (!decoded?.sub) { req.user = null; return; }
+    // Session-bound JWTs (issued by login / mfa/verify / refresh) carry
+    // `sid` + `jti`. Reject when the session is revoked or the jti has
+    // been rotated. Bearer tokens that don't carry `sid` are treated as
+    // legacy/non-session (no check) — useful for short-lived service
+    // tokens minted out-of-band; in production every login mints a sid.
+    if (decoded.sid) {
+      const session = authenticateAccess({ sid: decoded.sid, jti: decoded.jti });
+      if (!session) { req.user = null; return; }
+      req.sessionId = session.id;
     }
+    const user = userById(decoded.sub);
+    req.user = user || null;
   } catch (err) {
     req.user = null;
     req.log.warn({ err: String(err?.message || err) }, "auth verify failed");

@@ -64,7 +64,17 @@ app.addHook("onRequest", async (req) => {
     if (r) { req.tokenId = r.tokenId; req.tokenScopes = r.scopes; }
     return;
   }
-  try { const d = app.jwt.verify(tok); req.user = d?.sub ? userById(d.sub) : null; } catch {}
+  try {
+    const d = app.jwt.verify(tok);
+    if (!d?.sub) return;
+    if (d.sid) {
+      const { authenticateAccess } = await import("../server/sessions.js");
+      const session = authenticateAccess({ sid: d.sid, jti: d.jti });
+      if (!session) return;
+      req.sessionId = session.id;
+    }
+    req.user = userById(d.sub);
+  } catch {}
 });
 
 await app.register((await import("../server/routes/auth.js")).default);

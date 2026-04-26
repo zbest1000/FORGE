@@ -20,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -840,6 +840,43 @@ function migrate() {
         CREATE INDEX IF NOT EXISTS idx_external_links_forge ON external_object_links(forge_kind, forge_id);
       `);
       setVersion(7);
+    }
+
+    if (getVersion() < 8) {
+      // Per-session row backing access tokens + refresh tokens. The access
+      // JWT carries `sid` (= sessions.id) and `jti` (= sessions.access_jti).
+      // Auth resolution rejects any JWT whose `sid` row is revoked, or
+      // whose `jti` does not match the session's current access_jti — so
+      // a stolen-then-rotated token cannot ride alongside the new one.
+      //
+      // Refresh tokens are hashed (sha256) at rest. Rotation replaces
+      // both `refresh_hash` and `access_jti`; the previous `refresh_hash`
+      // is moved into `previous_refresh_hash` exactly once so that a
+      // replay of the old refresh token can be detected and invalidate
+      // the entire session (suspected token theft).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          access_jti TEXT NOT NULL,
+          refresh_hash TEXT,
+          previous_refresh_hash TEXT,
+          mfa TEXT,
+          ip TEXT,
+          user_agent TEXT,
+          created_at TEXT NOT NULL,
+          last_used_at TEXT,
+          rotated_at TEXT,
+          expires_at TEXT,
+          refresh_expires_at TEXT,
+          revoked_at TEXT,
+          revoked_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, revoked_at);
+        CREATE INDEX IF NOT EXISTS idx_sessions_jti ON sessions(access_jti);
+        CREATE INDEX IF NOT EXISTS idx_sessions_refresh ON sessions(refresh_hash);
+      `);
+      setVersion(8);
     }
   })();
 }
