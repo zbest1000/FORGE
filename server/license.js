@@ -528,6 +528,25 @@ function normalisePayload(p) {
 // ---------------------------------------------------------------------------
 // Active license selection + materialisation
 // ---------------------------------------------------------------------------
+//
+// FORGE supports two activation models, in priority order:
+//
+//   1. **Online activation via the local license server.** The customer
+//      runs a local LS sidecar that authenticates to FORGE LLC's
+//      central server with a customer-scoped activation key, fetches
+//      a signed entitlement bundle, and serves it on the LAN. Configure
+//      with FORGE_LOCAL_LS_URL + FORGE_LOCAL_LS_TOKEN. Bundles refresh
+//      every 30 minutes by default.
+//
+//   2. **Legacy / air-gapped offline tokens.** A `forge1.*` token
+//      pasted into the admin UI (DB), the FORGE_LICENSE env var, or
+//      a license.txt file next to FORGE_DATA_DIR. Verified locally
+//      against the same vendor public key. No activation traffic.
+//
+// Both paths share the same `materialiseToken()` plumbing — entitlement
+// bundles are translated into the same internal shape, so feature
+// gating, the admin UI, and the audit ledger don't care which source
+// was used.
 
 const COMMUNITY_FALLBACK = Object.freeze({
   source: "fallback",
@@ -546,6 +565,14 @@ const COMMUNITY_FALLBACK = Object.freeze({
   reasons: [],
 });
 
+// In-memory cache of the most recent local-LS-supplied entitlement.
+// Populated by `pollLocalLicenseServer()`; consumed by `getLicense()`
+// before any of the legacy sources are checked.
+let _onlineEntitlement = null;
+let _onlineMaterialised = null;
+let _onlineLastFetchAt = 0;
+let _onlineLastError = null;
+
 let cached = null;
 let cachedAt = 0;
 const CACHE_MS = 5_000;
@@ -558,15 +585,25 @@ export function clearLicenseCache() {
 /**
  * Resolve the *effective* license. Sources are checked in this order:
  *
- *   1. The license stored in the database (admin-installed).
- *   2. `FORGE_LICENSE` env var (handy for cloud/k8s deployments).
- *   3. A `license.txt` next to the data dir.
+ *   1. **Online activation** — entitlement bundle fetched from the
+ *      customer's local license server (set FORGE_LOCAL_LS_URL).
+ *   2. The license stored in the database (admin-installed).
+ *   3. `FORGE_LICENSE` env var (handy for cloud/k8s deployments).
+ *   4. A `license.txt` next to the data dir.
  *
  * Returns a fully-materialised entitlement object — never null.
  */
 export function getLicense({ skipCache = false } = {}) {
   if (!skipCache && cached && Date.now() - cachedAt < CACHE_MS) return cached;
 
+  // 1. Online activation via the local license server.
+  if (_onlineMaterialised) {
+    cached = _onlineMaterialised;
+    cachedAt = Date.now();
+    return cached;
+  }
+
+  // 2..4. Legacy / offline token sources.
   const sources = [];
   const stored = readStoredToken();
   if (stored) sources.push({ source: "db", token: stored });
@@ -581,6 +618,21 @@ export function getLicense({ skipCache = false } = {}) {
       cachedAt = Date.now();
       return verdict;
     }
+  }
+
+  // 5. If a local LS URL is configured but we couldn't reach it AND
+  //    no offline token exists, surface that as a richer "needs
+  //    activation" status rather than a silent community fallback.
+  if (process.env.FORGE_LOCAL_LS_URL) {
+    const verdict = {
+      ...COMMUNITY_FALLBACK,
+      source: "local_ls_unreachable",
+      status: "not_activated",
+      reasons: _onlineLastError ? [`local_ls_error: ${_onlineLastError}`] : ["local_ls_unreachable"],
+    };
+    cached = verdict;
+    cachedAt = Date.now();
+    return cached;
   }
 
   cached = { ...COMMUNITY_FALLBACK };
@@ -654,6 +706,180 @@ function computeFeatureSet(tier, override) {
   for (const f of override?.add || []) base.add(f);
   for (const f of override?.remove || []) base.delete(f);
   return [...base].sort();
+}
+
+// ---------------------------------------------------------------------------
+// Entitlement bundles (online activation via local license server)
+// ---------------------------------------------------------------------------
+
+const ENTITLEMENT_PREFIX = "entitlement1.";
+
+/**
+ * Verify a `entitlement1.*` JWS-style bundle issued by a FORGE LLC
+ * central license server. Same Ed25519 vendor key as `forge1.*`.
+ */
+export function verifyEntitlementBundle(token) {
+  const out = { ok: false, payload: null, error: null };
+  if (!token || typeof token !== "string" || !token.startsWith(ENTITLEMENT_PREFIX)) {
+    out.error = "malformed: missing entitlement1. prefix";
+    return out;
+  }
+  const rest = token.slice(ENTITLEMENT_PREFIX.length);
+  const parts = rest.split(".");
+  if (parts.length !== 2) { out.error = "malformed: expected payload.signature"; return out; }
+  let payload;
+  try { payload = JSON.parse(b64uDecode(parts[0]).toString("utf8")); }
+  catch { out.error = "malformed: payload not JSON"; return out; }
+  out.payload = payload;
+  let sig;
+  try { sig = b64uDecode(parts[1]); }
+  catch { out.error = "malformed: signature not base64url"; return out; }
+  let key;
+  try { key = loadVendorPublicKey(); } catch (err) { out.error = "no_pubkey: " + err.message; return out; }
+  const canonical = canonicalJSON(payload);
+  out.ok = crypto.verify(null, Buffer.from(canonical, "utf8"), key, sig);
+  if (!out.ok) out.error = "signature mismatch";
+  return out;
+}
+
+/**
+ * Translate a verified entitlement-bundle payload into the same
+ * internal verdict shape as a `forge1.*` token. The bundle's own
+ * `expires_at` is the rotation deadline, NOT the license expiry —
+ * those are tracked separately.
+ */
+function materialiseEntitlement(payload, { graceExpired = false } = {}) {
+  const reasons = [];
+  const tier = TIERS.includes(payload.tier) ? payload.tier : "community";
+  const limits = TIER_DEFAULT_SEATS[tier] || ENTERPRISE_LIMITS;
+  const features = computeFeatureSet(tier, payload.features);
+
+  const verdict = {
+    source: "local_ls",
+    raw: null,
+    license_id: payload.license_id,
+    customer: payload.customer_name,
+    contact: payload.contact || null,
+    edition: payload.edition || tier,
+    tier,
+    term: payload.term || "annual",
+    seats: Number(payload.seats || limits.seats),
+    hard_seat_cap: Math.max(Number(payload.seats || 0), limits.hard) || limits.hard,
+    issued_at: payload.issued_at,
+    starts_at: payload.starts_at,
+    expires_at: payload.license_expires_at,
+    maintenance_until: payload.maintenance_until || null,
+    deployment: payload.deployment || "self_hosted",
+    features,
+    notes: null,
+    status: "ok",
+    reasons,
+    bundle_id: payload.bundle_id,
+    bundle_expires_at: payload.expires_at,
+  };
+
+  const today = new Date();
+  if (verdict.expires_at && new Date(verdict.expires_at) < today) {
+    verdict.status = "expired";
+    reasons.push(`expired_at ${verdict.expires_at}`);
+    verdict.features = TIER_DEFAULTS.community.slice();
+    verdict.tier = "community";
+  } else if (verdict.expires_at) {
+    const days = Math.ceil((new Date(verdict.expires_at) - today) / 86_400_000);
+    if (days <= 30) reasons.push(`expires_in_${days}_days`);
+  }
+  if (graceExpired) {
+    verdict.status = "offline_grace_expired";
+    reasons.push("offline_grace_expired");
+    verdict.features = TIER_DEFAULTS.community.slice();
+    verdict.tier = "community";
+  }
+  return verdict;
+}
+
+/**
+ * Pull a fresh entitlement from the local license server. Returns
+ * the materialised verdict on success and updates the in-memory
+ * cache; on failure clears the online cache so getLicense() can fall
+ * through to legacy sources / community fallback.
+ */
+export async function pollLocalLicenseServer() {
+  const url = process.env.FORGE_LOCAL_LS_URL;
+  const token = process.env.FORGE_LOCAL_LS_TOKEN;
+  if (!url || !token) return null;
+  const target = url.replace(/\/+$/, "") + "/api/v1/entitlement";
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(new Error("timeout")), 10_000);
+  try {
+    const r = await fetch(target, {
+      headers: { "Authorization": "Bearer " + token, "Accept": "application/json" },
+      signal: ctrl.signal,
+    });
+    if (!r.ok) {
+      _onlineLastError = `local_ls_status_${r.status}`;
+      _onlineEntitlement = null;
+      _onlineMaterialised = null;
+      clearLicenseCache();
+      return null;
+    }
+    const body = await r.json();
+    if (process.env.FORGE_EXPECTED_CUSTOMER_ID && body?.customer?.id && body.customer.id !== process.env.FORGE_EXPECTED_CUSTOMER_ID) {
+      _onlineLastError = "customer_id_mismatch";
+      _onlineEntitlement = null;
+      _onlineMaterialised = null;
+      clearLicenseCache();
+      return null;
+    }
+    const verified = verifyEntitlementBundle(body.entitlement);
+    if (!verified.ok) {
+      _onlineLastError = "signature_invalid: " + verified.error;
+      _onlineEntitlement = null;
+      _onlineMaterialised = null;
+      clearLicenseCache();
+      return null;
+    }
+    _onlineEntitlement = body.entitlement;
+    _onlineLastFetchAt = Date.now();
+    _onlineLastError = null;
+    _onlineMaterialised = materialiseEntitlement(verified.payload, { graceExpired: !!body.grace_expired });
+    _onlineMaterialised.online = !!body.online;
+    _onlineMaterialised.last_central_at = body.last_central_at || null;
+    _onlineMaterialised.grace_until = body.grace_until || null;
+    if (!body.online && body.in_grace) _onlineMaterialised.reasons.push("offline_in_grace_period");
+    clearLicenseCache();
+    return _onlineMaterialised;
+  } catch (err) {
+    _onlineLastError = String(err.message || err);
+    _onlineEntitlement = null;
+    _onlineMaterialised = null;
+    clearLicenseCache();
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** For tests + admin UI. */
+export function localLicenseStatus() {
+  return {
+    configured: !!process.env.FORGE_LOCAL_LS_URL,
+    url: process.env.FORGE_LOCAL_LS_URL || null,
+    last_fetch_at: _onlineLastFetchAt ? new Date(_onlineLastFetchAt).toISOString() : null,
+    last_error: _onlineLastError,
+    online: !!_onlineMaterialised && _onlineMaterialised.status === "ok",
+    bundle_id: _onlineMaterialised?.bundle_id || null,
+    bundle_expires_at: _onlineMaterialised?.bundle_expires_at || null,
+  };
+}
+
+/** Test/dev helper: forcibly inject a materialised online verdict
+ *  without going over the network. */
+export function _setOnlineMaterialisedForTest(v) {
+  _onlineMaterialised = v;
+  _onlineEntitlement = v ? "test" : null;
+  _onlineLastFetchAt = v ? Date.now() : 0;
+  _onlineLastError = null;
+  clearLicenseCache();
 }
 
 // ---------------------------------------------------------------------------

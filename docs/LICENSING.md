@@ -1,251 +1,264 @@
 # FORGE — Licensing
 
-FORGE ships with a built-in, offline-verifiable licensing system. The
-goal is to support a clean modular product story — **community**,
-**personal**, **team**, and **enterprise** editions on either
-**annual** or **perpetual** terms — without ever phoning home and
-without depending on a vendor server being reachable from the
-customer's network.
+FORGE ships with a three-tier license activation system:
+
+```
+┌────────────────────────────┐  HTTPS, vendor API key  ┌────────────────────────────┐
+│ FORGE LLC central server   │ ◄────────────────────── │ Customer local LS sidecar  │
+│ (vendor side, holds the    │ ──────────────────────► │ (one per customer site)    │
+│  Ed25519 signing key)      │  signed entitlement     │                            │
+└────────────────────────────┘  bundle (24 h)          └────────────────────────────┘
+                                                                    ▲
+                                                                    │ HTTPS, LAN-only
+                                                                    │ shared-secret
+                                                          ┌─────────┴───────────┐
+                                                          │ FORGE app instances │
+                                                          │ (1..N replicas)     │
+                                                          └─────────────────────┘
+```
+
+The central server is operated by FORGE LLC. The local license server
+is a small, self-hostable Node service that customers run inside their
+own network. The FORGE app talks only to the local server — it never
+opens an outbound connection to FORGE LLC, which keeps the public-
+internet attack surface limited to the one outbound TCP connection per
+customer site.
 
 This document covers:
 
 - [Editions and feature catalog](#editions-and-feature-catalog)
-- [License lifecycle](#license-lifecycle)
-- [How to install a license](#how-to-install-a-license)
+- [Online activation flow (recommended)](#online-activation-flow-recommended)
+- [Offline activation (air-gapped installs)](#offline-activation-air-gapped-installs)
 - [How verification works](#how-verification-works)
 - [Vendor key management](#vendor-key-management)
-- [Issuing licenses (`forge-license` CLI)](#issuing-licenses-forge-license-cli)
-- [Operating model](#operating-model)
+- [Operator CLI cheat sheet](#operator-cli-cheat-sheet)
+- [Local development quick start](#local-development-quick-start)
+- [Troubleshooting](#troubleshooting)
 
 ## Editions and feature catalog
 
-Each tier maps to a starting-point feature list (`TIER_DEFAULTS` in
-`server/license.js`). A specific license can override that default by
-adding or removing individual features — useful for promotional bundles
-and per-customer deals.
+| Plan        | Default seats     | Term modes        | Highlights                                                                                                       |
+| ----------- | ----------------: | ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Community   | 3 (hard cap 5)    | Perpetual         | Core auth, Documents, Team Spaces, Audit log, Search, PDF viewer, Mermaid, UNS browser.                          |
+| Personal    | 1 (hard cap 1)    | Annual            | Adds 3D viewer, CAD viewer, BIM/IFC, Review cycles, RFI cross-linking, Forms.                                    |
+| Team        | 25 (hard cap 30)  | Annual, Perpetual | Adds DWG → DXF conversion, Commissioning, MQTT bridge, i3X API, Webhooks, AI providers, GraphQL, Audit pack.     |
+| Enterprise  | Unlimited         | Annual, Perpetual | All Team features plus OPC UA, ERP connectors, Compliance console, SSO/SCIM/MFA enforce, OTel, HA deployment.    |
 
-| Feature                              | community | personal | team | enterprise |
-| ------------------------------------ | :-------: | :------: | :--: | :--------: |
-| Core auth / docs / team spaces       |     ●     |    ●     |  ●   |     ●      |
-| Audit log view + tamper check        |     ●     |    ●     |  ●   |     ●      |
-| Search                               |     ●     |    ●     |  ●   |     ●      |
-| PDF viewer / Mermaid diagrams        |     ●     |    ●     |  ●   |     ●      |
-| 3D viewer (three.js)                 |           |    ●     |  ●   |     ●      |
-| CAD viewer / DWG conversion          |           |    ●†    |  ●   |     ●      |
-| BIM/IFC viewer (web-ifc)             |           |    ●     |  ●   |     ●      |
-| Review cycles, RFI links, forms      |           |    ●     |  ●   |     ●      |
-| Commissioning checklists             |           |          |  ●   |     ●      |
-| MQTT bridge / UNS / i3X API          |           |          |  ●   |     ●      |
-| OPC UA bridge                        |           |          |      |     ●      |
-| Webhooks / n8n automations / AI      |           |          |  ●   |     ●      |
-| GraphQL API                          |           |          |  ●   |     ●      |
-| Audit-pack export / retention        |           |          |  ●   |     ●      |
-| Compliance console                   |           |          |      |     ●      |
-| SSO (SAML/OIDC) / SCIM / MFA enforce |           |          |      |     ●      |
-| Prometheus / OpenTelemetry / HA      |           |     ⚪    |  ●prom |  all     |
+Every gated feature carries a stable id (e.g. `industrial.mqtt`), an
+English display name, a category, and a one-sentence description.
+The authoritative catalog is `FEATURE_CATALOG` in `server/license.js`;
+the same shape is exposed at `GET /api/license/catalog`.
 
-*● = included; ⚪ = via `features.add`; † = `personal` includes the
-viewer but not DWG → DXF conversion.*
+The customer-facing UI **never** shows raw flag ids — it always uses
+the display name (e.g. *"MQTT bridge"*, *"OPC UA bridge"*,
+*"GraphQL API"*) so screen labels, modals, and 402 error toasts read
+naturally.
 
-The authoritative feature catalog is `FEATURES` in
-`server/license.js` and `src/core/license.js` — the same list is
-exposed at `GET /api/license/catalog` for the admin UI.
+A specific license can override the tier defaults:
 
-### Default seat counts
+- `features.add[]` — add features beyond the tier default.
+- `features.remove[]` — remove features from the tier default.
 
-| Tier        | Seats (default) | Hard cap | Term modes        |
-| ----------- | --------------: | -------: | ----------------- |
-| community   | 3               | 5        | perpetual only    |
-| personal    | 1               | 1        | annual            |
-| team        | 25              | 30 (10%) | annual, perpetual |
-| enterprise  | unlimited       | ∞        | annual, perpetual |
+## Online activation flow (recommended)
 
-`hard cap` is a soft-warn → hard-block window so an organisation can
-on-board a temporary contractor without an immediate licensing escalation;
-once the hard cap is hit, new users cannot be created until either a seat
-is freed or the license is upgraded.
+This is the path for any customer who can reach the public internet.
 
-## License lifecycle
+### One-time setup
 
-A FORGE license is a single string:
+1. **FORGE LLC creates a customer record** in their central license
+   server and issues you two secrets:
+   - A `customer_id` — opaque identifier (e.g. `CUST-9C3F2A`).
+   - An `activation_key` — high-entropy bearer secret (e.g.
+     `fla_abc123…`). Treat this like a database password: it never
+     leaves your network.
 
-```
-forge1.<base64url(canonical-payload)>.<base64url(ed25519-signature)>
-```
+2. **You deploy the local license server** (`services/local-license/`)
+   on your network with these env vars:
 
-| Field                | Meaning                                                              |
-| -------------------- | -------------------------------------------------------------------- |
-| `license_id`         | Vendor-assigned identifier (e.g. `FRG-9C3F2A`).                      |
-| `customer`           | Display string (printed in the admin license panel and in audit).    |
-| `tier`               | `community` / `personal` / `team` / `enterprise`.                    |
-| `edition`            | Free-form display string; defaults to `tier`.                        |
-| `term`               | `annual` (sets `expires_at`) or `perpetual`.                         |
-| `seats`              | Licensed maximum of *enabled* users.                                 |
-| `issued_at`          | Vendor signing timestamp.                                            |
-| `starts_at`          | Earliest date the license is valid.                                  |
-| `expires_at`         | Annual term only. After expiry the install downgrades to community.  |
-| `maintenance_until`  | Perpetual term only. Eligibility for new releases.                   |
-| `features.add[]`     | Features added on top of `TIER_DEFAULTS[tier]`.                      |
-| `features.remove[]`  | Features removed from the tier default.                              |
-| `deployment`         | `self_hosted` or `cloud`. Informational; not enforced at runtime.    |
-| `notes`              | Free-form notes shown in the admin panel.                            |
+   ```bash
+   FORGE_LLC_URL=https://license.forge.llc          # or your private vendor URL
+   FORGE_CUSTOMER_ID=CUST-9C3F2A
+   FORGE_ACTIVATION_KEY=fla_…
+   LOCAL_LS_SHARED_TOKEN=$(openssl rand -hex 32)    # used by FORGE on the LAN
+   ```
 
-### Annual vs perpetual
+   The local LS exposes `:7200/api/v1/entitlement` on your LAN.
 
-- **Annual**: `expires_at` set; on the day after expiry the running
-  installation materialises as community-tier (paid features 402, data
-  remains readable). Renewing simply replaces the token.
-- **Perpetual**: `expires_at = null`; the license never lapses.
-  `maintenance_until` controls eligibility for future builds — it is
-  surfaced in the admin UI and in the boot log, but not enforced at
-  runtime. (The `forge-license inspect` CLI flags expired maintenance
-  for compliance reporting.)
+3. **You point each FORGE app instance at the local LS:**
 
-## How to install a license
+   ```bash
+   FORGE_LOCAL_LS_URL=http://forge-license.lan:7200
+   FORGE_LOCAL_LS_TOKEN=<the LOCAL_LS_SHARED_TOKEN>
+   FORGE_EXPECTED_CUSTOMER_ID=CUST-9C3F2A           # optional but recommended
+   ```
 
-The active license is resolved in this order:
+   The FORGE app pulls the current entitlement bundle on boot and
+   refreshes every 30 minutes (configurable via
+   `FORGE_LOCAL_LS_REFRESH_S`).
 
-1. Token stored in the SQLite database (set via `POST /api/license` from
-   the admin UI). **Recommended** for self-hosted installs.
-2. `FORGE_LICENSE` environment variable (recommended for k8s and
-   container orchestration).
-3. `license.txt` file inside `FORGE_DATA_DIR` (recommended for system
-   service deployments — same place as `forge.db`).
-4. None of the above → **community** fallback.
+### Runtime
 
-### From the admin UI
+- The local license server contacts the FORGE LLC central server every
+  hour (configurable: `LOCAL_LS_REFRESH_S`).
+- The central server returns a **signed entitlement bundle** valid for
+  24 hours.
+- The FORGE app verifies every bundle locally with the bundled vendor
+  public key. A bundle that fails verification is rejected and never
+  cached.
+- If FORGE LLC is unreachable, the local LS keeps serving the most
+  recent verified bundle (a **grace period**, default **7 days**,
+  configurable via `LOCAL_LS_GRACE_HOURS`). Once the grace period
+  expires, the FORGE app downgrades to the Community plan.
+- If the local LS is unreachable from a FORGE instance, the FORGE
+  app reports `status = "not_activated"` until the local LS comes
+  back. Paid features fail closed during that window.
 
-1. Sign in as **Organization Owner**.
-2. Navigate to **Admin → License**.
-3. Paste the `forge1.…` token into the install textarea.
-4. Click **Install / replace**.
+### What activation requires from the network
 
-The license is recorded in the audit ledger
-(`license.install` / `license.uninstall`).
+- **Local LS → FORGE LLC central server**: outbound HTTPS to
+  `FORGE_LLC_URL` on activation, refresh, and heartbeat. Outbound only,
+  one TCP connection at a time, retries on its own. **Required to be
+  online when the customer first activates.**
+- **FORGE app → Local LS**: HTTP/HTTPS on the LAN, on
+  `FORGE_LOCAL_LS_URL`. **Internal traffic only.**
 
-### From the environment
+## Offline activation (air-gapped installs)
 
-Containerised / cloud deployments:
+For genuinely air-gapped customers, FORGE supports a one-shot signed
+token issued by FORGE LLC. There is no central server contact at any
+point.
 
-```yaml
-# docker-compose.yml
-services:
-  forge:
-    environment:
-      FORGE_LICENSE: "forge1.eyJ..."
-```
+1. FORGE LLC issues a `forge1.<payload>.<sig>` token using
+   `npm run license:issue` against your air-gapped customer record.
+2. The customer pastes the token into **Admin → License → Install
+   activation token**, OR sets `FORGE_LICENSE` in the environment, OR
+   drops a `license.txt` in `FORGE_DATA_DIR`.
+3. The FORGE app verifies the token locally — same Ed25519 vendor
+   public key — and uses it for as long as it remains valid.
+4. Renewal is the same loop with a freshly issued token.
 
-```yaml
-# Kubernetes (commit-safe via secret reference)
-env:
-  - name: FORGE_LICENSE
-    valueFrom:
-      secretKeyRef:
-        name: forge-license
-        key: token
-```
-
-### From a file
-
-```bash
-# next to your data directory (default: $REPO/data/license.txt)
-echo "forge1.eyJ..." > /var/lib/forge/license.txt
-chmod 600 /var/lib/forge/license.txt
-```
+Air-gapped installs do not benefit from short-lived rotation, so the
+support contract typically scopes them with `--term annual` and
+explicit renewals.
 
 ## How verification works
 
-- The vendor signs the canonicalised payload bytes with an Ed25519
-  private key. Canonicalisation is stable key-order JSON
-  (`server/crypto.js → canonicalJSON`) so re-encoding the payload never
-  invalidates the signature.
-- FORGE verifies with the matching public key bundled at build time
-  (`config/license-pubkey.pem`), or whatever PEM is supplied in the
-  `FORGE_LICENSE_PUBLIC_KEY` environment variable.
-- Verification is purely local — no network call, no telemetry, no
-  callback to a vendor service. The license module is import-safe so
-  it works in tests, the `forge-license` CLI, and the running server.
+- All tokens (`forge1.*` for offline, `entitlement1.*` for online
+  bundles) are signed with **Ed25519** (`node:crypto`).
+- The matching public key is bundled into every FORGE binary and every
+  copy of the local LS at build time
+  (`config/license-pubkey.pem`). Production deployments override via
+  `FORGE_LICENSE_PUBLIC_KEY` if running with a private fork.
+- Verification is purely local — both at the local LS (which discards
+  any forged bundle from a tampered central server) and at the FORGE
+  app (which discards any forged bundle from a swapped local LS).
+- `FORGE_EXPECTED_CUSTOMER_ID` adds a defence in depth: if the local
+  LS is replaced with a different customer's, the FORGE app refuses
+  the bundle even if the signature is valid.
 
 ## Vendor key management
 
-The repository ships with a **development** keypair so unit tests and
-the bundled `--dev-key` CLI flag can produce verifiable tokens without
-external state. **Production vendors must replace this keypair before
-distributing a fork**:
+The repository ships with FORGE LLC's **development** keypair so unit
+tests and end-to-end smoke runs are deterministic. **Forks distributing
+FORGE under their own brand must replace this keypair** before
+distribution:
 
 ```bash
-# 1. Generate vendor keys
+# 1. Generate a vendor keypair
 node scripts/license/keygen.js --out vendor
 
-# 2. Install the public half into the FORGE binary
+# 2. Install the public half into the FORGE binary + local LS
 cp vendor-pub.pem config/license-pubkey.pem
 
-# 3. Store the private half in your vendor secrets manager
-#    (1Password, Vault, AWS Secrets Manager, etc.).
-#    NEVER commit the private key.
+# 3. Install the private half on your central license server only
+#    (NEVER commit; store in your secrets manager and reference via
+#     FORGE_LICENSE_SIGNING_KEY_PATH).
 
 # 4. Rebuild and redistribute
 npm run build
 ```
 
-Self-hosted customers running their own forks can override the bundled
-public key without rebuilding by setting:
+## Operator CLI cheat sheet
+
+These commands run on the central license server host. They write
+directly to the SQLite db and audit log.
 
 ```bash
-export FORGE_LICENSE_PUBLIC_KEY="$(cat vendor-pub.pem)"
+# Print the public key (so customers can verify it matches their bundled key)
+node services/license-server/scripts/admin.js print-pubkey
+
+# Provision a new customer
+node services/license-server/scripts/admin.js create-customer \
+  --name "Acme Corp" --email billing@acme.example
+
+# Mint an activation key (the raw secret is shown ONCE)
+node services/license-server/scripts/admin.js create-key \
+  --customer CUST-… --label main
+
+# Issue a license
+node services/license-server/scripts/admin.js create-license \
+  --customer CUST-… --tier enterprise --term annual --years 2 --seats 100
+
+# Issue a perpetual license with custom feature set
+node services/license-server/scripts/admin.js create-license \
+  --customer CUST-… --tier team --term perpetual --maintenance 3 \
+  --add ops.ha --remove industrial.opcua
+
+# Inspect customer state (license, keys, recent activations)
+node services/license-server/scripts/admin.js show-customer --customer CUST-…
+
+# Revoke either side
+node services/license-server/scripts/admin.js revoke-key --key KEY-…
+node services/license-server/scripts/admin.js revoke-license --license LIC-…
 ```
 
-## Issuing licenses (`forge-license` CLI)
+A remote operator API is also available at `:7100/admin/v1/*` guarded
+by `OPERATOR_API_TOKEN` for tooling integration.
+
+## Local development quick start
+
+A complete three-tier dev stack is available via compose:
 
 ```bash
-# Issue a 2-year team license, 25 seats, signed with vendor private key
-node scripts/license/issue.js \
-  --customer "Acme Corp" \
-  --contact  "billing@acme.example" \
-  --tier     team \
-  --term     annual --years 2 \
-  --seats    25 \
-  --priv-key vendor-priv.pem
-# → forge1.eyJ...
+# Generate a dev signing keypair (private half stays on the host)
+mkdir -p services/license-server
+node scripts/license/keygen.js --out services/license-server/central
+chmod 600 services/license-server/central-priv.pem
 
-# Inspect any token (works on prod files via stdin)
-cat /var/lib/forge/license.txt | node scripts/license/inspect.js --file -
+# Boot just the central server
+docker compose -f services/docker-compose.licensing.yml up -d central-license
 
-# Issue a perpetual enterprise license with a feature held back
-node scripts/license/issue.js \
-  --customer "Industrial Ops" \
-  --tier     enterprise \
-  --term     perpetual \
-  --maintenance 3 \
-  --seats    250 \
-  --remove   industrial.opcua \
-  --priv-key vendor-priv.pem
+# Provision a test customer
+docker compose -f services/docker-compose.licensing.yml exec central-license \
+  node scripts/admin.js create-customer --name "Dev" --email dev@test.example
+docker compose -f services/docker-compose.licensing.yml exec central-license \
+  node scripts/admin.js create-key --customer CUST-… --label dev
+docker compose -f services/docker-compose.licensing.yml exec central-license \
+  node scripts/admin.js create-license --customer CUST-… \
+    --tier enterprise --term annual --years 1 --seats 25
+
+# Capture the activation key + customer id, then:
+cat > services/.env <<EOF
+FORGE_CUSTOMER_ID=CUST-…
+FORGE_ACTIVATION_KEY=fla_…
+LOCAL_LS_SHARED_TOKEN=$(openssl rand -hex 32)
+FORGE_TENANT_KEY=$(openssl rand -hex 32)
+FORGE_JWT_SECRET=$(openssl rand -hex 32)
+FORGE_LICENSE_PUBLIC_KEY="$(cat services/license-server/central-pub.pem)"
+EOF
+
+# Bring up the rest of the stack
+docker compose --env-file services/.env -f services/docker-compose.licensing.yml up -d
 ```
 
-Convenience npm aliases:
+## Troubleshooting
 
-```bash
-npm run license:keygen   # ed25519 keypair
-npm run license:issue -- --customer Foo --dev-key ...
-npm run license:inspect -- --token "forge1.…"
-```
-
-## Operating model
-
-- **Audit**: every `install` / `uninstall` is recorded in the existing
-  HMAC-chained audit ledger so a security review can prove which
-  Organization Owner activated which license and when.
-- **No phone home**: FORGE never makes outbound network requests for
-  licensing. Air-gapped installs are first-class.
-- **Soft warnings**: on every successful boot the active license is
-  logged at `INFO` level (source / customer / tier / status / feature
-  count). Within 30 days of expiry, a structured warning reason
-  (`expires_in_<n>_days`) appears both in the API response and the
-  admin banner.
-- **Recovery**: deleting the license token from `meta.license_token`
-  (or restarting without `FORGE_LICENSE` / `license.txt`) drops the
-  installation back to community. No data is lost; just paid features
-  fail closed.
-- **Provenance**: container images are signed via cosign keyless and
-  carry a build-provenance attestation. See `docs/RELEASE.md` for the
-  verification command.
+| Symptom                                                   | Likely cause + fix                                                                  |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Admin → License shows "Local server unreachable"          | FORGE app can't reach `FORGE_LOCAL_LS_URL`. Check the URL, DNS, and `LOCAL_LS_SHARED_TOKEN`. |
+| Admin → License shows "We haven't been able to reach …"   | Local LS lost contact with FORGE LLC for longer than `LOCAL_LS_GRACE_HOURS`. Restore connectivity, then click *Refresh activation now*. |
+| 402 errors with "feature_not_licensed"                    | Active license doesn't include that feature. Check `tier_floor` in `/api/license/catalog`. |
+| Banner says "License signature didn't verify"             | Public key on the FORGE app doesn't match the central server's signing key. Either set `FORGE_LICENSE_PUBLIC_KEY` or replace `config/license-pubkey.pem`. |
+| Activation log says `customer_disabled`                   | The customer's account is disabled in the central server. Contact FORGE LLC support. |
+| Activation log says `license_expired` with HTTP 410       | The annual license expired. Renew via the FORGE LLC portal.                          |
+| `FORGE_EXPECTED_CUSTOMER_ID` mismatch                     | Local LS is provisioned for a different customer than the FORGE app expects. Investigate before using. |

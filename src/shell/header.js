@@ -99,16 +99,18 @@ export function renderHeader() {
 function licenseChip() {
   const lic = currentLicense();
   if (!lic || lic.source === "demo") return null;
-  const cls = lic.tier === "enterprise" ? "license-chip enterprise"
-            : lic.tier === "team" ? "license-chip team"
-            : lic.tier === "personal" ? "license-chip personal"
-            : "license-chip community";
+  const cls = "license-chip " + (lic.tier || "community");
+  const tierName = lic.tier_label || (lic.tier ? lic.tier[0].toUpperCase() + lic.tier.slice(1) : "Community");
   const label = lic.tier === "community"
     ? "Community"
-    : `${lic.tier[0].toUpperCase() + lic.tier.slice(1)}${lic.usage?.active_users != null ? ` · ${lic.usage.active_users}/${lic.seats}` : ""}`;
+    : `${tierName}${lic.usage?.active_users != null ? ` · ${lic.usage.active_users}/${lic.seats}` : ""}`;
+  const titleParts = [];
+  if (lic.customer && lic.customer !== "Unlicensed") titleParts.push(lic.customer);
+  if (lic.edition_label) titleParts.push(lic.edition_label);
+  if (lic.local_ls?.online) titleParts.push("online");
   return el("button", {
     class: cls,
-    title: lic.customer ? `${lic.customer} (${lic.edition || lic.tier})` : "License",
+    title: titleParts.join(" · ") || "Manage license",
     onClick: () => navigate("/admin/license"),
   }, [label]);
 }

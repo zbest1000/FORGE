@@ -9,9 +9,11 @@ import {
   getLicense, installLicense, uninstallLicense,
   publicEntitlements, FEATURES, FEATURE_CATALOG, TIER_DEFAULTS, TIERS,
   TIER_LABELS, TIER_DESCRIPTIONS, describeFeature,
-  activeUserCount,
+  activeUserCount, localLicenseStatus, pollLocalLicenseServer,
 } from "../license.js";
 import { audit } from "../audit.js";
+
+// (license install/refresh actions audit-log themselves below)
 
 export default async function licenseRoutes(app) {
   // Public-ish entitlements summary: any authenticated user can fetch
@@ -21,6 +23,33 @@ export default async function licenseRoutes(app) {
     const lic = getLicense();
     const out = publicEntitlements(lic);
     out.usage = { active_users: activeUserCount(), seats: lic.seats, hard_seat_cap: lic.hard_seat_cap };
+    out.local_ls = localLicenseStatus();
+    return out;
+  });
+
+  // Force the FORGE app to re-pull from the local license server right
+  // now. Useful from the admin UI after the operator has just activated
+  // or upgraded the customer's plan.
+  app.post("/api/license/refresh", { preHandler: require_("admin.view") }, async (req, reply) => {
+    if (!process.env.FORGE_LOCAL_LS_URL) {
+      return reply.code(409).send({
+        error: "local_ls_not_configured",
+        message: "This installation isn't configured to use a local license server. Set FORGE_LOCAL_LS_URL or install an offline license token instead.",
+      });
+    }
+    if (req.user.role !== "Organization Owner") {
+      return reply.code(403).send({ error: "forbidden", message: "Only the Organization Owner can refresh the activation." });
+    }
+    const result = await pollLocalLicenseServer();
+    audit({
+      actor: req.user.id, action: "license.refresh",
+      subject: result?.bundle_id || "no-bundle",
+      detail: { ok: !!result, status: localLicenseStatus() },
+    });
+    const lic = getLicense({ skipCache: true });
+    const out = publicEntitlements(lic);
+    out.usage = { active_users: activeUserCount(), seats: lic.seats, hard_seat_cap: lic.hard_seat_cap };
+    out.local_ls = localLicenseStatus();
     return out;
   });
 

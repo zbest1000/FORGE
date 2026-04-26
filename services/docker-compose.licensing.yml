@@ -1,0 +1,115 @@
+# services/docker-compose.licensing.yml
+#
+# Optional dev/staging stack that brings up the FORGE licensing chain
+# locally. Three services:
+#
+#   1. central-license  — FORGE LLC role; ports 7100. Hold the signing
+#                         private key in `central-priv.pem` (gitignored).
+#   2. local-license    — customer sidecar; ports 7200. Activates against
+#                         central-license over the compose network.
+#   3. forge            — the FORGE app, configured to pull from
+#                         local-license. Reuses the main repo Dockerfile.
+#
+# Usage:
+#
+#   # 1. Generate a vendor signing keypair and capture the public half.
+#   node scripts/license/keygen.js --out ./services/license-server/central
+#   #   ↑ produces central-pub.pem and central-priv.pem (chmod 600)
+#
+#   # 2. Boot the central server and provision a customer + license.
+#   docker compose -f services/docker-compose.licensing.yml up -d central-license
+#   docker compose -f services/docker-compose.licensing.yml exec central-license \
+#     node scripts/admin.js create-customer --name "Acme Corp"
+#   #   capture CUST-…
+#   docker compose -f services/docker-compose.licensing.yml exec central-license \
+#     node scripts/admin.js create-key --customer CUST-…
+#   #   capture activation_key (shown ONCE)
+#   docker compose -f services/docker-compose.licensing.yml exec central-license \
+#     node scripts/admin.js create-license --customer CUST-… \
+#       --tier enterprise --term annual --years 1 --seats 50
+#
+#   # 3. Set the secrets in a .env file next to this compose file:
+#   #   FORGE_CUSTOMER_ID=CUST-…
+#   #   FORGE_ACTIVATION_KEY=fla_…
+#   #   LOCAL_LS_SHARED_TOKEN=$(openssl rand -hex 32)
+#   #   FORGE_TENANT_KEY=$(openssl rand -hex 32)
+#   #   FORGE_JWT_SECRET=$(openssl rand -hex 32)
+#
+#   # 4. Bring up the rest of the stack.
+#   docker compose -f services/docker-compose.licensing.yml up -d
+
+services:
+  central-license:
+    build: ./license-server
+    image: forge-central-license:local
+    restart: unless-stopped
+    ports: ["7100:7100"]
+    environment:
+      PORT: 7100
+      LOG_LEVEL: info
+      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:-change-me-min-16-chars-please}
+      FORGE_LICENSE_SIGNING_KEY_PATH: /run/secrets/signing-key
+      ENTITLEMENT_TTL_SECONDS: 86400
+    volumes:
+      - central-license-data:/app/data
+    secrets:
+      - signing-key
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7100/healthz').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  local-license:
+    build: ./local-license
+    image: forge-local-license:local
+    restart: unless-stopped
+    ports: ["7200:7200"]
+    environment:
+      PORT: 7200
+      LOG_LEVEL: info
+      FORGE_LLC_URL: http://central-license:7100
+      FORGE_CUSTOMER_ID: ${FORGE_CUSTOMER_ID}
+      FORGE_ACTIVATION_KEY: ${FORGE_ACTIVATION_KEY}
+      LOCAL_LS_SHARED_TOKEN: ${LOCAL_LS_SHARED_TOKEN}
+      LOCAL_LS_REFRESH_S: 3600
+      LOCAL_LS_GRACE_HOURS: 168
+      FORGE_LICENSE_PUBLIC_KEY: ${FORGE_LICENSE_PUBLIC_KEY}
+    volumes:
+      - local-license-data:/app/data
+    depends_on: { central-license: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7200/api/v1/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  forge:
+    build: ..
+    image: forge:local
+    restart: unless-stopped
+    ports: ["3000:3000"]
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      FORGE_DATA_DIR: /app/data
+      FORGE_JWT_SECRET: ${FORGE_JWT_SECRET}
+      FORGE_TENANT_KEY: ${FORGE_TENANT_KEY}
+      FORGE_LICENSE_PUBLIC_KEY: ${FORGE_LICENSE_PUBLIC_KEY}
+      FORGE_LOCAL_LS_URL: http://local-license:7200
+      FORGE_LOCAL_LS_TOKEN: ${LOCAL_LS_SHARED_TOKEN}
+      FORGE_EXPECTED_CUSTOMER_ID: ${FORGE_CUSTOMER_ID}
+      LOG_LEVEL: info
+    volumes:
+      - forge-data:/app/data
+    depends_on:
+      local-license: { condition: service_healthy }
+
+secrets:
+  signing-key:
+    file: ./license-server/central-priv.pem
+
+volumes:
+  central-license-data:
+  local-license-data:
+  forge-data:

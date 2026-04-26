@@ -149,25 +149,56 @@ export function uninstallLicense() {
 }
 
 /**
+ * Force the FORGE app to re-pull from the local license server. Only
+ * meaningful when the installation is in online-activation mode
+ * (i.e. FORGE_LOCAL_LS_URL is set on the server). Returns the new
+ * resolved license, or rejects with the server's error envelope.
+ */
+export function refreshActivation() {
+  return api("/api/license/refresh", { method: "POST" }).then((data) => {
+    _cached = data;
+    notify();
+    return data;
+  });
+}
+
+/**
  * Banner severity for the header strip:
- *   - "danger"  : invalid signature, hard expired, no seats
- *   - "warning" : expires within 30 days, soft seat overage
+ *   - "danger"  : invalid, expired, grace expired, not activated
+ *   - "warning" : expires within 30 days, seat overage, offline-in-grace
  *   - null      : healthy
+ *
+ * Always returns a sentence-cased English string suitable to show users.
  */
 export function licenseBanner() {
   const lic = _cached;
   if (!lic) return null;
-  if (lic.status === "invalid") return { severity: "danger", text: "License signature invalid; running on community tier." };
-  if (lic.status === "expired") return { severity: "danger", text: `License for ${lic.customer} expired on ${lic.expires_at?.slice(0, 10)}; running on community tier.` };
-  if (lic.status === "not_yet_active") return { severity: "warning", text: `License starts on ${lic.starts_at?.slice(0, 10)}.` };
+  if (lic.status === "invalid") {
+    return { severity: "danger", text: "We couldn't verify the license signature. Running on the Community plan." };
+  }
+  if (lic.status === "expired") {
+    return { severity: "danger", text: `Your license for ${lic.customer} expired on ${lic.expires_at?.slice(0, 10)}. Running on the Community plan.` };
+  }
+  if (lic.status === "not_activated") {
+    return { severity: "danger", text: "This installation hasn't activated yet. Check that the local license server is reachable from this server." };
+  }
+  if (lic.status === "offline_grace_expired") {
+    return { severity: "danger", text: "We haven't been able to reach your local license server for too long. Paid features have been disabled until activation succeeds again." };
+  }
+  if (lic.status === "not_yet_active") {
+    return { severity: "warning", text: `Your license is dated to start on ${lic.starts_at?.slice(0, 10)}.` };
+  }
   for (const r of lic.reasons || []) {
     const m = /^expires_in_(\d+)_days$/.exec(r);
-    if (m) return { severity: "warning", text: `License expires in ${m[1]} day${m[1] === "1" ? "" : "s"}.` };
+    if (m) return { severity: "warning", text: `Your license expires in ${m[1]} day${m[1] === "1" ? "" : "s"}.` };
+    if (r === "offline_in_grace_period") {
+      return { severity: "warning", text: "The local license server has been unreachable; running on the cached entitlement until contact is restored." };
+    }
   }
   if (lic.usage && lic.usage.active_users > lic.seats) {
     return {
       severity: "warning",
-      text: `Seat usage ${lic.usage.active_users}/${lic.seats} (over cap).`,
+      text: `${lic.usage.active_users} of ${lic.seats} licensed seats are in use — you're currently over your plan limit.`,
     };
   }
   return null;

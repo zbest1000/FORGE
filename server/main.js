@@ -37,7 +37,7 @@ import complianceRoutes from "./routes/compliance.js";
 import enterpriseSystemRoutes from "./routes/enterprise-systems.js";
 import licenseRoutes from "./routes/license.js";
 import { config } from "./config.js";
-import { getLicense, requireFeature, FEATURES } from "./license.js";
+import { getLicense, requireFeature, FEATURES, pollLocalLicenseServer, localLicenseStatus } from "./license.js";
 
 import { startMqttBridge } from "./connectors/mqtt.js";
 import { startOpcuaBridge } from "./connectors/opcua.js";
@@ -283,6 +283,21 @@ startOutboxWorker(app.log);
 audit({ actor: "system", action: "server.start", subject: "forge", detail: { host: HOST, port: PORT, pid: process.pid } });
 
 try {
+  // If a local license server is configured, do the first activation
+  // pull BEFORE we start serving. This way `/api/license` reflects
+  // the customer's real entitlement on the very first request rather
+  // than briefly showing the community fallback.
+  if (process.env.FORGE_LOCAL_LS_URL) {
+    try { await pollLocalLicenseServer(); }
+    catch (err) { app.log.warn({ err: String(err.message || err) }, "initial local-LS pull failed; will retry"); }
+    // Background refresh every 30 minutes (the local LS itself
+    // refreshes its own bundle hourly from FORGE LLC).
+    const refreshMs = Number(process.env.FORGE_LOCAL_LS_REFRESH_S || 1800) * 1000;
+    setInterval(() => {
+      pollLocalLicenseServer().catch((err) => app.log.warn({ err: String(err.message || err) }, "local-LS refresh failed"));
+    }, refreshMs);
+  }
+
   await app.listen({ host: HOST, port: PORT });
   app.log.info(`FORGE server listening on http://${HOST}:${PORT}`);
   const lic = getLicense();
@@ -296,9 +311,12 @@ try {
     expires_at: lic.expires_at,
     status: lic.status,
     feature_count: lic.features.length,
+    local_ls: localLicenseStatus(),
   }, lic.source === "fallback"
     ? "no license installed; running on community tier"
-    : `licensed to ${lic.customer} (${lic.tier})`);
+    : lic.source === "local_ls_unreachable"
+      ? "local license server unreachable; running on community tier until activation"
+      : `licensed to ${lic.customer} (${lic.tier}) — activated via ${lic.source}`);
 } catch (err) {
   app.log.error(err);
   process.exit(1);
