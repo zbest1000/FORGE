@@ -5,6 +5,7 @@ import { can } from "../core/permissions.js";
 import { getServer } from "../core/i3x/client.js";
 import { sparkline } from "../core/charts.js";
 import { canSeeAsset, listGroups, getGroup } from "../core/groups.js";
+import { simulation } from "../core/simulation.js";
 
 export function renderAssetsIndex() {
   const root = document.getElementById("screenContainer");
@@ -95,12 +96,7 @@ export function renderAssetDetail({ id }) {
 
     assignmentCard(a),
 
-    card("AI — What changed in 24h?", el("div", { class: "stack" }, [
-      el("div", { class: "small" }, [
-        `${a.name}: feeder current exceeded baseline by ~12% for 12s; temperature drift observed on HX-01. No trips.`,
-      ]),
-      el("div", { class: "tiny muted" }, ["Citations: AS-1, AS-2, DS-1, DS-3"]),
-    ])),
+    assetBriefCard(a, { dataSources, incidents, maintenance }),
   ]);
 }
 
@@ -231,6 +227,14 @@ function workMaintenancePanel(tasks, maintenance) {
   ])));
 }
 
+function assetBriefCard(asset, context) {
+  const brief = simulation.assetBrief(asset, context);
+  return card("AI — What changed in 24h?", el("div", { class: "stack" }, [
+    ...brief.bullets.map(text => el("div", { class: "small" }, [text])),
+    el("div", { class: "tiny muted" }, ["Citations: ", brief.citations.join(", ")]),
+  ]));
+}
+
 function assetTimeline(asset, ctx) {
   const rows = [
     ...ctx.linkedDocs.map(doc => ({ ts: revisionTs(doc.currentRevisionId), kind: "Document", text: `${doc.name} current revision`, route: `/doc/${doc.id}` })),
@@ -308,14 +312,7 @@ function editAssignment(a) {
 }
 
 function telemetry(a) {
-  const ticks = 60;
-  const data = [];
-  let v = 50 + (a.id.charCodeAt(a.id.length - 1) % 20);
-  for (let i = 0; i < ticks; i++) {
-    v += (Math.random() - 0.5) * 8;
-    v = Math.max(10, Math.min(95, v));
-    data.push(v);
-  }
+  const data = simulation.telemetrySeries(a);
   return el("div", { class: "stack" }, [
     sparkline(data, { width: 360, height: 90 }),
     el("div", { class: "row wrap" }, (a.mqttTopics || []).map(t => el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["MQTT"]), t]))),
@@ -328,7 +325,7 @@ function openWarRoom(a) {
   if (!can("incident.respond")) { toast("No incident capability", "warn"); return; }
   const existing = (state.data.incidents || []).find(i => i.assetId === a.id && i.status === "active");
   if (existing) return navigate(`/incident/${existing.id}`);
-  const id = "INC-" + Math.floor(Math.random()*9000+1000);
+  const id = simulation.nextId("INC", state.data.incidents);
   const inc = {
     id,
     title: `${a.name} — new incident`,

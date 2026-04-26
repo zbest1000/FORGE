@@ -17,6 +17,7 @@ import { can } from "../core/permissions.js";
 import { signHMAC, canonicalJSON } from "../core/crypto.js";
 import { recentEvents } from "../core/events.js";
 import { canTransitionIncident, INCIDENT_STATUSES } from "../core/fsm/incident.js";
+import { simulation } from "../core/simulation.js";
 
 export function renderIncidentsIndex() {
   const root = document.getElementById("screenContainer");
@@ -292,7 +293,7 @@ function createActionItem(inc) {
   const title = window.prompt("Action item title:");
   if (!title) return;
   const project = (state.data.projects || [])[0];
-  const id = "WI-" + Math.floor(Math.random()*900+100);
+  const id = simulation.demoId("WI", state.data.workItems || []);
   update(s => {
     s.data.workItems.push({
       id, projectId: project.id, type: "Action", title,
@@ -306,15 +307,14 @@ function createActionItem(inc) {
 }
 
 function aiCard(inc, asset) {
+  const rec = simulation.incidentRecommendation(inc, asset, state.data);
   return card("AI — Live summary & next steps", el("div", { class: "stack" }, [
     el("div", { class: "small" }, [
       `${inc.id} is ${inc.status}. ${(inc.timeline || []).length} timeline entries. `,
       asset ? `Asset ${asset.id} is in ${asset.status}.` : "No asset bound.",
     ]),
-    el("div", { class: "small" }, [
-      "Recommended next steps: follow the command checklist, capture telemetry around the asset's MQTT/OPC UA signals, and verify steady-state for 15 min before resolving.",
-    ]),
-    el("div", { class: "tiny muted" }, ["Citations: ", inc.id, asset ? ", " + asset.id : ""]),
+    el("div", { class: "small" }, [rec.nextSteps]),
+    el("div", { class: "tiny muted" }, ["Citations: ", rec.citations.join(", ")]),
   ]));
 }
 

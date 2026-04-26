@@ -204,6 +204,11 @@ Routes are registered in `app.js:setupRoutes()`. State changes flow through
 `src/core/store.js` (a tiny pub/sub) — every mutation re-renders the shell
 and the current screen.
 
+Demo-only operational values and canned narratives belong in
+`src/core/simulation.js`, not inside screen renderers. Use that module for
+simulated signal series, AI/demo summaries, generated demo IDs, and similar
+placeholder behavior so real integrations can replace the simulation seam.
+
 **For UI-touching changes you MUST do GUI testing.** Start the server, point
 the `computerUse` subagent at `http://localhost:3000`, log in as
 `admin@forge.local`, and walk the affected route. Capture a video.

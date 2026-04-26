@@ -11,6 +11,7 @@ import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { renderMermaid } from "../core/mermaid.js";
+import { simulation } from "../core/simulation.js";
 
 const COLUMNS = ["Backlog", "Open", "In Progress", "In Review", "Approved", "Done"];
 
@@ -796,7 +797,7 @@ function openNewItem(projectId) {
       { label: "Cancel" },
       { label: "Create", variant: "primary", onClick: () => {
         if (!titleInput.value.trim()) { toast("Title required", "warn"); return false; }
-        const id = "WI-" + Math.floor(Math.random()*900+100);
+        const id = simulation.demoId("WI", state.data.workItems || []);
         const item = {
           id, projectId, type: typeSelect.value, title: titleInput.value.trim(),
           assigneeId: assigneeSelect.value, status: "Open", severity: severitySelect.value,

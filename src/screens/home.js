@@ -2,6 +2,7 @@ import { el, card, kpi, badge, mount } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { effectiveGroupIds, currentUserId, isOrgOwner } from "../core/groups.js";
+import { workspaceIncidentBrief } from "../core/simulation.js";
 
 function viewerInGroups(...ids) {
   if (isOrgOwner()) return true;
@@ -93,12 +94,12 @@ function priorityQueue(d) {
 }
 
 function buildAIBrief(d) {
-  const sev = (d.incidents || []).find(i => i.status === "active");
   const pendingApproval = (d.approvals || []).find(a => a.status === "pending");
   const reviewRev = (d.revisions || []).find(r => r.status === "IFR");
+  const incidentBrief = workspaceIncidentBrief(d);
 
   const bullets = [
-    sev ? `• ${sev.severity} incident "${sev.title}" is active — feed rate reduced to 60%, monitoring HX-01 telemetry.` : null,
+    incidentBrief ? `• ${incidentBrief}` : null,
     reviewRev ? `• ${reviewRev.docId} Rev ${reviewRev.label} is ${reviewRev.status}: "${reviewRev.summary}". [cite: ${reviewRev.id}]` : null,
     pendingApproval ? `• ${pendingApproval.id} awaits approval on ${pendingApproval.subject.kind} ${pendingApproval.subject.id}.` : null,
     `• ${(d.workItems || []).filter(w => w.severity === "high").length} high-severity work items are open.`,
