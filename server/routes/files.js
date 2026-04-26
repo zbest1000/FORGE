@@ -12,6 +12,7 @@ import { db, now, uuid } from "../db.js";
 import { audit } from "../audit.js";
 import { allows, requireAccess } from "../acl.js";
 import { require_ } from "../auth.js";
+import { orgForRow, tenantOrgId } from "../tenant.js";
 
 const DATA_DIR = process.env.FORGE_DATA_DIR || path.resolve(process.cwd(), "data");
 const FILES_DIR = path.join(DATA_DIR, "files");
@@ -68,14 +69,26 @@ function pathFor(hash) {
 }
 
 // Resolve the parent record for ACL checks. Only a few parent kinds exist.
+const PARENT_TABLES = {
+  document: "documents", revision: "revisions", drawing: "drawings",
+  workitem: "work_items", incident: "incidents", asset: "assets",
+  message: "messages", channel: "channels",
+};
+function parentTable(kind) { return PARENT_TABLES[String(kind).toLowerCase()] || null; }
 function resolveParent(kind, id) {
-  const table = ({
-    document: "documents", revision: "revisions", drawing: "drawings",
-    workitem: "work_items", incident: "incidents", asset: "assets",
-    message: "messages", channel: "channels",
-  })[String(kind).toLowerCase()];
+  const table = parentTable(kind);
   if (!table) return null;
   return db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id) || null;
+}
+
+/** Block file ops that target a parent in another tenant. */
+function tenantOk(req, kind, parent) {
+  const orgId = tenantOrgId(req);
+  if (!orgId) return false;
+  const table = parentTable(kind);
+  if (!table) return false;
+  const parentOrg = orgForRow(table, parent);
+  return !parentOrg || parentOrg === orgId;
 }
 
 export default async function fileRoutes(fastify) {
@@ -127,6 +140,7 @@ export default async function fileRoutes(fastify) {
     if (!parentKind || !parentId) return reply.code(400).send({ error: "parent_kind and parent_id required" });
     const parent = resolveParent(parentKind, parentId);
     if (!parent) return reply.code(404).send({ error: "parent not found" });
+    if (!tenantOk(req, parentKind, parent)) return reply.code(404).send({ error: "parent not found" });
     if (!allows(req.user, parent.acl, "edit")) {
       return reply.code(403).send({ error: "forbidden by ACL" });
     }
@@ -144,6 +158,7 @@ export default async function fileRoutes(fastify) {
     const row = db.prepare("SELECT * FROM files WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
     const parent = resolveParent(row.parent_kind, row.parent_id);
+    if (parent && !tenantOk(req, row.parent_kind, parent)) return reply.code(404).send({ error: "not found" });
     if (parent && !allows(req.user, parent.acl, "view")) {
       audit({ actor: req.user.id, action: "file.download.deny", subject: row.id });
       return reply.code(403).send({ error: "forbidden" });
@@ -170,6 +185,7 @@ export default async function fileRoutes(fastify) {
     const { parent_kind, parent_id } = req.query || {};
     if (!parent_kind || !parent_id) return reply.code(400).send({ error: "parent_kind and parent_id required" });
     const parent = resolveParent(parent_kind, parent_id);
+    if (!parent || !tenantOk(req, parent_kind, parent)) return reply.code(404).send({ error: "not found" });
     if (!requireAccess(req, reply, parent, "view")) return;
     const rows = db.prepare("SELECT id, name, mime, size, sha256, created_by, created_at FROM files WHERE parent_kind = ? AND parent_id = ? ORDER BY created_at DESC").all(parent_kind, parent_id);
     return rows;
@@ -182,6 +198,7 @@ export default async function fileRoutes(fastify) {
     const row = db.prepare("SELECT * FROM files WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
     const parent = resolveParent(row.parent_kind, row.parent_id);
+    if (parent && !tenantOk(req, row.parent_kind, parent)) return reply.code(404).send({ error: "not found" });
     if (parent && !allows(req.user, parent.acl, "edit")) return reply.code(403).send({ error: "forbidden" });
     db.prepare("DELETE FROM files WHERE id = ?").run(row.id);
     audit({ actor: req.user.id, action: "file.delete", subject: row.id });
