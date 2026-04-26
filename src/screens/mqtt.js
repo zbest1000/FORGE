@@ -152,8 +152,9 @@ function renderTree(node, prefix, selected, onSelect) {
     const child = node[k];
     const hasChildren = Object.keys(child).length;
     const full = prefix ? `${prefix}/${k}` : k;
-    wrap.append(el("div", {
-      class: `tree-item ${full === selected ? "active" : ""}`,
+    wrap.append(el("button", {
+    type: "button",
+    class: `tree-item ${full === selected ? "active" : ""}`,
       onClick: () => onSelect(full),
     }, [
       el("span", { class: "tree-dot" }),

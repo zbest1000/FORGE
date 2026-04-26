@@ -51,7 +51,7 @@ export function renderSearch() {
       facetRail(result.facetCounts, selected, params),
       card("Results", el("div", { class: "stack" }, [
         qInput,
-        ...result.hits.map(h => el("div", { class: "activity-row", onClick: () => navigate(h.route) }, [
+        ...result.hits.map(h => el("button", { class: "activity-row", type: "button", onClick: () => navigate(h.route) }, [
           badge(h.kind, "info"),
           el("div", { class: "stack", style: { gap: "2px", flex: 1 } }, [
             el("span", { class: "small" }, [h.title]),
@@ -116,7 +116,7 @@ async function doSave(q, selected) {
 function savedSearchesCard() {
   const list = listSavedSearches();
   if (!list.length) return el("div", {});
-  return card("Saved searches", el("div", { class: "stack" }, list.map(s => el("div", { class: "activity-row", onClick: () => runSaved(s) }, [
+  return card("Saved searches", el("div", { class: "stack" }, list.map(s => el("button", { class: "activity-row", type: "button", onClick: () => runSaved(s) }, [
     badge("saved", "info"),
     el("span", { class: "small" }, [s.name]),
     el("span", { class: "tiny muted" }, [`q: "${s.query}"`]),

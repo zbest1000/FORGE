@@ -65,8 +65,9 @@ function renderTree(objects, selectedId, onSelect) {
       ? roots
       : childrenOf(parentPathStr);
     for (const o of list) {
-      wrap.append(el("div", {
-        class: `tree-item ${o.elementId === selectedId ? "active" : ""}`,
+      wrap.append(el("button", {
+    type: "button",
+    class: `tree-item ${o.elementId === selectedId ? "active" : ""}`,
         style: { paddingLeft: (8 + indent * 12) + "px" },
         onClick: () => onSelect(o.elementId),
       }, [
@@ -116,7 +117,7 @@ function renderDetailCard(elementId, objects) {
       el("div", { class: "tiny muted" }, ["Relationships"]),
       el("div", { class: "stack", style: { gap: "2px" } }, rels.length ? rels.map(r => {
         const label = r.object.name || r.object.elementId;
-        return el("div", { class: "activity-row", onClick: () => {
+        return el("button", { class: "activity-row", type: "button", onClick: () => {
           sessionStorage.setItem("uns.selected", r.object.elementId);
           renderUNSIndex();
         }}, [

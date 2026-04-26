@@ -279,7 +279,7 @@ function channelCard(channel) {
 
 function workItemsCard(inc, workItems) {
   return card(`Action items (${workItems.length})`, el("div", { class: "stack" }, [
-    ...workItems.map(w => el("div", { class: "activity-row", onClick: () => navigate(`/work-board/${w.projectId}`) }, [
+    ...workItems.map(w => el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/work-board/${w.projectId}`) }, [
       badge(w.type, "info"),
       el("span", { class: "small" }, [w.title]),
       badge(w.status, ""),

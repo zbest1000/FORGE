@@ -59,7 +59,7 @@ function engineeringPicks(d) {
     ...(d.projects || []).slice(0, 2).map(p => ({ kind: "Project", label: p.name, route: `/work-board/${p.id}` })),
   ];
   return el("div", { class: "activity-list" }, items.map(it =>
-    el("div", { class: "activity-row", onClick: () => navigate(it.route) }, [
+    el("button", { class: "activity-row", type: "button", onClick: () => navigate(it.route) }, [
       badge(it.kind, "info"),
       el("span", {}, [it.label]),
       el("span", { class: "tiny muted" }, [it.route]),
@@ -70,21 +70,21 @@ function engineeringPicks(d) {
 function priorityQueue(d) {
   const rows = [];
   (d.approvals || []).filter(a => a.status === "pending").slice(0, 4).forEach(a =>
-    rows.push(el("div", { class: "activity-row", onClick: () => navigate("/approvals") }, [
+    rows.push(el("button", { class: "activity-row", type: "button", onClick: () => navigate("/approvals") }, [
       el("span", { class: "ts" }, ["Approval"]),
       el("span", {}, [a.subject.kind, " ", el("span", { class: "mono" }, [a.subject.id])]),
       badge("SLA 24h", "warn"),
     ]))
   );
   (d.incidents || []).filter(i => i.status === "active").forEach(i =>
-    rows.push(el("div", { class: "activity-row", onClick: () => navigate(`/incident/${i.id}`) }, [
+    rows.push(el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/incident/${i.id}`) }, [
       el("span", { class: "ts" }, ["Incident"]),
       el("span", {}, [i.title]),
       badge(i.severity, "danger"),
     ]))
   );
   (d.workItems || []).filter(w => ["In Progress","In Review","Open"].includes(w.status)).slice(0, 4).forEach(w =>
-    rows.push(el("div", { class: "activity-row", onClick: () => navigate(`/work-board/${w.projectId}`) }, [
+    rows.push(el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/work-board/${w.projectId}`) }, [
       el("span", { class: "ts" }, [w.type]),
       el("span", {}, [el("span", { class: "mono" }, [w.id + " "]), w.title]),
       badge(w.status, "info"),
@@ -119,7 +119,7 @@ function recentRevisions(d) {
   const revs = [...(d.revisions || [])].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")).slice(0, 5);
   return el("div", { class: "activity-list" }, revs.map(r => {
     const doc = (d.documents || []).find(x => x.id === r.docId);
-    return el("div", { class: "activity-row", onClick: () => navigate(`/doc/${r.docId}`) }, [
+    return el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/doc/${r.docId}`) }, [
       el("span", { class: "ts" }, [new Date(r.createdAt).toLocaleDateString()]),
       el("span", {}, [el("span", { class: "mono" }, [`${r.id}  `]), doc?.name || r.docId]),
       badge(`${r.label} · ${r.status}`, `rev-${r.status.toLowerCase()}`),

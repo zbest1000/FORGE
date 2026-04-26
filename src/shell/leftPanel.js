@@ -45,8 +45,9 @@ export function renderLeftPanel() {
       ...items.map(item => {
         const m = map(item);
         const isActive = activeRoute === m.route;
-        return el("div", {
-          class: `tree-item ${isActive ? "active" : ""} ${m.unread ? "unread" : ""}`,
+        return el("button", {
+    type: "button",
+    class: `tree-item ${isActive ? "active" : ""} ${m.unread ? "unread" : ""}`,
           onClick: () => navigate(m.route),
         }, [
           el("span", { class: "tree-dot" }),

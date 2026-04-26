@@ -636,7 +636,7 @@ function crossLinks(dr) {
   ].flat().filter(Boolean)), { subtitle: "drawing ↔ spec ↔ task ↔ asset ↔ discussion" });
 }
 function linkRow(kind, label, route) {
-  return el("div", { class: "activity-row", onClick: () => navigate(route) }, [
+  return el("button", { class: "activity-row", type: "button", onClick: () => navigate(route) }, [
     badge(kind, "info"),
     el("span", { class: "small" }, [label]),
   ]);

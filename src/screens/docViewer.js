@@ -349,7 +349,7 @@ function commentsCard(doc, rev) {
   const comments = (state.data.comments || []).filter(c => c.docId === doc.id && c.revId === rev.id);
   return card(`Regional comments (${comments.length})`, el("div", { class: "stack" }, [
     comments.length
-      ? comments.map(c => el("div", { class: "activity-row", onClick: () => openComment(c) }, [
+      ? comments.map(c => el("button", { class: "activity-row", type: "button", onClick: () => openComment(c) }, [
           el("span", { class: "ts" }, [`p${c.page} #${c.seq}`]),
           el("span", { class: "small" }, [c.text || ""]),
           el("span", { class: "tiny muted" }, [c.author]),
@@ -381,10 +381,10 @@ function impactCard(rev) {
     el("div", { class: "small" }, [
       `Changing ${rev.id} may affect ${impact.tasks.length} task(s), ${impact.approvals.length} approval(s) and ${impact.assets.length} asset(s).`
     ]),
-    ...impact.tasks.slice(0, 4).map(w => el("div", { class: "activity-row", onClick: () => navigate(`/work-board/${w.projectId}`) }, [
+    ...impact.tasks.slice(0, 4).map(w => el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/work-board/${w.projectId}`) }, [
       badge("Task", "info"), el("span", { class: "small" }, [w.title]),
     ])),
-    ...impact.assets.slice(0, 4).map(a => el("div", { class: "activity-row", onClick: () => navigate(`/asset/${a.id}`) }, [
+    ...impact.assets.slice(0, 4).map(a => el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/asset/${a.id}`) }, [
       badge("Asset", "accent"), el("span", { class: "small" }, [a.name]),
     ])),
     el("div", { class: "tiny muted" }, [
@@ -398,10 +398,10 @@ function crossLinks(doc) {
   const drawings = d.drawings.filter(x => x.docId === doc.id);
   const assets = d.assets.filter(a => (a.docIds || []).includes(doc.id));
   return card("Cross-links", el("div", { class: "stack" }, [
-    ...drawings.map(dr => el("div", { class: "activity-row", onClick: () => navigate(`/drawing/${dr.id}`) }, [
+    ...drawings.map(dr => el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/drawing/${dr.id}`) }, [
       badge("Drawing", "info"), el("span", { class: "small" }, [dr.name]),
     ])),
-    ...assets.map(a => el("div", { class: "activity-row", onClick: () => navigate(`/asset/${a.id}`) }, [
+    ...assets.map(a => el("button", { class: "activity-row", type: "button", onClick: () => navigate(`/asset/${a.id}`) }, [
       badge("Asset", "info"), el("span", { class: "small" }, [a.name]),
     ])),
   ]));

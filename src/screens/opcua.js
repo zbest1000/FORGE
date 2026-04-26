@@ -84,7 +84,8 @@ function endpointPanel() {
 }
 
 function renderNodes(nodes, selected, onSelect) {
-  return el("div", { class: "stack", style: { gap: "2px" } }, nodes.map(n => el("div", {
+  return el("div", { class: "stack", style: { gap: "2px" } }, nodes.map(n => el("button", {
+    type: "button",
     class: `tree-item ${n.id === selected ? "active" : ""}`,
     onClick: () => onSelect(n.id),
   }, [
