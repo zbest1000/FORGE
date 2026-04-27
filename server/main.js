@@ -46,6 +46,7 @@ import { startOpcuaBridge, stopOpcuaBridge } from "./connectors/opcua.js";
 import { startAlertWorker, stopAlertWorker } from "./alerts.js";
 import { startRollupWorker, stopRollupWorker, readSeries, listDailySnapshot } from "./metrics-rollup.js";
 import { startRetentionWorker, stopRetentionWorker } from "./retention.js";
+import { startTamperWorker, stopTamperWorker } from "./audit-tamper.js";
 import { stopOutboxWorker } from "./outbox.js";
 import { stopWebhookWorker } from "./webhooks.js";
 import { drain as drainAudit } from "./audit.js";
@@ -424,6 +425,7 @@ startAlertWorker(app.log);
 startRollupWorker(app.log);
 startOutboxWorker(app.log);
 startRetentionWorker(app.log);
+startTamperWorker(app.log);
 
 // Record boot in the audit ledger.
 audit({ actor: "system", action: "server.start", subject: "forge", detail: { host: HOST, port: PORT, pid: process.pid } });
@@ -522,6 +524,7 @@ async function shutdown(sig) {
       Promise.resolve().then(() => stopOutboxWorker()),
       Promise.resolve().then(() => stopAlertWorker()),
       Promise.resolve().then(() => stopRetentionWorker()),
+      Promise.resolve().then(() => stopTamperWorker()),
       Promise.resolve().then(() => stopRollupWorker()),
       Promise.resolve().then(() => stopMqttBridge()),
       Promise.resolve().then(() => stopOpcuaBridge()),
