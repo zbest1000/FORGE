@@ -160,9 +160,9 @@ function sectionsFor(domain, d) {
   if (domain === "assets") {
     return [
       makeSection("Assets", visibleAssets, a => ({ route: `/asset/${a.id}`, label: a.name, unread: a.status === "alarm" || a.status === "warning" })),
-      makeSection("Industrial tools", [
+      makeSection("Industrial data & APIs", [
         { route: "/uns", label: "Unified Namespace" },
-        { route: "/i3x", label: "i3X explorer" },
+        { route: "/i3x", label: "i3X API" },
         { route: "/integrations", label: "Integration console" },
       ], x => x),
     ];
@@ -179,12 +179,12 @@ function sectionsFor(domain, d) {
   if (domain === "integrations") {
     return [
       makeSection("Connectors", [
+        { route: "/integrations", label: "Health overview" },
         { route: "/integrations/mqtt", label: "MQTT" },
         { route: "/integrations/opcua", label: "OPC UA" },
         { route: "/integrations/erp", label: "ERP" },
       ], x => x),
-      makeSection("Diagnostics", [
-        { route: "/integrations", label: "Health overview" },
+      makeSection("Interoperability", [
         { route: "/uns", label: "UNS binding" },
         { route: "/i3x", label: "i3X API" },
       ], x => x),

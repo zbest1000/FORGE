@@ -1,4 +1,4 @@
-// i3X API Explorer — pick an endpoint, fill params, see request + raw response
+// i3X API Workbench — pick an endpoint, fill params, see request + raw response
 // envelopes. Live-streams subscription updates in a console.
 
 import { el, mount, card, badge, toast, input, textarea, select, formRow } from "../core/ui.js";
@@ -128,7 +128,7 @@ function headerRow() {
   const info = getServer().getInfo().data;
   return el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
     el("div", {}, [
-      el("div", { class: "strong" }, ["i3X API Explorer"]),
+      el("div", { class: "strong" }, ["i3X API Workbench"]),
       el("div", { class: "tiny muted" }, [
         `Implementation: ${info.implementation} · Spec: i3X ${info.version}`,
       ]),

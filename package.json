@@ -24,8 +24,8 @@
     "sbom": "cyclonedx-npm --output-file bom.json",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "license:keygen": "node scripts/license/keygen.js",
-    "license:issue":  "node scripts/license/issue.js",
-    "license:inspect":"node scripts/license/inspect.js"
+    "license:issue": "node scripts/license/issue.js",
+    "license:inspect": "node scripts/license/inspect.js"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
@@ -34,6 +34,7 @@
     "@fastify/multipart": "^10.0.0",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/static": "^9.1.3",
+    "@influxdata/influxdb-client": "^1.35.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/auto-instrumentations-node": "^0.73.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
@@ -46,6 +47,7 @@
     "dexie": "^4.4.2",
     "dompurify": "^3.4.1",
     "dxf-viewer": "^1.0.47",
+    "echarts": "^6.0.0",
     "fastify": "^5.1.0",
     "fuse.js": "^7.3.0",
     "graphql": "^16.13.2",
@@ -53,7 +55,9 @@
     "mercurius": "^16.9.0",
     "mermaid": "^11.14.0",
     "minisearch": "^7.2.0",
+    "modbus-serial": "^8.0.25",
     "mqtt": "^5.10.1",
+    "mssql": "^12.5.0",
     "online-3d-viewer": "^0.18.0",
     "papaparse": "^5.5.3",
     "pdfjs-dist": "^5.6.205",

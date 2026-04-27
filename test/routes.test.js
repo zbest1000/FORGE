@@ -39,6 +39,9 @@ db.prepare("INSERT INTO work_items (id, project_id, type, title, assignee_id, st
 db.prepare("INSERT INTO work_items (id, project_id, type, title, assignee_id, status, severity, blockers, labels, acl, created_at, updated_at) VALUES ('WI-SECRET','PRJ-1','Task','Secret','U-ADMIN','Open','high','[]','[]',?, ?, ?)")
   .run(JSON.stringify({ roles: ["Reviewer/Approver"], users: [], abac: {} }), now, now);
 db.prepare("INSERT INTO channels (id, team_space_id, name, kind, acl, created_at, updated_at) VALUES ('CH-1','TS-1','general','team','{}',?,?)").run(now, now);
+db.prepare("INSERT INTO assets (id, org_id, workspace_id, name, type, hierarchy, status, mqtt_topics, opcua_nodes, doc_ids, acl, labels, created_at, updated_at) VALUES ('AS-1','ORG-1','WS-1','Feeder A1','motor','North Plant > Line A > Feeder A1','normal','[]','[]','[]','{}','[]',?,?)").run(now, now);
+db.prepare("INSERT INTO integrations (id, name, kind, status, last_event, events_per_min, config) VALUES ('INT-MODBUS','Modbus TCP','modbus','connected',?,0,'{}')").run(now);
+db.prepare("INSERT INTO data_sources (id, integration_id, endpoint, asset_id, kind, unit, sampling, qos, retain) VALUES ('DS-1','INT-MODBUS','10.0.0.5:502/unit/1/hr/40001','AS-1','modbus_register','A','1s',1,0)").run();
 
 // Boot fastify in-process.
 const { default: Fastify } = await import("fastify");
@@ -79,6 +82,7 @@ app.addHook("onRequest", async (req) => {
 
 await app.register((await import("../server/routes/auth.js")).default);
 await app.register((await import("../server/routes/core.js")).default);
+await app.register((await import("../server/routes/operations.js")).default);
 await app.register((await import("../server/routes/files.js")).default);
 await app.register((await import("../server/routes/tokens.js")).default);
 

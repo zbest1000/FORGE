@@ -133,7 +133,9 @@ function assetContextTabs(asset, ctx) {
       { id: "docs", label: `Docs (${ctx.linkedDocs.length})`, content: () => card("Linked documents", documentList(ctx.linkedDocs)) },
       { id: "work", label: `Work (${ctx.tasks.length + ctx.maintenance.length})`, content: () => card("Work and service", workMaintenancePanel(ctx.tasks, ctx.maintenance)) },
       { id: "signals", label: `Signals (${ctx.dataSources.length})`, content: () => el("div", { class: "two-col" }, [
-        card("Operations trend", telemetry(asset)),
+        card("Operations trend", telemetry(asset), {
+          actions: [el("button", { class: "btn sm", onClick: () => navigate("/operations") }, ["Open historian"])],
+        }),
         card("Signal health", signalHealthPanel(ctx.dataSources)),
       ]) },
       { id: "activity", label: "Activity", content: () => card("Asset activity", assetTimeline(asset, ctx)) },
@@ -314,11 +316,13 @@ function editAssignment(a) {
 
 function telemetry(a) {
   const data = simulation.telemetrySeries(a);
+  const historianPoints = (state.data.historianPoints || []).filter(p => p.assetId === a.id);
   return el("div", { class: "stack" }, [
     sparkline(data, { width: 360, height: 90 }),
     el("div", { class: "row wrap" }, (a.mqttTopics || []).map(t => el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["MQTT"]), t]))),
     el("div", { class: "row wrap" }, (a.opcuaNodes || []).map(n => el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["OPC"]), n]))),
-    el("div", { class: "tiny muted" }, ["Chart rendered by uPlot (MIT) with SVG fallback."]),
+    historianPoints.length ? el("div", { class: "row wrap" }, historianPoints.map(p => el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["HIST"]), p.tag]))) : null,
+    el("div", { class: "tiny muted" }, ["Chart rendered by uPlot (MIT) with SVG fallback. Historian tags are stored with asset DAQ history."]),
   ]);
 }
 

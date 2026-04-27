@@ -42,7 +42,7 @@ function headerRow(info) {
     el("div", { class: "row" }, [
       badge("i3X: Beta 1.0", "accent"),
       badge("UNS: active", "success"),
-      el("button", { class: "btn sm", onClick: () => navigate("/i3x") }, ["i3X Explorer →"]),
+      el("button", { class: "btn sm", onClick: () => navigate("/i3x") }, ["i3X API →"]),
     ]),
   ]);
 }
@@ -180,7 +180,7 @@ function renderLiveCard(elementId) {
       chartSpark((history.data?.values || []).map(v => Number(v.value) || 0), { width: 280, height: 60 }),
       el("div", { class: "row wrap" }, [
         el("button", { class: "btn sm", onClick: () => writeValue(obj) }, ["Write value"]),
-        el("button", { class: "btn sm", onClick: () => openSubscribe(obj) }, ["Subscribe → Explorer"]),
+        el("button", { class: "btn sm", onClick: () => openSubscribe(obj) }, ["Subscribe → i3X API"]),
       ]),
     );
   } else {

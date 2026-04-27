@@ -197,6 +197,7 @@ export function table({ columns, rows, onRowClick }) {
 export function toast(message, variant = "") {
   const root = document.getElementById("toastRoot");
   if (!root) return;
+  if (message == null || String(message).trim() === "") return;
   const node = el("div", { class: `toast ${variant}`.trim() }, [message]);
   root.append(node);
   setTimeout(() => {
