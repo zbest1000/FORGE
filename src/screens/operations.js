@@ -18,7 +18,7 @@ export function renderOperationsData() {
     el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
       el("div", {}, [
         el("div", { class: "strong" }, ["Operations data"]),
-        el("div", { class: "tiny muted" }, ["Historians, time-series trends, recipes, and Modbus TCP mappings."]),
+        el("div", { class: "tiny muted" }, ["Asset historians, time-series trends, recipes, and Modbus TCP register maps/writes."]),
       ]),
       el("div", { class: "row wrap" }, [
         badge("SQLite historian", "accent"),

@@ -80,9 +80,9 @@ export const PORTALS = [
   },
   {
     id: "automation",
-    label: "Industrial Operations Data",
+    label: "Industrial Interoperability",
     icon: "🛰",
-    description: "i3X / UNS, historians, recipes, Modbus TCP, MQTT, OPC UA, telemetry & assets.",
+    description: "UNS and i3X APIs, historians, recipes, Modbus TCP, MQTT, OPC UA, telemetry, and assets.",
     accent: "#f59e0b",
     routes: ["/i3x", "/uns", "/operations", "/integrations/mqtt", "/integrations/opcua", "/assets"],
     items: [

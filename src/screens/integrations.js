@@ -44,7 +44,7 @@ export function renderIntegrations() {
       ]));
     })),
 
-    card("Unified Namespace binding", el("div", { class: "stack" }, [
+    card("Interoperability binding", el("div", { class: "stack" }, [
       el("div", { class: "small" }, ["All connectors publish into the canonical UNS and surface as i3X variables (see /uns, /i3x)."]),
       el("div", { class: "row wrap" }, [
         badge("urn:cesmii:isa95:1", "purple"),
