@@ -7,7 +7,7 @@
 //   * Write-node action gated to Integration Admin; confirmed via HMAC sig
 //   * Simulation: trigger state_change for a bound node → event pipeline
 
-import { el, mount, card, badge, toast, modal, formRow, input, select, textarea, prompt, dangerAction } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, input, select, textarea, prompt } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { can } from "../core/permissions.js";
@@ -149,15 +149,10 @@ function validate(node, transform) {
 async function simulate(nodeId, nodes) {
   const n = nodes.find(x => x.id === nodeId);
   if (!n) return;
-  const raw = await prompt({
-    title: `Simulate value for ${n.id}`,
-    label: "Value",
-    defaultValue: "101.2",
-    helpText: `Unit: ${n.unit || "(unknown)"}. Routed through the event pipeline as a state_change.`,
-    validate: (v) => Number.isNaN(Number(v)) ? "Must be a number" : null,
-  });
+  const raw = await prompt({ title: `Simulate ${n.id}`, message: "Value:", defaultValue: "101.2" });
   if (raw == null) return;
   const val = Number(raw);
+  if (Number.isNaN(val)) return;
   const env = ingest({
     event_type: "state_change",
     severity: "info",
@@ -173,12 +168,7 @@ async function writeNode(nodeId, nodes) {
   const n = nodes.find(x => x.id === nodeId);
   if (!n) return;
   if (!can("integration.write")) return;
-  const val = await prompt({
-    title: `Privileged write to ${n.id}`,
-    label: "Value",
-    defaultValue: "0",
-    helpText: `This writes to a live OPC UA node. The change is HMAC-signed and recorded in the audit ledger before any value is applied.`,
-  });
+  const val = await prompt({ title: `WRITE to ${n.id}`, message: "Will be reviewed.", defaultValue: "0" });
   if (val == null) return;
   const ok = await dangerAction({
     title: "Confirm OPC UA write",

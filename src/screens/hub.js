@@ -21,9 +21,11 @@ export function renderHub() {
     el("section", { class: "hub" }, [
       el("div", { class: "hub-hero" }, [
         el("div", { class: "hub-hero-row" }, [
-          el("div", { class: "hub-logo" }, ["FORGE"]),
+          el("div", { class: "hub-logo", "aria-hidden": "true" }, ["FORGE"]),
           el("div", { class: "stack", style: { gap: "4px" } }, [
-            el("h1", { class: "hub-title" }, ["Welcome", me ? `, ${me.name}` : ""]),
+            // Use h2 here — the page-level h1 lives in the shell header
+            // (WCAG 2.4.6: avoid duplicate h1s on a single page).
+            el("h2", { class: "hub-title" }, ["Welcome", me ? `, ${me.name}` : ""]),
             el("div", { class: "hub-sub" }, [
               "Pick a workspace to open. Each portal launches in its own browser tab so you can work on several things at once.",
             ]),
@@ -40,8 +42,9 @@ export function renderHub() {
 
       el("div", { class: "hub-footer" }, [
         el("div", { class: "tiny muted" }, [
-          "Tip: hold ", el("kbd", {}, ["Cmd/Ctrl"]), " or use middle-click to open in a new tab. ",
-          "Click ", el("kbd", {}, ["⌘K"]), " anywhere to jump to anything.",
+          "Tip: tiles open in a new tab. Press ",
+          el("kbd", {}, [isMac() ? "⌘" : "Ctrl"]), " + ", el("kbd", {}, ["K"]),
+          " anywhere to jump to anything.",
         ]),
         el("button", { class: "btn sm", onClick: () => navigate("/admin") }, ["Manage groups & access →"]),
       ]),
@@ -49,26 +52,26 @@ export function renderHub() {
   ]);
 }
 
+function isMac() {
+  return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || "");
+}
+
 function portalTile(p) {
   const href = `#/home?portal=${p.id}`;
-  // Real anchor so cmd/ctrl-click still opens in a new tab and the URL
-  // appears in the status bar. Plain click navigates in the current tab so
-  // workspace continuity is preserved; modifier keys preserve the
-  // multi-tab workflow that power users rely on.
-  const a = el("a", {
+  // A real `<a target="_blank" rel="noopener noreferrer">` anchor handles
+  // the new-tab UX correctly across desktop AND mobile (where popups from
+  // JS are routinely blocked). Cmd/Ctrl/middle-click work as expected, the
+  // browser shows the URL in the status bar, and Enter on a focused tile
+  // navigates the same way as a click. No custom handler needed.
+  return el("a", {
     class: "hub-tile",
     href,
-    rel: "noopener",
+    target: "_blank",
+    rel: "noopener noreferrer",
     style: {
       "--portal-accent": p.accent,
     },
-    "aria-label": `Open ${p.label}`,
-    title: `Open ${p.label} (Cmd/Ctrl-click for new tab)`,
-    onClick: (e) => {
-      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
-      e.preventDefault();
-      location.hash = href.replace(/^#/, "");
-    },
+    "aria-label": `Open ${p.label} in a new tab`,
   }, [
     el("div", { class: "hub-tile-icon", "aria-hidden": "true" }, [p.icon]),
     el("div", { class: "hub-tile-body" }, [
@@ -77,7 +80,6 @@ function portalTile(p) {
       el("div", { class: "hub-tile-routes" }, p.items.slice(0, 5).map(it =>
         el("span", { class: "hub-tile-chip" }, [it.label]))),
     ]),
-    el("div", { class: "hub-tile-cta" }, ["Open →"]),
+    el("div", { class: "hub-tile-cta", "aria-hidden": "true" }, ["Open →"]),
   ]);
-  return a;
 }

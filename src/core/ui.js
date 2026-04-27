@@ -35,6 +35,92 @@ export function clear(node) {
   while (node && node.firstChild) node.removeChild(node.firstChild);
 }
 
+// Selectors for "looks like a button but isn't" — applied uniformly via
+// a delegated handler installed by `installRowKeyboardHandlers()`. Keeping
+// this list central means screens don't have to repeat keyboard wiring.
+const ROW_BUTTON_SELECTOR = [
+  ".activity-row[onclick]",
+  ".activity-row.row-clickable",
+  ".tree-item",
+  ".dock-item",
+  ".kanban-card",
+  ".row-clickable",
+  ".chip.clickable",
+  ".palette-item",
+  ".revision-row",
+  ".uns-tree-item",
+].join(",");
+
+/**
+ * Install a single delegated keydown handler that turns any element matching
+ * `ROW_BUTTON_SELECTOR` into a keyboard-activatable button: focusable via
+ * Tab (we set tabindex on attach), Enter/Space dispatches a synthetic
+ * click. Idempotent — safe to call many times.
+ */
+let _rowKbInstalled = false;
+export function installRowKeyboardHandlers(rootDoc = document) {
+  if (_rowKbInstalled) return;
+  _rowKbInstalled = true;
+
+  // MutationObserver gives every newly-inserted row tabindex="0" + role.
+  const tag = (node) => {
+    if (!(node instanceof Element)) return;
+    const candidates = node.matches?.(ROW_BUTTON_SELECTOR)
+      ? [node]
+      : node.querySelectorAll?.(ROW_BUTTON_SELECTOR) || [];
+    candidates.forEach(c => {
+      if (c.tagName === "A" || c.tagName === "BUTTON") return;
+      if (!c.hasAttribute("tabindex")) c.setAttribute("tabindex", "0");
+      if (!c.hasAttribute("role")) c.setAttribute("role", "button");
+    });
+  };
+  tag(rootDoc.body);
+
+  const mo = new MutationObserver((muts) => {
+    for (const m of muts) {
+      m.addedNodes.forEach(tag);
+    }
+  });
+  mo.observe(rootDoc.body, { childList: true, subtree: true });
+
+  rootDoc.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    if (!target.matches(ROW_BUTTON_SELECTOR)) return;
+    // Skip if the focus is on a real button/input inside the row.
+    if (target !== rootDoc.activeElement) return;
+    e.preventDefault();
+    target.click();
+  });
+}
+
+/**
+ * Make a non-button element behave like a button for keyboard users.
+ * Adds `role="button"`, `tabindex="0"`, and Enter/Space activation. Pointer
+ * `onClick` is preserved verbatim. Use this when a real `<button>`/`<a>`
+ * isn't structurally possible (e.g. table rows, list rows in a tree).
+ */
+export function clickable(node, onActivate, opts = {}) {
+  if (!node || typeof onActivate !== "function") return node;
+  if (!node.hasAttribute("role")) node.setAttribute("role", "button");
+  if (!node.hasAttribute("tabindex")) node.setAttribute("tabindex", "0");
+  if (opts.label && !node.hasAttribute("aria-label")) node.setAttribute("aria-label", opts.label);
+  node.addEventListener("keydown", (e) => {
+    // Enter activates immediately; Space prevents page-scroll and acts on keyup.
+    if (e.key === "Enter") {
+      e.preventDefault();
+      onActivate(e);
+    } else if (e.key === " ") {
+      e.preventDefault();
+    }
+  });
+  node.addEventListener("keyup", (e) => {
+    if (e.key === " ") { e.preventDefault(); onActivate(e); }
+  });
+  return node;
+}
+
 export function mount(node, content) {
   clear(node);
   if (Array.isArray(content)) content.forEach(c => c && node.append(c));
@@ -52,6 +138,7 @@ export function chip(label, opts = {}) {
     { class: `chip${onClick ? " clickable" : ""}`, onClick },
     [kind ? el("span", { class: "chip-kind" }, [kind]) : null, label]
   );
+  if (onClick) clickable(node, onClick);
   return node;
 }
 
@@ -83,8 +170,8 @@ export function table({ columns, rows, onRowClick }) {
       el("tr", {}, columns.map(c => el("th", {}, [c.header || c.key]))),
     ]),
     el("tbody", {},
-      rows.map(row =>
-        el(
+      rows.map(row => {
+        const tr = el(
           "tr",
           {
             class: onRowClick ? "row-clickable" : "",
@@ -98,8 +185,10 @@ export function table({ columns, rows, onRowClick }) {
             else if (val != null) cell.append(document.createTextNode(String(val)));
             return cell;
           })
-        )
-      )
+        );
+        if (onRowClick) clickable(tr, () => onRowClick(row));
+        return tr;
+      })
     ),
   ]);
   return t;
@@ -168,9 +257,19 @@ export function modal({ title, body, actions }) {
 
   root.innerHTML = "";
   root.append(backdrop);
-  // Focus the first focusable element.
+  // Focus the first focusable element. Prefer body fields, then the primary
+  // footer button, and only fall back to the header Close button if the
+  // dialog has nothing else (which should be unusual).
   setTimeout(() => {
-    const first = backdrop.querySelector("button:not(.ghost), input, select, textarea, button");
+    const body = backdrop.querySelector(".modal-body");
+    const footer = backdrop.querySelector(".modal-footer");
+    const candidates = [
+      body && body.querySelector("input, select, textarea, button:not(.ghost), [tabindex]:not([tabindex='-1'])"),
+      footer && footer.querySelector("button.primary, button:not(.ghost), button"),
+      backdrop.querySelector("button:not(.ghost)"),
+      backdrop.querySelector("button"),
+    ].filter(Boolean);
+    const first = candidates[0];
     if (first) try { first.focus(); } catch {}
   }, 0);
   return { close };
@@ -248,209 +347,55 @@ export function confirm({ title = "Confirm", message, confirmLabel = "Confirm", 
   });
 }
 
-// dangerAction — high-stakes confirm with extra context. Returns a Promise
-// resolving to true (confirmed) or false (cancelled).
-export function dangerAction({
-  title = "Confirm action",
-  message,
-  body,
-  confirmLabel = "Confirm",
-  variant = "danger",
-  details,
-} = {}) {
+/**
+ * Styled replacement for `window.prompt`. Resolves with the entered string,
+ * or `null` if the user cancels. Always returns a Promise.
+ */
+export function prompt({ title = "Enter value", message, defaultValue = "", placeholder = "", confirmLabel = "OK", inputType = "text" } = {}) {
   return new Promise((resolve) => {
+    const inp = input({ value: defaultValue, placeholder, type: inputType });
     let resolved = false;
-    const finish = (v) => { if (resolved) return; resolved = true; resolve(v); };
-    modal({
-      title,
-      body: el("div", { class: "stack" }, [
-        message ? el("p", { class: "small" }, [message]) : null,
-        body ? body : null,
-        details
-          ? el("div", { class: "tiny muted" }, [details])
-          : null,
-      ]),
-      actions: [
-        { label: "Cancel", onClick: () => finish(false) },
-        { label: confirmLabel, variant, onClick: () => finish(true) },
-      ],
-    });
-  });
-}
-
-// prompt — replaces window.prompt with a styled modal. Returns the entered
-// string, or null if cancelled. Supports optional validate(value) -> string|null
-// that returns an error message to show inline.
-export function prompt({
-  title = "Enter a value",
-  label = "Value",
-  defaultValue = "",
-  placeholder = "",
-  multiline = false,
-  helpText,
-  confirmLabel = "OK",
-  validate,
-} = {}) {
-  return new Promise((resolve) => {
-    const field = multiline
-      ? textarea({ value: defaultValue, placeholder })
-      : input({ value: defaultValue, placeholder });
-    const errLine = el("div", { class: "tiny", style: { color: "var(--danger)", display: "none" } }, [""]);
-    let resolved = false;
-    const finish = (v) => { if (resolved) return; resolved = true; resolve(v); };
-
-    field.addEventListener("keydown", (e) => {
-      if (!multiline && e.key === "Enter") {
+    const finish = (value) => {
+      if (resolved) return;
+      resolved = true;
+      resolve(value);
+    };
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
         e.preventDefault();
-        const v = field.value;
-        const err = validate ? validate(v) : null;
-        if (err) { errLine.textContent = err; errLine.style.display = "block"; return; }
-        const close = field.closest(".modal-backdrop");
-        if (close) close.remove();
-        finish(v);
+        finish(inp.value);
+        // Close the modal — find the backdrop and clear it.
+        const root = document.getElementById("modalRoot");
+        if (root) root.innerHTML = "";
       }
     });
-
     modal({
       title,
       body: el("div", { class: "stack" }, [
-        formRow(label, field),
-        errLine,
-        helpText ? el("div", { class: "tiny muted" }, [helpText]) : null,
+        message ? el("p", { class: "muted" }, [message]) : null,
+        formRow(title, inp),
       ]),
       actions: [
         { label: "Cancel", onClick: () => finish(null) },
-        {
-          label: confirmLabel,
-          variant: "primary",
-          onClick: () => {
-            const v = field.value;
-            const err = validate ? validate(v) : null;
-            if (err) {
-              errLine.textContent = err;
-              errLine.style.display = "block";
-              return false;
-            }
-            finish(v);
-          },
-        },
+        { label: confirmLabel, variant: "primary", onClick: () => finish(inp.value) },
       ],
     });
-    setTimeout(() => { try { field.focus(); field.select?.(); } catch {} }, 30);
+    setTimeout(() => { try { inp.focus(); inp.select?.(); } catch {} }, 0);
   });
 }
 
-// Tabs primitive — single source of truth for tab strips. Persists the
-// active tab in sessionStorage when `sessionKey` is provided.
-//
-// Usage:
-//   tabs({
-//     tabs: [{ id: "summary", label: "Summary", content: () => node },
-//            { id: "data", label: "Data 5", content: () => node }],
-//     sessionKey: "asset.context.AS-1",
-//     ariaLabel: "Asset context",
-//     onChange: (id) => {},
-//   })
-export function tabs({ tabs: list = [], sessionKey, ariaLabel, defaultId, onChange } = {}) {
-  const stored = sessionKey ? sessionStorage.getItem(sessionKey) : null;
-  const active = list.find(t => t.id === stored)
-    || list.find(t => t.id === defaultId)
-    || list[0];
-  const tablist = el("div", { class: "context-tabs", role: "tablist", "aria-label": ariaLabel || "Tabs" });
-  const panel = el("div", { class: "context-tab-panel", role: "tabpanel" });
-
-  function pick(t) {
-    if (sessionKey) sessionStorage.setItem(sessionKey, t.id);
-    if (onChange) onChange(t.id);
-    render();
-  }
-
-  function render() {
-    const cur = list.find(t => t.id === (sessionKey ? sessionStorage.getItem(sessionKey) : null))
-      || active || list[0];
-    tablist.innerHTML = "";
-    list.forEach((t, i) => {
-      const isActive = t.id === cur.id;
-      const btn = el("button", {
-        class: `context-tab ${isActive ? "active" : ""}`,
-        role: "tab",
-        type: "button",
-        "aria-selected": String(isActive),
-        tabindex: isActive ? "0" : "-1",
-        id: `tab-${t.id}`,
-        "aria-controls": `tabpanel-${t.id}`,
-        onClick: () => pick(t),
-        onKeydown: (e) => {
-          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-            e.preventDefault();
-            const dir = e.key === "ArrowRight" ? 1 : -1;
-            const next = list[(i + dir + list.length) % list.length];
-            pick(next);
-            const nb = tablist.querySelector(`#tab-${next.id}`);
-            if (nb) nb.focus();
-          } else if (e.key === "Home") {
-            e.preventDefault(); pick(list[0]);
-            tablist.querySelector(`#tab-${list[0].id}`)?.focus();
-          } else if (e.key === "End") {
-            e.preventDefault(); pick(list[list.length - 1]);
-            tablist.querySelector(`#tab-${list[list.length - 1].id}`)?.focus();
-          }
-        },
-      }, [t.label]);
-      tablist.append(btn);
-    });
-    panel.innerHTML = "";
-    panel.id = `tabpanel-${cur.id}`;
-    panel.setAttribute("aria-labelledby", `tab-${cur.id}`);
-    const c = typeof cur.content === "function" ? cur.content() : cur.content;
-    if (c instanceof Node) panel.append(c);
-    else if (Array.isArray(c)) c.forEach(x => x && panel.append(x));
-    else if (c != null) panel.append(document.createTextNode(String(c)));
-  }
-  render();
-  return el("section", { class: "tabs-wrap" }, [tablist, panel]);
-}
-
-// Empty state — consistent "no data" / "permission-denied" affordance.
-export function emptyState({ icon, title, body, primary, secondary, hint } = {}) {
-  return el("div", { class: "empty-state", role: "status" }, [
-    icon ? el("div", { class: "empty-icon", "aria-hidden": "true" }, [icon]) : null,
-    title ? el("div", { class: "empty-title" }, [title]) : null,
-    body ? el("div", { class: "empty-body" }, [body]) : null,
-    (primary || secondary) ? el("div", { class: "empty-actions row wrap" }, [
-      primary ? el("button", { class: "btn primary", onClick: primary.onClick }, [primary.label]) : null,
-      secondary ? el("button", { class: "btn", onClick: secondary.onClick }, [secondary.label]) : null,
-    ]) : null,
-    hint ? el("div", { class: "empty-hint tiny muted" }, [hint]) : null,
-  ]);
-}
-
-// Page header — title + breadcrumb + status + actions row.
-export function pageHeader({ title, subtitle, breadcrumbs, status, actions } = {}) {
-  return el("div", { class: "page-header" }, [
-    el("div", { class: "page-header-left" }, [
-      breadcrumbs?.length
-        ? el("div", { class: "breadcrumb tiny" }, breadcrumbs.flatMap((c, i) => {
-            const seg = c.onClick
-              ? el("button", { class: "crumb-link", onClick: c.onClick }, [c.label])
-              : el("span", {}, [c.label]);
-            return i === 0 ? [seg] : [el("span", { class: "crumb-sep", "aria-hidden": "true" }, [" / "]), seg];
-          }))
-        : null,
-      el("div", { class: "row", style: { gap: "10px", alignItems: "center" } }, [
-        title ? el("h1", { class: "page-title" }, [title]) : null,
-        status ? status : null,
-      ]),
-      subtitle ? el("div", { class: "page-subtitle tiny muted" }, [subtitle]) : null,
-    ]),
-    actions?.length ? el("div", { class: "page-header-actions row wrap" }, actions) : null,
-  ]);
-}
-
-export function formRow(label, input) {
+let _formRowSeq = 0;
+/**
+ * Pair a `<label>` with a control via id/htmlFor so clicking the label
+ * focuses the input and AT announces them as one. If the control already
+ * has an `id`, that id is reused; otherwise a unique one is generated.
+ */
+export function formRow(label, control) {
+  const id = control && control.id ? control.id : `fr-${++_formRowSeq}`;
+  if (control && !control.id) control.id = id;
   return el("div", { class: "form-row" }, [
-    el("label", {}, [label]),
-    input,
+    el("label", { htmlFor: id }, [label]),
+    control,
   ]);
 }
 

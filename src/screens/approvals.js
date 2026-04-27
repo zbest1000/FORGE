@@ -10,7 +10,7 @@
 //   * Object preview pane (spec layout: queue + preview)
 //   * Approver matrix enforcement via permissions.can()
 
-import { el, mount, card, badge, toast, drawer, formRow, textarea, select, dangerAction, modal } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, textarea, select, confirm } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -348,14 +348,11 @@ async function batchDecide(outcome) {
   const ids = JSON.parse(sessionStorage.getItem("approvals.batch") || "[]");
   if (!ids.length) return;
   if (!can("approve")) return;
-  const ok = await dangerAction({
-    title: `${outcome === "approved" ? "Batch approve" : "Batch reject"} ${ids.length} item(s)?`,
-    message: outcome === "approved"
-      ? "Each decision is HMAC-signed and recorded in the audit ledger."
-      : "Rejecting will cascade revisions back to Rejected and is audited.",
-    confirmLabel: outcome === "approved" ? "Approve all" : "Reject all",
+  const ok = await confirm({
+    title: outcome === "approved" ? "Approve items" : "Reject items",
+    message: `${outcome === "approved" ? "Approve" : "Reject"} ${ids.length} items?`,
+    confirmLabel: outcome === "approved" ? "Approve" : "Reject",
     variant: outcome === "approved" ? "primary" : "danger",
-    details: `Selected: ${ids.join(", ")}`,
   });
   if (!ok) return;
   for (const id of ids) {

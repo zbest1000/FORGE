@@ -550,11 +550,7 @@ function bookmarksCard(dr, sheetId) {
 
   const captureCurrent = async () => {
     let view; try { view = JSON.parse(sessionStorage.getItem(SK(dr.id, "view")) || "{}"); } catch { view = {}; }
-    const name = await prompt({
-      title: "New bookmark",
-      label: "Name",
-      defaultValue: `View ${sheetList.length + 1}`,
-    });
+    const name = await prompt({ title: "Bookmark name", defaultValue: `View ${sheetList.length + 1}` });
     if (!name) return;
     const bookmark = {
       id: "BM-" + Math.random().toString(36).slice(2, 8).toUpperCase(),
@@ -664,10 +660,10 @@ function histogramMarkupTypes(markups) {
 // ---------- IFC mode ----------
 async function loadCadFile(dr) {
   const url = await prompt({
-    title: dr.cadUrl ? "Reload CAD" : "Attach CAD file",
-    label: "URL",
+    title: "Load CAD file",
+    message: "Supported: " + supportedExtensions().join(", ") + ". Must be CORS-enabled.",
     defaultValue: dr.cadUrl || "",
-    helpText: `Must be CORS-enabled. Supported: ${supportedExtensions().join(", ")}.`,
+    placeholder: "https://...",
   });
   if (!url) return;
   const detected = detectCad(url);
@@ -679,7 +675,7 @@ async function loadCadFile(dr) {
 }
 
 async function loadIfcFile(dr) {
-  const url = await prompt({ title: "Load IFC", label: "URL", defaultValue: dr.ifcUrl || "", helpText: "Must be CORS-enabled." });
+  const url = await prompt({ title: "Load IFC file", message: "Must be CORS-enabled.", defaultValue: dr.ifcUrl || "", placeholder: "https://..." });
   if (!url) return;
   update(s => { const x = s.data.drawings.find(y => y.id === dr.id); if (x) x.ifcUrl = url; });
   toast("Loading IFC via web-ifc (MPL 2.0)...", "info");
@@ -774,15 +770,10 @@ async function createMarkup(drawingId, sheetId, kind, x, y) {
   if (!can("edit.markup") && !can("edit")) { toast("No markup permission", "warn"); return; }
 
   let extra = {};
-  if (kind === "text") {
-    extra.text = await prompt({ title: "Text markup", label: "Text", placeholder: "Annotation text" }) || "";
-  } else if (kind === "stamp") {
-    extra.stampLabel = await prompt({ title: "Stamp label", label: "Label", defaultValue: "APPROVED" }) || "APPROVED";
-  } else if (kind === "status") {
-    extra.statusColor = await chooseStatusColor();
-  } else {
-    extra.text = await prompt({ title: "Markup comment", label: "Comment (optional)", placeholder: "What is this calling out?" }) || "";
-  }
+  if (kind === "text") extra.text = (await prompt({ title: "Text markup", placeholder: "Text" })) || "";
+  else if (kind === "stamp") extra.stampLabel = (await prompt({ title: "Stamp label", defaultValue: "APPROVED" })) || "APPROVED";
+  else if (kind === "status") extra.statusColor = await chooseStatusColor();
+  else extra.text = (await prompt({ title: "Markup comment", message: "Optional", placeholder: "Comment" })) || "";
 
   const existing = (state.data.markups || []).filter(m => m.drawingId === drawingId && m.sheetId === sheetId);
   const id = "MK-" + Math.floor(Math.random() * 90000 + 10000);
@@ -801,20 +792,9 @@ async function createMarkup(drawingId, sheetId, kind, x, y) {
   renderDrawingViewer({ id: drawingId });
 }
 
-function chooseStatusColor() {
-  const sel = select(["yellow","red","green"], { value: "yellow" });
-  return new Promise((resolve) => {
-    modal({
-      title: "Status marker",
-      body: el("div", { class: "stack" }, [formRow("Color", sel)]),
-      actions: [
-        { label: "Cancel", onClick: () => resolve("#f59e0b") },
-        { label: "Place", variant: "primary", onClick: () => {
-          resolve(sel.value === "red" ? "#ef4444" : sel.value === "green" ? "#22c55e" : "#f59e0b");
-        }},
-      ],
-    });
-  });
+async function chooseStatusColor() {
+  const pick = await prompt({ title: "Status color", message: "red / yellow / green", defaultValue: "yellow" });
+  return pick === "red" ? "#ef4444" : pick === "green" ? "#22c55e" : "#f59e0b";
 }
 
 function showMarkup(m) {
@@ -837,11 +817,7 @@ function showMarkup(m) {
 
 async function convertMarkupToIssue(m) {
   if (!can("create")) { toast("No permission", "warn"); return; }
-  const title = await prompt({
-    title: "Convert markup to issue",
-    label: "Issue title",
-    defaultValue: m.text || `Markup ${m.id}`,
-  });
+  const title = await prompt({ title: "Convert to issue", message: "Issue title:", defaultValue: m.text || `Markup ${m.id}` });
   if (!title) return;
   const dr = state.data.drawings.find(x => x.id === m.drawingId);
   const doc = dr ? state.data.documents.find(x => x.id === dr.docId) : null;

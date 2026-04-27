@@ -103,11 +103,7 @@ function toggleFacet(params, key, val) {
 }
 
 async function doSave(q, selected) {
-  const name = await prompt({
-    title: "Save search",
-    label: "Name",
-    placeholder: `e.g. ${q ? "“" + q.slice(0,32) + "”" : "My open RFIs"}`,
-  });
+  const name = await prompt({ title: "Save search", message: "Name this saved search:" });
   if (!name) return;
   saveSearch(name, q, selected);
   toast("Saved", "success");

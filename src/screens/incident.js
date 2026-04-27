@@ -290,7 +290,7 @@ function workItemsCard(inc, workItems) {
 }
 
 async function createActionItem(inc) {
-  const title = await prompt({ title: "New action item", label: "Title", placeholder: "What needs to happen?" });
+  const title = await prompt({ title: "Action item", message: "Title:" });
   if (!title) return;
   const project = (state.data.projects || [])[0];
   const id = simulation.demoId("WI", state.data.workItems || []);
@@ -382,64 +382,26 @@ function renderMarkdown(inc, events, sig) {
   return lines.join("\n");
 }
 
-function changeSeverity(inc) {
-  const sevSel = select(["SEV-1","SEV-2","SEV-3","SEV-4"], { value: inc.severity });
-  const reason = textarea({ placeholder: "Why is severity changing?" });
-  modal({
-    title: `Change severity for ${inc.id}`,
-    body: el("div", { class: "stack" }, [
-      formRow("Severity", sevSel),
-      formRow("Reason (audited)", reason),
-    ]),
-    actions: [
-      { label: "Cancel" },
-      { label: "Apply", variant: "primary", onClick: () => {
-        const next = sevSel.value;
-        update(s => {
-          const i = s.data.incidents.find(x => x.id === inc.id);
-          if (!i) return;
-          i.severity = next;
-          i.timeline = i.timeline || [];
-          i.timeline.push({ ts: new Date().toISOString(), actor: s.ui.role, text: `Severity changed to ${next}. ${reason.value || ""}`.trim() });
-        });
-        audit("incident.severity", inc.id, { to: next, reason: (reason.value || "").slice(0, 240) });
-        toast(`Severity → ${next}`, "info");
-      }},
-    ],
-  });
+async function changeSeverity(inc) {
+  const next = await prompt({ title: "Change severity", message: "New severity (SEV-1..SEV-4):", defaultValue: inc.severity });
+  if (!next) return;
+  update(s => { const i = s.data.incidents.find(x => x.id === inc.id); if (i) i.severity = next; });
+  audit("incident.severity", inc.id, { to: next });
 }
 
-function changeStatus(inc) {
-  const allowed = INCIDENT_STATUSES.filter(s => s === inc.status || canTransitionIncident(inc.status, s));
-  const sel = select(allowed, { value: inc.status });
-  const reason = textarea({ placeholder: "Reason / decision context" });
-  modal({
-    title: `Change status for ${inc.id}`,
-    body: el("div", { class: "stack" }, [
-      el("div", { class: "tiny muted" }, [`Allowed transitions from ${inc.status}: ${allowed.filter(x => x !== inc.status).join(", ") || "(terminal)"}`]),
-      formRow("Status", sel),
-      formRow("Reason (audited)", reason),
-    ]),
-    actions: [
-      { label: "Cancel" },
-      { label: "Apply", variant: "primary", onClick: () => {
-        const next = sel.value;
-        if (next === inc.status) return;
-        if (!canTransitionIncident(inc.status, next)) {
-          toast(`Cannot transition incident from ${inc.status} → ${next}`, "warn");
-          return false;
-        }
-        update(s => {
-          const i = s.data.incidents.find(x => x.id === inc.id);
-          if (!i) return;
-          i.status = next;
-          if (next === "resolved") i.resolvedAt = new Date().toISOString();
-          i.timeline = i.timeline || [];
-          i.timeline.push({ ts: new Date().toISOString(), actor: s.ui.role, text: `Status changed to ${next}. ${reason.value || ""}`.trim() });
-        });
-        audit("incident.status", inc.id, { to: next, reason: (reason.value || "").slice(0, 240) });
-        toast(`Status → ${next}`, "success");
-      }},
-    ],
+async function changeStatus(inc) {
+  const next = await prompt({ title: "Change status", message: "New status (" + INCIDENT_STATUSES.join(" / ") + "):", defaultValue: inc.status });
+  if (!next) return;
+  if (!canTransitionIncident(inc.status, next)) {
+    toast(`Cannot transition incident from ${inc.status} → ${next}`, "warn");
+    return;
+  }
+  update(s => {
+    const i = s.data.incidents.find(x => x.id === inc.id);
+    if (!i) return;
+    i.status = next;
+    if (next === "resolved") i.resolvedAt = new Date().toISOString();
+    i.timeline = i.timeline || [];
+    i.timeline.push({ ts: new Date().toISOString(), actor: s.ui.role, text: `Status changed to ${next}.` });
   });
 }

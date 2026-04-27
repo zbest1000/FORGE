@@ -9,7 +9,7 @@
 //   * Follow/unfollow channel
 //   * Decision markers
 
-import { el, mount, card, badge, toast, chip, modal, formRow, textarea, select, input, prompt, dangerAction } from "../core/ui.js";
+import { el, mount, card, badge, toast, chip, modal, formRow, textarea, select, input, confirm, prompt } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -253,11 +253,7 @@ function jumpById(id, d) {
 }
 
 async function linkObject(composer) {
-  const val = await prompt({
-    title: "Link an object",
-    label: "Object ID",
-    placeholder: "DOC-1, AS-1, WI-101, REV-2-C, INC-4412",
-  });
+  const val = await prompt({ title: "Link an object", message: "Enter ID (DOC-1, AS-1, WI-101, REV-2-C, INC-4412):", placeholder: "DOC-1" });
   if (!val) return;
   composer.value += (composer.value ? " " : "") + `[${val.trim()}]`;
   composer.focus();
@@ -275,28 +271,23 @@ function addDecision(composer) {
   composer.focus();
 }
 
-function addMention(composer) {
+async function addMention(composer) {
   const users = state.data.users || [];
-  const sel = select(users.map(u => ({ value: u.initials, label: `${u.initials} — ${u.name} (${u.role})` })));
-  modal({
-    title: "Mention a user",
-    body: el("div", { class: "stack" }, [
-      formRow("User", sel),
-    ]),
-    actions: [
-      { label: "Cancel" },
-      { label: "Insert", variant: "primary", onClick: () => {
-        const u = resolveMention(sel.value, users);
-        if (!u) return;
-        composer.value += (composer.value ? " " : "") + `@${u.initials}`;
-        composer.focus();
-      }},
-    ],
+  const choice = await prompt({
+    title: "Mention user",
+    message: "Initials, name, or @handle.",
+    placeholder: users[0]?.initials || "",
+    defaultValue: users[0]?.initials || "",
   });
+  if (!choice) return;
+  const u = resolveMention(choice, users);
+  if (!u) { return; }
+  composer.value += (composer.value ? " " : "") + `@${u.initials}`;
+  composer.focus();
 }
 
 async function addCodeBlock(composer) {
-  const lang = (await prompt({ title: "Insert code block", label: "Language", defaultValue: "js", placeholder: "js, py, sql, json…" })) || "";
+  const lang = await prompt({ title: "Code block language", placeholder: "js, py, sql, json", defaultValue: "js" }) || "";
   const fenced = "\n```" + lang + "\n// your code\n```\n";
   composer.value += fenced;
   composer.focus();
@@ -311,7 +302,7 @@ function addDataBlock(composer) {
 
 async function convertToWorkItem(m) {
   if (!can("create")) { toast("No permission", "warn"); return; }
-  const title = await prompt({ title: "Convert to work item", label: "Title", defaultValue: (m.text || "").slice(0, 60) });
+  const title = await prompt({ title: "New work item", message: "Title:", defaultValue: (m.text || "").slice(0, 60) });
   if (!title) return;
   const ch = (state.data.channels || []).find(c => c.id === m.channelId);
   const ts = (state.data.teamSpaces || []).find(t => t.id === ch.teamSpaceId);
@@ -332,7 +323,7 @@ async function convertToWorkItem(m) {
 
 async function escalateToIncident(m) {
   if (!can("create")) { toast("No permission", "warn"); return; }
-  const title = await prompt({ title: "Escalate to incident", label: "Incident title", defaultValue: (m.text || "").slice(0, 60) });
+  const title = await prompt({ title: "Open incident", message: "Title:", defaultValue: (m.text || "").slice(0, 60) });
   if (!title) return;
   const ch = (state.data.channels || []).find(c => c.id === m.channelId);
   const id = "INC-" + Math.floor(Math.random() * 9000 + 1000);
@@ -372,12 +363,7 @@ function editMessage(m) {
 }
 
 async function deleteMessage(m) {
-  const ok = await dangerAction({
-    title: "Delete this message?",
-    message: "The message will be hidden from the channel. The full text is retained in the audit log.",
-    confirmLabel: "Delete",
-  });
-  if (!ok) return;
+  if (!await confirm({ title: "Delete message", message: "Delete this message? It will be retained in the audit log.", confirmLabel: "Delete", variant: "danger" })) return;
   update(s => {
     const x = s.data.messages.find(y => y.id === m.id);
     if (!x) return;

@@ -379,6 +379,15 @@ button.tree-item:focus-visible {
   flex: 1;
   padding: var(--space-4);
   overflow: auto;
+  /* Reserve room for the fixed operations dock so the bottom of every
+     screen stays reachable. Overridden when the dock is hidden — see body
+     class below. */
+  padding-bottom: 64px;
+}
+
+body.dock-hidden .screen-container,
+.operations-dock.hidden ~ * .screen-container {
+  padding-bottom: var(--space-4);
 }
 
 /* Right context panel */
@@ -2032,407 +2041,54 @@ body.portal-mode .far-left-rail .rail-logo { background: var(--portal-accent, va
 body.hide-rail .layout-restore { display: flex; }
 body.focus-mode.hide-rail .layout-restore { display: flex; }
 
-/* ================================================================
-   Page header primitive
-   ================================================================ */
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-  flex-wrap: wrap;
-}
-.page-header-left { min-width: 0; flex: 1; }
-.page-header-left .page-title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text-strong);
-}
-.page-header-left .page-subtitle { margin-top: 2px; }
-.page-header-actions { gap: var(--space-2); }
-.crumb-link {
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  padding: 0;
-  font: inherit;
-  cursor: pointer;
-}
-.crumb-link:hover { color: var(--accent); text-decoration: underline; }
-.crumb-sep { color: var(--muted-soft); }
-
-/* ================================================================
-   Empty state primitive
-   ================================================================ */
-.empty-state {
-  background: var(--surface);
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-5) var(--space-5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-items: center;
-  text-align: center;
-}
-.empty-state .empty-icon {
-  width: 44px; height: 44px;
-  border-radius: 999px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 20px;
-  color: var(--muted);
-}
-.empty-state .empty-title {
-  font-size: 15px; font-weight: 600;
-  color: var(--text-strong);
-}
-.empty-state .empty-body {
-  font-size: 13px; color: var(--muted);
-  max-width: 60ch;
-}
-.empty-state .empty-actions { margin-top: var(--space-2); justify-content: center; }
-.empty-state .empty-hint { margin-top: var(--space-2); }
-
-/* ================================================================
-   Tabs primitive — extends existing .context-tabs styles
-   ================================================================ */
-.tabs-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-width: 0;
-}
-.context-tabs {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 4px;
-}
-.context-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-/* ================================================================
-   Connector lifecycle strip (used by /integrations)
-   ================================================================ */
-.connector-lifecycle {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-.lifecycle-step {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--panel);
-  font-size: 13px;
-}
-.lifecycle-index {
-  width: 22px; height: 22px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #0b1220;
-  font-weight: 700;
-  font-size: 12px;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-@media (max-width: 1080px) {
-  .connector-lifecycle { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* Keyboard focus styling for non-button "row buttons" handled by
+   installRowKeyboardHandlers() — ensures :focus-visible is visible. */
+.tree-item:focus-visible,
+.dock-item:focus-visible,
+.activity-row:focus-visible,
+.row-clickable:focus-visible,
+.kanban-card:focus-visible,
+.chip.clickable:focus-visible,
+.palette-item:focus-visible,
+.revision-row:focus-visible,
+.uns-tree-item:focus-visible,
+.hub-tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
-/* ================================================================
-   Approval impact strip
-   ================================================================ */
-.approval-impact {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  align-items: center;
-  padding: var(--space-2) var(--space-3);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-/* ================================================================
-   Severity / data-quality badges
-   ================================================================ */
-.badge.sev-1 { background: rgba(239,68,68,0.15); border-color: var(--sev-1); color: var(--sev-1); }
-.badge.sev-2 { background: rgba(245,158,11,0.15); border-color: var(--sev-2); color: var(--sev-2); }
-.badge.sev-3 { background: rgba(56,189,248,0.15); border-color: var(--sev-3); color: var(--sev-3); }
-.badge.sev-4 { background: rgba(148,163,184,0.15); border-color: var(--sev-4); color: var(--sev-4); }
-
-.badge.dq-live { color: var(--dq-live); border-color: var(--dq-live); }
-.badge.dq-stale { color: var(--dq-stale); border-color: var(--dq-stale); }
-.badge.dq-disconnected { color: var(--dq-disconnected); border-color: var(--dq-disconnected); }
-.badge.dq-simulated { color: var(--dq-simulated); border-color: var(--dq-simulated); }
-.badge.dq-historical { color: var(--dq-historical); border-color: var(--dq-historical); }
-
-/* ================================================================
-   On-demand right context panel + open/close
-   ================================================================ */
-body.hide-context-panel .right-context-panel { display: none; }
-body.hide-context-panel:not(.hide-left-panel):not(.hide-rail) .app-shell {
-  grid-template-columns: 72px 260px 1fr;
-}
-
-.context-toggle-btn {
-  position: relative;
-}
-
-/* ================================================================
-   Header notification bell (replaces always-on dock)
-   ================================================================ */
-.notify-wrap { position: relative; }
-.notify-btn {
-  position: relative;
-}
-.notify-count {
-  position: absolute;
-  top: -6px; right: -6px;
-  background: var(--danger);
-  color: white;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-}
-.notify-popover {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  width: min(380px, 90vw);
-  max-height: 60vh;
-  overflow: auto;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  box-shadow: 0 16px 40px rgba(0,0,0,0.35);
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-}
-.notify-popover-header {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: var(--space-3) var(--space-3);
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.notify-popover .dock-items {
-  flex-direction: column;
-  align-items: stretch;
-  padding: var(--space-2);
-  white-space: normal;
-}
-.notify-popover .dock-item {
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: 1px solid transparent;
-}
-.notify-popover .dock-item:hover { background: var(--elevated); border-color: var(--border); }
-.notify-popover .dock-empty {
-  padding: var(--space-4);
-  text-align: center;
-  color: var(--muted);
-}
-
-/* ================================================================
-   Field mode — touch-first sizing, high-contrast danger actions.
-   Activated via header View ▾ menu (state.ui.fieldMode → body.field-mode).
-   ================================================================ */
-body.field-mode .btn { min-height: 44px; padding: 0 16px; font-size: 14px; }
-body.field-mode .btn.sm { min-height: 38px; padding: 0 12px; font-size: 13px; }
-body.field-mode .input,
-body.field-mode .select,
-body.field-mode .textarea { min-height: 44px; font-size: 15px; }
-body.field-mode .table th,
-body.field-mode .table td { padding: var(--space-3) var(--space-3); font-size: 14px; }
-body.field-mode .rail-btn { width: 56px; height: 56px; font-size: 11px; }
-body.field-mode .rail-btn .rail-icon { font-size: 20px; }
-body.field-mode .tree-item { padding: 10px var(--space-2); font-size: 14px; }
-body.field-mode .activity-row,
-body.field-mode .approval-card,
-body.field-mode .kanban-card { padding: var(--space-3); }
-body.field-mode .badge { padding: 4px 10px; font-size: 12px; }
-body.field-mode .btn.danger {
-  background: var(--danger);
-  color: #fff;
-  border-color: var(--danger);
-  font-weight: 600;
-}
-body.field-mode .incident-severity-bar h2 { font-size: 22px; }
-body.field-mode .modal { width: min(640px, 95vw); }
-body.field-mode .search-input { height: 44px; font-size: 15px; }
-
-/* Forbidden / restricted access page details */
-.forbidden-detail {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
-  text-align: left;
-  margin: var(--space-3) 0;
-  font-size: 13px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.forbidden-detail dt {
-  font-size: 11px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.forbidden-detail dd { margin: 0; color: var(--text); font-family: var(--font-mono); font-size: 12px; }
-
-/* Mobile (≤700 px) */
-@media (max-width: 700px) {
-  .app-shell { grid-template-columns: 56px 1fr; }
-  .far-left-rail { padding: var(--space-2) 4px; }
-  .rail-btn { width: 48px; height: 48px; font-size: 9px; }
-  .left-panel { display: none; }
-  .right-context-panel { display: none; }
-  .main-header {
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-  }
-  .search-input { width: 100%; }
-  .header-controls { width: 100%; flex-wrap: wrap; }
-  .card-grid { grid-template-columns: 1fr; }
-  .two-col, .three-col { grid-template-columns: 1fr; }
-  .compare-grid { grid-template-columns: 1fr; }
-  .notify-popover { width: 92vw; right: -10px; }
-}
-
-/* ----- License chip + banner + admin license panel ----- */
-.license-chip {
+/* Connectivity pill (visible to all users — does not leak backend
+   identity). Neutral online / offline / local indicator. */
+.connectivity-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
-  padding: 0 10px;
+  padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
+  background: var(--panel);
   font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.license-chip:hover { background: var(--surface-2); }
-.license-chip.enterprise { border-color: #6366f1; color: #4f46e5; background: #eef2ff; }
-.license-chip.team       { border-color: #0ea5e9; color: #0369a1; background: #e0f2fe; }
-.license-chip.personal   { border-color: #10b981; color: #047857; background: #ecfdf5; }
-.license-chip.community  { border-color: #d4d4d8; color: #52525b; background: #f4f4f5; }
-@media (prefers-color-scheme: dark) {
-  .license-chip.enterprise { background: rgba(99,102,241,0.15); color: #a5b4fc; }
-  .license-chip.team       { background: rgba(14,165,233,0.15); color: #7dd3fc; }
-  .license-chip.personal   { background: rgba(16,185,129,0.15); color: #6ee7b7; }
-  .license-chip.community  { background: rgba(113,113,122,0.2);  color: #d4d4d8; }
-}
-
-.license-banner {
-  grid-column: 1 / -1;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 12px;
-  font-size: 12px;
-  border-top: 1px solid transparent;
-}
-.license-banner.warning { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
-.license-banner.danger  { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
-@media (prefers-color-scheme: dark) {
-  .license-banner.warning { background: rgba(251,191,36,0.15); color: #fcd34d; }
-  .license-banner.danger  { background: rgba(239,68,68,0.15);  color: #fca5a5; }
-}
-
-dl.kv {
-  display: grid;
-  grid-template-columns: minmax(160px, max-content) 1fr;
-  gap: 4px 16px;
-  margin: 0;
-  font-size: 13px;
-}
-dl.kv .kv-row {
-  display: contents;
-}
-dl.kv dt {
-  color: var(--muted);
   font-weight: 500;
+  min-height: 24px;
 }
-dl.kv dd {
-  margin: 0;
-  color: var(--text);
-  font-family: var(--font-mono);
+.connectivity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
 }
+.connectivity-pill.success-text { color: var(--success); border-color: rgba(34,197,94,0.35); }
+.connectivity-pill.warn-text    { color: var(--warn);    border-color: rgba(245,158,11,0.35); }
+.connectivity-pill.muted        { color: var(--muted);   border-color: var(--border); }
 
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.callout {
-  border-radius: 6px;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-}
-.callout.warn { border-color: #fcd34d; background: #fef3c7; color: #92400e; }
-.callout.danger { border-color: #fca5a5; background: #fee2e2; color: #991b1b; }
-@media (prefers-color-scheme: dark) {
-  .callout.warn { background: rgba(251,191,36,0.15); color: #fcd34d; }
-  .callout.danger { background: rgba(239,68,68,0.15); color: #fca5a5; }
-}
-
-.btn.xs { height: 22px; padding: 0 8px; font-size: 11px; }
-
-/* ----- License feature pills + category labels ----- */
-.feature-pill {
+.header-acting {
   display: inline-flex;
   align-items: center;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  font-size: 12px;
-  color: var(--text);
-  white-space: nowrap;
-  cursor: help;
+  gap: 6px;
 }
-.feature-pill.on {
-  border-color: rgba(34,197,94,0.45);
-  background: rgba(34,197,94,0.08);
-  color: var(--text);
-}
-@media (prefers-color-scheme: dark) {
-  .feature-pill.on { background: rgba(34,197,94,0.15); }
-}
-.feature-category-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  margin-bottom: 4px;
-  margin-top: 8px;
-}
+.header-acting .tiny { white-space: nowrap; }
+
+/* MN-5: minimum 24px target size for small buttons (WCAG 2.5.8). */
+.btn.sm { min-height: 26px; min-width: 26px; }
+.btn.sm.icon, .btn.sm[data-icon] { min-width: 32px; padding: 0 6px; }
