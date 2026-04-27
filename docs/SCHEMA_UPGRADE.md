@@ -41,6 +41,26 @@ The snapshot is best-effort — a full disk, read-only mount, or
 permissions error skips it silently. Set
 `FORGE_SKIP_MIGRATE_SNAPSHOT=1` to disable explicitly.
 
+### Manual snapshot
+
+For ad-hoc snapshots (before a manual schema change, ahead of an
+upgrade window, etc.) use the dedicated CLI:
+
+```bash
+node scripts/migrate-snapshot.js
+# → forge.db.bak-<schema_version>-manual-<ts>
+
+# Custom destination:
+node scripts/migrate-snapshot.js --out /backups/forge-pre-upgrade.db
+
+# With a non-default data dir:
+FORGE_DATA_DIR=/var/lib/forge node scripts/migrate-snapshot.js
+```
+
+Exit code is 0 on success and 1 on any failure (missing data dir,
+missing DB file, backup error). Add `--quiet` to suppress the
+progress line for cron invocations.
+
 ## Integrity check CLI
 
 ```
