@@ -20,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -1294,6 +1294,52 @@ function migrate() {
       }
 
       setVersion(12);
+    }
+
+    if (getVersion() < 13) {
+      // v13: per-tenant audit signing key history.
+      //
+      // The audit pack signing key was a single `FORGE_TENANT_KEY` env
+      // var with a fixed `key:forge:v1` id. Rotating it invalidated
+      // every previously-exported pack because verifiers had no way
+      // to look up which key signed which pack. Multi-tenant
+      // deployments also could not prove provenance per tenant.
+      //
+      // The new `tenant_keys` table records the lifecycle of each
+      // signing key: when it was active, when it was retired, and a
+      // sha256 fingerprint of the key material so an admin reviewing
+      // the table can confirm which env var revision matches a row
+      // without exposing the key itself.
+      //
+      // Key material itself is NOT stored here — operators continue
+      // to manage it via env / KMS. The table is the registry, the
+      // env is the secret store.
+      //
+      // `crypto.js` consults this table at sign time (pick the active
+      // key for the requester's org) and at verify time (look up by
+      // `keyId` so old packs still verify after rotation). Backfill
+      // creates a single `key:forge:v1` row marked active so existing
+      // installs keep verifying their own packs without operator
+      // action.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS tenant_keys (
+          id TEXT PRIMARY KEY,
+          org_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+          state TEXT NOT NULL DEFAULT 'active',
+          key_fingerprint TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          retired_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_tenant_keys_org_state ON tenant_keys(org_id, state);
+      `);
+      // Seed the global key as the boot-time fallback. The fingerprint
+      // is computed lazily by crypto.js the first time the key is
+      // needed, so we record an empty placeholder here that will be
+      // updated on first sign/verify.
+      db.prepare(`INSERT OR IGNORE INTO tenant_keys (id, org_id, state, key_fingerprint, created_at)
+                  VALUES ('key:forge:v1', NULL, 'active', '', ?)`)
+        .run(new Date().toISOString());
+      setVersion(13);
     }
   })();
 }

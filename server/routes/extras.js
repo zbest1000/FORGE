@@ -88,7 +88,8 @@ export default async function extrasRoutes(fastify) {
     const id = uuid("FS");
     const ts = now();
     const payload = { formId, parentKind, parentId, answers, submitter: req.user.id, ts };
-    const sig = await signHMAC(canonicalJSON(payload));
+    // Per-tenant key history: scope signature to the submitter's org.
+    const sig = await signHMAC(canonicalJSON(payload), { orgId: req.user.org_id || null });
     db.prepare(`INSERT INTO form_submissions (id, form_id, parent_kind, parent_id, submitter_id, ts, answers, signature, signature_key_id)
                 VALUES (@id, @form_id, @pk, @pi, @sub, @ts, @answers, @sig, @kid)`)
       .run({ id, form_id: formId, pk: parentKind, pi: parentId, sub: req.user.id, ts, answers: JSON.stringify(answers), sig: sig.signature, kid: sig.keyId });

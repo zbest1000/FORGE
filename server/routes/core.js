@@ -347,7 +347,9 @@ export default async function coreRoutes(fastify) {
     }
     const { signHMAC, canonicalJSON } = await import("../crypto.js");
     const payload = { approvalId: row.id, subject: { kind: row.subject_kind, id: row.subject_id }, outcome, notes, signer: req.user.id, ts: now() };
-    const sig = await signHMAC(canonicalJSON(payload));
+    // Sign with the requester's tenant key so a per-tenant rotation
+    // (or a tenant-scoped key history audit) can verify provenance.
+    const sig = await signHMAC(canonicalJSON(payload), { orgId: req.user.org_id || null });
     const chain = JSON.parse(row.chain || "[]");
     chain.push({ ts: payload.ts, action: outcome, actor: req.user.id, signature: sig.signature, keyId: sig.keyId });
     db.prepare("UPDATE approvals SET status = ?, reason = ?, signed_by = ?, signed_at = ?, signature = ?, chain = ?, updated_at = ? WHERE id = ?")

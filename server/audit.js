@@ -119,8 +119,10 @@ export async function verifyLedger() {
  * Produce an exportable audit pack signed with HMAC-SHA256.
  *
  * When `orgId` is supplied, only entries belonging to that tenant
- * (plus `org_id = NULL` system events) are included. Caller can pass
- * `orgId = null` (default) for a global pack, used by ops tooling.
+ * (plus `org_id = NULL` system events) are included AND the pack is
+ * signed with the org's active tenant key (per-tenant key history,
+ * see `server/crypto.js`). Passing `orgId = null` (the default)
+ * produces a global pack signed with the system key.
  */
 export async function exportAuditPack({ since = null, until = null, orgId = null } = {}) {
   await drain();
@@ -140,15 +142,23 @@ export async function exportAuditPack({ since = null, until = null, orgId = null
     exported_at: new Date().toISOString(),
     entry_count: rows.length,
     entries: rows,
+    // Tag the pack itself with the requesting org so a future
+    // verifier without filesystem access can see what scope the
+    // export covers.
+    org_id: orgId,
   };
-  const sig = await signHMAC(canonicalJSON(pack));
+  const sig = await signHMAC(canonicalJSON(pack), { orgId });
   return { ...pack, signature: sig };
 }
 
 export async function verifyAuditPack(pack) {
   if (!pack || !pack.signature) return false;
   const { signature, ...rest } = pack;
-  return verifyHMAC(canonicalJSON(rest), signature.signature);
+  // Use the keyId recorded on the pack signature so packs signed
+  // under a since-rotated key still verify. If the signature pre-dates
+  // the registry (`keyId` missing), `verifyHMAC` falls back to the
+  // global default.
+  return verifyHMAC(canonicalJSON(rest), signature.signature, { keyId: signature.keyId || null });
 }
 
 export function recent(limit = 100, { orgId = null } = {}) {
