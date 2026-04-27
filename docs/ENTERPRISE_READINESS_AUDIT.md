@@ -37,10 +37,35 @@ Tasks marked **DONE** in this branch (`cursor/enterprise-readiness-audit-603f`):
 | Legal-hold interlock on file delete | `f4436f0` | `server/routes/files.js` |
 | Pagination on list endpoints | `f4436f0` | `server/routes/core.js` |
 
-Test suite: 107/107 passing locally. New regression coverage:
-`tenant-isolation`, `outbound-url`, `lockout`, `webhook-ssrf`,
-`retention`, plus extensions to `routes.test.js` (token scope,
-audit redaction, lockout 429, pagination).
+### Follow-on batch (`cursor/enterprise-readiness-batches-7a2c`)
+
+| Task | Coverage |
+|---|---|
+| CI fix: Windows path portability (audit-chain) + skip POSIX shutdown test on Windows | `test/audit-chain.test.js`, `test/shutdown.test.js` |
+| B.11 #1 — `/api/v1/*` versioning shim with deprecation header | `server/main.js` (rewriteUrl + onRequest), new `test/api-versioning.test.js` |
+| B.11 #2 — Unified error envelope + X-Request-Id | `server/errors.js` (new), `server/main.js`, new `test/error-envelope.test.js` |
+| B.11 #4 — ETag / If-Match optimistic concurrency on PATCH | `server/etag.js` (new), `server/routes/core.js`, `server/routes/compliance.js`, new `test/etag.test.js` |
+| B.11 #5 — Tenant scope on /api/audit* | `audit_log.org_id` (v11), `server/audit.js`, `server/routes/core.js` |
+| B.4 #1, #3 — Foreign-key sweep with ON DELETE policies + pre-migrate snapshot + `--integrity` CLI | `server/db.js` v12, new `test/foreign-keys.test.js` |
+| B.6 #5, B.8 #6 — Periodic verifyLedger worker + Prometheus tamper metrics | `server/audit-tamper.js` (new), `server/main.js`, new `test/audit-tamper.test.js` |
+| B.7 #10 — Per-route Fastify JSON-schema validation on auth/core/webhook writes | `server/schemas/{common,auth,core,webhooks}.js` (new), every write route, new `test/schema-validation.test.js` |
+| B.3 #6 — `webhook.write` capability separates from `admin.view` | `server/auth.js`, `server/routes/webhooks.js` |
+| B.3 #7 — Event ingest requires `integration.write` | `server/routes/core.js`, `server/graphql/resolvers.js` |
+| B.3 #8 — Compliance writes require `admin.edit`; reads keep `admin.view` | `server/auth.js`, `server/routes/compliance.js` |
+| B.6 #4 — Pino redaction for secrets / passwords / tokens / Authorization | `server/main.js` |
+| B.8 #1 — DSAR third-party PII redaction with stable mask + summary | `server/compliance.js`, new `test/dsar-redaction.test.js` |
+| B.7 #11 — FTS5 query sanitisation (control chars, operator surface, length cap) | `server/security/fts.js` (new), `server/routes/core.js`, `server/routes/ai.js`, `server/alerts.js`, `server/graphql/resolvers.js`, new `test/fts-injection.test.js` |
+| B.13 #1 — `SECURITY.md` with coordinated disclosure window | repo root |
+| B.13 #3 — `docs/INCIDENT_RUNBOOK.md` for the FORGE service | docs/ |
+| B.13 #2 — `docs/SLO.md` with SLIs + Prometheus alerts | docs/ |
+| B.13 #4 — `docs/SCHEMA_UPGRADE.md` covering v8–v12 | docs/ |
+| B.13 #5 — `docs/THREAT_MODEL.md` (STRIDE per surface) | docs/ |
+
+Test suite: 168/168 passing locally on Linux (Windows runs all but
+the POSIX-signal shutdown test; macOS runs the full suite). New
+regression files: `api-versioning`, `etag`, `error-envelope`,
+`foreign-keys`, `audit-tamper`, `schema-validation`,
+`authz-tightening`, `dsar-redaction`, `fts-injection`.
 
 Remaining tasks are tracked in the developer-ready list (Section E)
 and in the prioritized roadmap.
