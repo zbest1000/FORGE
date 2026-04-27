@@ -1,10 +1,25 @@
 // Seed demo data into SQLite. Safe to run multiple times — uses INSERT OR
 // IGNORE on primary keys.
+//
+// ACL hand-wave
+// -------------
+// The demo seed leaves every row with `acl: '{}'` because the demo is
+// single-tenant + permissive by default. With
+// `FORGE_ACL_DENY_BY_DEFAULT=1` (auto-on in production strict mode),
+// `parseAcl` now treats an empty / missing ACL as deny-by-default, so
+// every row would become invisible to non-owner roles.
+//
+// Use `PUBLIC_ACL` for rows that are intentionally world-readable
+// inside the demo tenant (the headline channels, the demo team
+// spaces, the seeded asset hierarchy). Production data added via the
+// real APIs continues to ship explicit ACLs from the route handlers.
 
 import { db, now, uuid } from "./db.js";
 import { ensureUser } from "./auth.js";
 import { audit } from "./audit.js";
 import { buildSeed } from "../src/data/seed.js";
+
+const PUBLIC_ACL = JSON.stringify({ roles: ["*"], users: [], abac: {} });
 
 const orgId = "ORG-1";
 const wsId = "WS-1";
@@ -46,20 +61,20 @@ function insertMany(sql, rows, map) {
 
 insertMany(
   `INSERT OR IGNORE INTO team_spaces (id, org_id, workspace_id, name, summary, status, acl, labels, created_at, updated_at)
-   VALUES (@id, @org, @ws, @name, @summary, 'active', '{}', '[]', @now, @now)`,
-  data.teamSpaces, t => ({ id: t.id, org: orgId, ws: wsId, name: t.name, summary: t.summary, now: now() })
+   VALUES (@id, @org, @ws, @name, @summary, 'active', @acl, '[]', @now, @now)`,
+  data.teamSpaces, t => ({ id: t.id, org: orgId, ws: wsId, name: t.name, summary: t.summary, acl: PUBLIC_ACL, now: now() })
 );
 
 insertMany(
   `INSERT OR IGNORE INTO projects (id, team_space_id, name, status, due_date, milestones, acl, labels, created_at, updated_at)
-   VALUES (@id, @ts, @name, @status, @due, @milestones, '{}', '[]', @now, @now)`,
-  data.projects, p => ({ id: p.id, ts: p.teamSpaceId, name: p.name, status: p.status, due: p.dueDate || null, milestones: JSON.stringify(p.milestones || []), now: now() })
+   VALUES (@id, @ts, @name, @status, @due, @milestones, @acl, '[]', @now, @now)`,
+  data.projects, p => ({ id: p.id, ts: p.teamSpaceId, name: p.name, status: p.status, due: p.dueDate || null, milestones: JSON.stringify(p.milestones || []), acl: PUBLIC_ACL, now: now() })
 );
 
 insertMany(
   `INSERT OR IGNORE INTO channels (id, team_space_id, name, kind, unread, acl, created_at, updated_at)
-   VALUES (@id, @ts, @name, @kind, @unread, '{}', @now, @now)`,
-  data.channels, c => ({ id: c.id, ts: c.teamSpaceId, name: c.name, kind: c.kind, unread: c.unread || 0, now: now() })
+   VALUES (@id, @ts, @name, @kind, @unread, @acl, @now, @now)`,
+  data.channels, c => ({ id: c.id, ts: c.teamSpaceId, name: c.name, kind: c.kind, unread: c.unread || 0, acl: PUBLIC_ACL, now: now() })
 );
 
 insertMany(
@@ -70,8 +85,8 @@ insertMany(
 
 insertMany(
   `INSERT OR IGNORE INTO documents (id, team_space_id, project_id, name, kind, discipline, current_revision_id, sensitivity, acl, labels, created_at, updated_at)
-   VALUES (@id, @ts, @pr, @name, @kind, @disc, @cur, @sens, '{}', '[]', @now, @now)`,
-  data.documents, d => ({ id: d.id, ts: d.teamSpaceId, pr: d.projectId || null, name: d.name, kind: d.kind || null, disc: d.discipline || null, cur: d.currentRevisionId || null, sens: d.sensitivity || null, now: now() })
+   VALUES (@id, @ts, @pr, @name, @kind, @disc, @cur, @sens, @acl, '[]', @now, @now)`,
+  data.documents, d => ({ id: d.id, ts: d.teamSpaceId, pr: d.projectId || null, name: d.name, kind: d.kind || null, disc: d.discipline || null, cur: d.currentRevisionId || null, sens: d.sensitivity || null, acl: PUBLIC_ACL, now: now() })
 );
 
 insertMany(
@@ -82,8 +97,8 @@ insertMany(
 
 insertMany(
   `INSERT OR IGNORE INTO drawings (id, doc_id, team_space_id, project_id, name, discipline, sheets, acl, labels, created_at, updated_at)
-   VALUES (@id, @doc, @ts, @pr, @name, @disc, @sheets, '{}', '[]', @now, @now)`,
-  data.drawings, d => ({ id: d.id, doc: d.docId, ts: d.teamSpaceId, pr: d.projectId, name: d.name, disc: d.discipline, sheets: JSON.stringify(d.sheets || []), now: now() })
+   VALUES (@id, @doc, @ts, @pr, @name, @disc, @sheets, @acl, '[]', @now, @now)`,
+  data.drawings, d => ({ id: d.id, doc: d.docId, ts: d.teamSpaceId, pr: d.projectId, name: d.name, disc: d.discipline, sheets: JSON.stringify(d.sheets || []), acl: PUBLIC_ACL, now: now() })
 );
 
 insertMany(
@@ -94,14 +109,14 @@ insertMany(
 
 insertMany(
   `INSERT OR IGNORE INTO assets (id, org_id, workspace_id, name, type, hierarchy, status, mqtt_topics, opcua_nodes, doc_ids, acl, labels, created_at, updated_at)
-   VALUES (@id, @org, @ws, @name, @type, @h, @status, @mqtt, @opc, @docs, '{}', '[]', @now, @now)`,
-  data.assets, a => ({ id: a.id, org: orgId, ws: wsId, name: a.name, type: a.type, h: a.hierarchy, status: a.status, mqtt: JSON.stringify(a.mqttTopics || []), opc: JSON.stringify(a.opcuaNodes || []), docs: JSON.stringify(a.docIds || []), now: now() })
+   VALUES (@id, @org, @ws, @name, @type, @h, @status, @mqtt, @opc, @docs, @acl, '[]', @now, @now)`,
+  data.assets, a => ({ id: a.id, org: orgId, ws: wsId, name: a.name, type: a.type, h: a.hierarchy, status: a.status, mqtt: JSON.stringify(a.mqttTopics || []), opc: JSON.stringify(a.opcuaNodes || []), docs: JSON.stringify(a.docIds || []), acl: PUBLIC_ACL, now: now() })
 );
 
 insertMany(
   `INSERT OR IGNORE INTO work_items (id, project_id, type, title, assignee_id, status, severity, due, blockers, labels, acl, created_at, updated_at)
-   VALUES (@id, @pr, @type, @title, @assignee, @status, @severity, @due, @blockers, '[]', '{}', @now, @now)`,
-  data.workItems, w => ({ id: w.id, pr: w.projectId, type: w.type, title: w.title, assignee: w.assigneeId, status: w.status, severity: w.severity, due: w.due || null, blockers: JSON.stringify(w.blockers || []), now: now() })
+   VALUES (@id, @pr, @type, @title, @assignee, @status, @severity, @due, @blockers, '[]', @acl, @now, @now)`,
+  data.workItems, w => ({ id: w.id, pr: w.projectId, type: w.type, title: w.title, assignee: w.assigneeId, status: w.status, severity: w.severity, due: w.due || null, blockers: JSON.stringify(w.blockers || []), acl: PUBLIC_ACL, now: now() })
 );
 
 insertMany(
