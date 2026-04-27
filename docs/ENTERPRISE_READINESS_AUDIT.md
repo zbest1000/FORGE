@@ -42,6 +42,11 @@ Tasks marked **DONE** in this branch (`cursor/enterprise-readiness-audit-603f`):
 | Task | Coverage |
 |---|---|
 | CI fix: Windows path portability (audit-chain) + skip POSIX shutdown test on Windows | `test/audit-chain.test.js`, `test/shutdown.test.js` |
+| CI fix: gitleaks allowlist for deterministic test fixtures | `.gitleaks.toml` |
+| CI fix: de-flake MFA challenge tamper assertion (last-char hex 1/16 collision) | `test/mfa.test.js` |
+| CI fix: CodeQL config that excludes `js/missing-rate-limiting` (Fastify global limiter not traceable) | `.github/codeql/codeql-config.yml`, `.github/workflows/codeql.yml` |
+| CI fix: Docker runtime image copies `src/core/fsm`, `src/core/i3x`, `src/data` (server imports) | `Dockerfile` |
+| CI fix: Docker smoke step uses 32+ char strict-mode secrets | `.github/workflows/ci.yml` |
 | B.11 #1 — `/api/v1/*` versioning shim with deprecation header | `server/main.js` (rewriteUrl + onRequest), new `test/api-versioning.test.js` |
 | B.11 #2 — Unified error envelope + X-Request-Id | `server/errors.js` (new), `server/main.js`, new `test/error-envelope.test.js` |
 | B.11 #4 — ETag / If-Match optimistic concurrency on PATCH | `server/etag.js` (new), `server/routes/core.js`, `server/routes/compliance.js`, new `test/etag.test.js` |
