@@ -24,6 +24,7 @@ export function renderOPCUA() {
     .map(ds => enrichNode(ds))
     // Demo seed nodes for namespace depth
     .concat(DEMO_NODES.filter(n => !d.dataSources.some(ds => ds.endpoint === n.id)));
+  const ignitionTags = ignitionNodes(nodes);
 
   const selectedKey = "opcua.selected";
   const selected = sessionStorage.getItem(selectedKey) || nodes[0]?.id;
@@ -51,12 +52,17 @@ export function renderOPCUA() {
         ]),
       ])),
     ]),
+    card("Ignition tag provider", ignitionBrowser(ignitionTags), {
+      subtitle: "Browse leaf Ignition tag paths and bind them to FORGE assets through OPC UA nodes.",
+    }),
   ]);
 }
 
 const DEMO_NODES = [
   { id: "ns=2;s=Line.State",       dt: "Int32",  unit: "",     sampling: "250ms", assetId: null },
   { id: "ns=2;s=Feeder.A1.Speed",  dt: "Double", unit: "rpm",  sampling: "500ms", assetId: "AS-2" },
+  { id: "ns=2;s=[default]LineA/Cell1/FeederA1/Current", dt: "Float", unit: "A", sampling: "1s", assetId: "AS-2", ignitionPath: "[default]LineA/Cell1/FeederA1/Current" },
+  { id: "ns=2;s=[default]LineA/Cell3/HX01/Temperature", dt: "Float", unit: "degC", sampling: "1s", assetId: "AS-1", ignitionPath: "[default]LineA/Cell3/HX01/Temperature" },
 ];
 
 function enrichNode(ds) {
@@ -67,6 +73,7 @@ function enrichNode(ds) {
     unit: inferUnit(),
     sampling: "1s",
     assetId: ds.assetId,
+    ignitionPath: ds.ignitionPath || ds.config?.ignitionPath || ignitionPathFromNode(ds.endpoint),
   };
 }
 
@@ -94,6 +101,53 @@ function renderNodes(nodes, selected, onSelect) {
     badge(n.dt, "info"),
     n.assetId ? badge("→ " + n.assetId, "accent") : badge("unmapped", "warn"),
   ])));
+}
+
+function ignitionNodes(nodes) {
+  return nodes
+    .filter(n => n.ignitionPath || /\[.+\]/.test(n.id))
+    .map(n => ({ ...n, ignitionPath: n.ignitionPath || ignitionPathFromNode(n.id) }));
+}
+
+function ignitionPathFromNode(nodeId) {
+  const m = String(nodeId || "").match(/\[(.+)\](.+)$/);
+  if (m) return `[${m[1]}]${m[2].replace(/[.;]/g, "/")}`;
+  const clean = String(nodeId || "").replace(/^ns=\d+;s=/, "").replace(/\./g, "/");
+  return `[default]${clean}`;
+}
+
+function ignitionBrowser(tags) {
+  if (!tags.length) return el("div", { class: "muted tiny" }, ["No Ignition tags discovered. Add OPC UA nodes with [provider] paths or configure the Ignition gateway tag export."]);
+  const leafTags = tags.filter(tag => !tags.some(other => other !== tag && other.ignitionPath.startsWith(tag.ignitionPath + "/")));
+  return el("div", { class: "stack" }, leafTags.map(tag => el("div", { class: "activity-row" }, [
+    badge("Ignition", "purple"),
+    el("div", { class: "stack", style: { gap: "2px", flex: 1 } }, [
+      el("span", { class: "small mono" }, [tag.ignitionPath]),
+      el("span", { class: "tiny muted" }, [`OPC UA ${tag.id} · ${tag.dt} · ${tag.unit || "unitless"}`]),
+    ]),
+    tag.assetId ? badge(`→ ${tag.assetId}`, "accent") : badge("unmapped", "warn"),
+    el("button", { class: "btn sm", disabled: !can("integration.write"), onClick: () => bindIgnitionTag(tag) }, ["Bind to asset"]),
+  ])));
+}
+
+function bindIgnitionTag(tag) {
+  const ds = (state.data.dataSources || []).find(x => x.endpoint === tag.id);
+  update(s => {
+    const row = ds || {
+      id: "DS-" + Math.floor(Math.random() * 9000 + 1000),
+      integrationId: "INT-OPCUA",
+      endpoint: tag.id,
+      kind: "node",
+    };
+    row.ignitionPath = tag.ignitionPath;
+    row.assetId = tag.assetId || row.assetId || null;
+    row.unit = tag.unit || row.unit || "";
+    row.sampling = tag.sampling || row.sampling || "1s";
+    row.config = { ...(row.config || {}), ignitionPath: tag.ignitionPath, provider: tag.ignitionPath.match(/^\[([^\]]+)/)?.[1] || "default" };
+    if (!ds) s.data.dataSources.push(row);
+  });
+  audit("ignition.tag.bind", tag.ignitionPath, { nodeId: tag.id, assetId: tag.assetId || null });
+  toast("Ignition tag bound", "success");
 }
 
 function mappingEditor(node, nodes) {

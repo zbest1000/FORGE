@@ -38,12 +38,13 @@ export function renderIntegrations() {
           el("button", { class: "btn sm", disabled: !can("integration.write"), onClick: () => rotateCred(i) }, ["Rotate cred"]),
           i.kind === "mqtt"  ? el("button", { class: "btn sm primary", onClick: () => navigate("/integrations/mqtt") }, ["MQTT browser →"]) : null,
           i.kind === "opcua" ? el("button", { class: "btn sm primary", onClick: () => navigate("/integrations/opcua") }, ["OPC UA browser →"]) : null,
+          i.kind === "modbus" ? el("button", { class: "btn sm primary", onClick: () => navigate("/operations") }, ["Historian & Modbus →"]) : null,
           i.kind === "erp"   ? el("button", { class: "btn sm primary", onClick: () => navigate("/integrations/erp") }, ["ERP mapping →"]) : null,
         ]),
       ]));
     })),
 
-    card("Unified Namespace binding", el("div", { class: "stack" }, [
+    card("Interoperability binding", el("div", { class: "stack" }, [
       el("div", { class: "small" }, ["All connectors publish into the canonical UNS and surface as i3X variables (see /uns, /i3x)."]),
       el("div", { class: "row wrap" }, [
         badge("urn:cesmii:isa95:1", "purple"),
@@ -52,7 +53,7 @@ export function renderIntegrations() {
       ]),
       el("div", { class: "row" }, [
         el("button", { class: "btn sm", onClick: () => navigate("/uns") }, ["Open UNS browser →"]),
-        el("button", { class: "btn sm", onClick: () => navigate("/i3x") }, ["Open i3X Explorer →"]),
+        el("button", { class: "btn sm", onClick: () => navigate("/i3x") }, ["Open i3X API →"]),
       ]),
     ])),
 

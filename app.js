@@ -33,6 +33,7 @@ import { renderProjectsIndex, renderWorkBoard } from "./src/screens/workBoard.js
 import { renderDocsIndex, renderDocViewer } from "./src/screens/docViewer.js";
 import { renderApprovals } from "./src/screens/approvals.js";
 import { renderIntegrations } from "./src/screens/integrations.js";
+import { renderOperationsData } from "./src/screens/operations.js";
 import { renderAdmin } from "./src/screens/admin.js";
 
 // Heavy / specialist screens are lazy-loaded the first time the user
@@ -107,6 +108,7 @@ function setupRoutes() {
     lazy(() => import("./src/screens/incident.js"), "renderIncident", "Incident"));
 
   defineRoute("/approvals", renderApprovals);
+  defineRoute("/operations", renderOperationsData);
   defineRoute("/ai",
     lazy(() => import("./src/screens/ai.js"), "renderAI", "AI Workspace"));
 
@@ -128,7 +130,7 @@ function setupRoutes() {
   defineRoute("/uns",
     lazy(() => import("./src/screens/uns.js"), "renderUNSIndex", "Unified Namespace"));
   defineRoute("/i3x",
-    lazy(() => import("./src/screens/i3x.js"), "renderI3X", "i3X Explorer"));
+    lazy(() => import("./src/screens/i3x.js"), "renderI3X", "i3X API Workbench"));
 }
 
 function applyTheme() {
