@@ -20,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 14;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -32,9 +32,32 @@ function setVersion(v) {
   db.prepare("INSERT INTO meta(key, value) VALUES('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(v));
 }
 
+/**
+ * Best-effort snapshot of the SQLite database before a migration runs.
+ * Lives next to the live DB as `forge.db.bak-<from>-<to>-<ts>` so an
+ * operator can restore manually if a migration produces a bad state.
+ *
+ * Uses SQLite's online backup API via `db.backup()` so the file is a
+ * consistent copy even with WAL writes in flight. Failures are
+ * non-fatal: snapshot is opportunistic, never blocking.
+ */
+function snapshotBeforeMigrate(fromVersion, toVersion) {
+  if (process.env.FORGE_SKIP_MIGRATE_SNAPSHOT) return;
+  try {
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const dest = path.join(DATA_DIR, `forge.db.bak-${fromVersion}-${toVersion}-${ts}`);
+    // `db.backup` returns a promise; we don't await — the snapshot
+    // is fire-and-forget. If the migration corrupts state, the
+    // operator restores the latest .bak file. The snapshot uses
+    // SQLite's page-level copy so concurrent writes are safe.
+    db.backup(dest).catch(() => { /* swallow */ });
+  } catch { /* ignore — disk full, permissions, etc. */ }
+}
+
 function migrate() {
   const current = getVersion();
   if (current >= SCHEMA_VERSION) return;
+  snapshotBeforeMigrate(current, SCHEMA_VERSION);
 
   db.transaction(() => {
     // -- v1: core tables --
@@ -928,6 +951,580 @@ function migrate() {
       `);
       setVersion(10);
     }
+
+    if (getVersion() < 11) {
+      // v11: tenant scope on audit_log.
+      //
+      // Until now `audit_log` rows carried no tenant identity, so an
+      // operator with `view` capability in ORG-1 could read every
+      // ORG-2 audit entry through `/api/audit`. Add a nullable
+      // `org_id` column and backfill from `users.org_id` where the
+      // entry's `actor` matches a known user. Rows authored by
+      // system actors (`actor IN ('system', 'webhooks', 'retention')`)
+      // remain `org_id = NULL` and are visible to every tenant; this
+      // is intentional so global lifecycle events (boot, retention
+      // sweeps, webhook deliveries) keep showing up everywhere.
+      //
+      // The hash chain is unchanged: `org_id` is metadata, not part
+      // of the canonicalized payload. Existing rows keep their
+      // signatures intact and verifyLedger() still rebuilds exactly
+      // the same hashes.
+      db.exec(`
+        ALTER TABLE audit_log ADD COLUMN org_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_audit_org_seq ON audit_log(org_id, seq);
+        UPDATE audit_log SET org_id = (
+          SELECT org_id FROM users WHERE users.id = audit_log.actor
+        )
+        WHERE org_id IS NULL
+          AND actor IN (SELECT id FROM users);
+      `);
+      setVersion(11);
+    }
+
+    if (getVersion() < 12) {
+      // v12: enforce foreign-key constraints on the core ownership
+      // chains.
+      //
+      // Earlier versions declared FKs only on `users.org_id` and
+      // `workspaces.org_id`. Every other child table had implicit
+      // references that were not enforced — so PRAGMA foreign_keys=ON
+      // was effectively a no-op for the rest of the schema, and a
+      // delete on `organizations` would orphan everything below it.
+      //
+      // SQLite cannot ALTER an existing table to add FKs; we have to
+      // CREATE the new shape, copy the rows, drop the old, and
+      // rename. This block does that for the high-traffic child
+      // tables. We disable FK checking for the duration so a
+      // mid-rebuild state with two copies of the same logical table
+      // does not trip integrity errors; at the end we run
+      // `PRAGMA foreign_key_check` and abort the whole migration if
+      // any orphan row remains.
+      //
+      // Policy:
+      //   - CASCADE for ownership chains (org → workspace → team_space
+      //     → project / channel / document; document → revision /
+      //     drawing; project → work_item; channel → message).
+      //   - SET NULL for soft references (incident.commander_id →
+      //     users.id, work_items.assignee_id → users.id).
+      //   - polymorphic refs (approvals.subject_id, files.parent_id,
+      //     audit_log.subject) are intentionally left untyped.
+      //
+      // The migration stays inside the outer `migrate()` transaction.
+      // If `foreign_key_check` reports orphans, the transaction is
+      // rolled back and the schema_version stays at v11 so the
+      // operator can clean up and retry. Use
+      // `node server/db.js --integrity` (defined below) to print the
+      // offending rows.
+
+      db.pragma("foreign_keys = OFF");
+
+      const recreateTable = (createNewSql, copySql, oldName, newName) => {
+        db.exec(createNewSql);
+        db.exec(copySql);
+        db.exec(`DROP TABLE ${oldName}`);
+        db.exec(`ALTER TABLE ${newName} RENAME TO ${oldName}`);
+      };
+
+      // -- workspaces (already had FK on org_id; keep schema, no-op) --
+      // -- team_spaces --
+      recreateTable(
+        `CREATE TABLE team_spaces_new (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          summary TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          acl TEXT NOT NULL DEFAULT '{}',
+          labels TEXT NOT NULL DEFAULT '[]',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `INSERT INTO team_spaces_new SELECT id, org_id, workspace_id, name, summary, status, acl, labels, created_by, created_at, updated_at FROM team_spaces`,
+        "team_spaces",
+        "team_spaces_new",
+      );
+
+      // -- projects --
+      recreateTable(
+        `CREATE TABLE projects_new (
+          id TEXT PRIMARY KEY,
+          team_space_id TEXT NOT NULL REFERENCES team_spaces(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          status TEXT NOT NULL,
+          due_date TEXT,
+          milestones TEXT NOT NULL DEFAULT '[]',
+          acl TEXT NOT NULL DEFAULT '{}',
+          labels TEXT NOT NULL DEFAULT '[]',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `INSERT INTO projects_new SELECT id, team_space_id, name, status, due_date, milestones, acl, labels, created_by, created_at, updated_at FROM projects`,
+        "projects",
+        "projects_new",
+      );
+
+      // -- channels --
+      recreateTable(
+        `CREATE TABLE channels_new (
+          id TEXT PRIMARY KEY,
+          team_space_id TEXT NOT NULL REFERENCES team_spaces(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          unread INTEGER NOT NULL DEFAULT 0,
+          acl TEXT NOT NULL DEFAULT '{}',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `INSERT INTO channels_new SELECT id, team_space_id, name, kind, unread, acl, created_by, created_at, updated_at FROM channels`,
+        "channels",
+        "channels_new",
+      );
+
+      // -- messages --
+      recreateTable(
+        `CREATE TABLE messages_new (
+          id TEXT PRIMARY KEY,
+          channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+          author_id TEXT NOT NULL,
+          ts TEXT NOT NULL,
+          type TEXT NOT NULL,
+          text TEXT NOT NULL,
+          attachments TEXT NOT NULL DEFAULT '[]',
+          edits TEXT NOT NULL DEFAULT '[]',
+          deleted INTEGER NOT NULL DEFAULT 0,
+          deleted_at TEXT,
+          deleted_by TEXT
+        )`,
+        `INSERT INTO messages_new SELECT id, channel_id, author_id, ts, type, text, attachments, edits, deleted, deleted_at, deleted_by FROM messages`,
+        "messages",
+        "messages_new",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_messages_channel_ts ON messages(channel_id, ts)");
+
+      // -- documents --
+      recreateTable(
+        `CREATE TABLE documents_new (
+          id TEXT PRIMARY KEY,
+          team_space_id TEXT NOT NULL REFERENCES team_spaces(id) ON DELETE CASCADE,
+          project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+          name TEXT NOT NULL,
+          kind TEXT,
+          discipline TEXT,
+          current_revision_id TEXT,
+          sensitivity TEXT,
+          acl TEXT NOT NULL DEFAULT '{}',
+          labels TEXT NOT NULL DEFAULT '[]',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `INSERT INTO documents_new SELECT id, team_space_id, project_id, name, kind, discipline, current_revision_id, sensitivity, acl, labels, created_by, created_at, updated_at FROM documents`,
+        "documents",
+        "documents_new",
+      );
+
+      // -- revisions --
+      recreateTable(
+        `CREATE TABLE revisions_new (
+          id TEXT PRIMARY KEY,
+          doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+          label TEXT NOT NULL,
+          status TEXT NOT NULL,
+          author_id TEXT,
+          approver_id TEXT,
+          summary TEXT,
+          notes TEXT,
+          pdf_url TEXT,
+          effective_date TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `INSERT INTO revisions_new SELECT id, doc_id, label, status, author_id, approver_id, summary, notes, pdf_url, effective_date, created_at, updated_at FROM revisions`,
+        "revisions",
+        "revisions_new",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_revisions_doc ON revisions(doc_id)");
+
+      // -- drawings --
+      recreateTable(
+        `CREATE TABLE drawings_new (
+          id TEXT PRIMARY KEY,
+          doc_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+          team_space_id TEXT REFERENCES team_spaces(id) ON DELETE CASCADE,
+          project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+          name TEXT NOT NULL,
+          discipline TEXT,
+          sheets TEXT NOT NULL DEFAULT '[]',
+          ifc_url TEXT,
+          acl TEXT NOT NULL DEFAULT '{}',
+          labels TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `INSERT INTO drawings_new SELECT id, doc_id, team_space_id, project_id, name, discipline, sheets, ifc_url, acl, labels, created_at, updated_at FROM drawings`,
+        "drawings",
+        "drawings_new",
+      );
+
+      // -- assets --
+      recreateTable(
+        `CREATE TABLE assets_new (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          type TEXT,
+          hierarchy TEXT,
+          status TEXT NOT NULL DEFAULT 'normal',
+          mqtt_topics TEXT NOT NULL DEFAULT '[]',
+          opcua_nodes TEXT NOT NULL DEFAULT '[]',
+          doc_ids TEXT NOT NULL DEFAULT '[]',
+          acl TEXT NOT NULL DEFAULT '{}',
+          labels TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `INSERT INTO assets_new SELECT id, org_id, workspace_id, name, type, hierarchy, status, mqtt_topics, opcua_nodes, doc_ids, acl, labels, created_at, updated_at FROM assets`,
+        "assets",
+        "assets_new",
+      );
+
+      // -- work_items --
+      recreateTable(
+        `CREATE TABLE work_items_new (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          assignee_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+          status TEXT NOT NULL,
+          severity TEXT,
+          due TEXT,
+          blockers TEXT NOT NULL DEFAULT '[]',
+          labels TEXT NOT NULL DEFAULT '[]',
+          acl TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `INSERT INTO work_items_new SELECT id, project_id, type, title, description, assignee_id, status, severity, due, blockers, labels, acl, created_at, updated_at FROM work_items`,
+        "work_items",
+        "work_items_new",
+      );
+
+      // -- incidents --
+      recreateTable(
+        `CREATE TABLE incidents_new (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          status TEXT NOT NULL,
+          asset_id TEXT REFERENCES assets(id) ON DELETE SET NULL,
+          commander_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+          channel_id TEXT REFERENCES channels(id) ON DELETE SET NULL,
+          timeline TEXT NOT NULL DEFAULT '[]',
+          checklist_state TEXT NOT NULL DEFAULT '{}',
+          roster TEXT NOT NULL DEFAULT '{}',
+          started_at TEXT NOT NULL,
+          resolved_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `INSERT INTO incidents_new SELECT id, org_id, workspace_id, title, severity, status, asset_id, commander_id, channel_id, timeline, checklist_state, roster, started_at, resolved_at, created_at, updated_at FROM incidents`,
+        "incidents",
+        "incidents_new",
+      );
+
+      // -- webhook_deliveries (already constrained on payloads side) --
+      recreateTable(
+        `CREATE TABLE webhook_deliveries_new (
+          id TEXT PRIMARY KEY,
+          webhook_id TEXT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+          event_id TEXT,
+          event_type TEXT,
+          attempt INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending',
+          last_error TEXT,
+          next_attempt_at TEXT,
+          delivered_at TEXT,
+          created_at TEXT NOT NULL
+        )`,
+        `INSERT INTO webhook_deliveries_new SELECT id, webhook_id, event_id, event_type, attempt, status, last_error, next_attempt_at, delivered_at, created_at FROM webhook_deliveries`,
+        "webhook_deliveries",
+        "webhook_deliveries_new",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_wh_pending ON webhook_deliveries(status, next_attempt_at)");
+
+      // -- markups --
+      recreateTable(
+        `CREATE TABLE markups_new (
+          id TEXT PRIMARY KEY,
+          drawing_id TEXT NOT NULL REFERENCES drawings(id) ON DELETE CASCADE,
+          sheet_id TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'pin',
+          x REAL NOT NULL,
+          y REAL NOT NULL,
+          text TEXT,
+          stamp_label TEXT,
+          status_color TEXT,
+          author TEXT,
+          seq INTEGER,
+          created_at TEXT NOT NULL
+        )`,
+        `INSERT INTO markups_new SELECT id, drawing_id, sheet_id, kind, x, y, text, stamp_label, status_color, author, seq, created_at FROM markups`,
+        "markups",
+        "markups_new",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_markups_drawing_sheet ON markups(drawing_id, sheet_id)");
+
+      // Re-enable + check.
+      db.pragma("foreign_keys = ON");
+      const orphans = db.pragma("foreign_key_check", { simple: false });
+      if (orphans && orphans.length) {
+        // Throwing rolls back the transaction (the outer migrate()
+        // wraps everything), leaving schema_version at v11.
+        const summary = orphans.slice(0, 10).map((o) => `${o.table}#${o.rowid}→${o.parent}`).join(", ");
+        throw new Error(`v12 foreign-key migration aborted: ${orphans.length} orphan row(s) detected (${summary}). Run \`node server/db.js --integrity\` to inspect.`);
+      }
+
+      setVersion(12);
+    }
+
+    if (getVersion() < 13) {
+      // v13: per-tenant audit signing key history.
+      //
+      // The audit pack signing key was a single `FORGE_TENANT_KEY` env
+      // var with a fixed `key:forge:v1` id. Rotating it invalidated
+      // every previously-exported pack because verifiers had no way
+      // to look up which key signed which pack. Multi-tenant
+      // deployments also could not prove provenance per tenant.
+      //
+      // The new `tenant_keys` table records the lifecycle of each
+      // signing key: when it was active, when it was retired, and a
+      // sha256 fingerprint of the key material so an admin reviewing
+      // the table can confirm which env var revision matches a row
+      // without exposing the key itself.
+      //
+      // Key material itself is NOT stored here — operators continue
+      // to manage it via env / KMS. The table is the registry, the
+      // env is the secret store.
+      //
+      // `crypto.js` consults this table at sign time (pick the active
+      // key for the requester's org) and at verify time (look up by
+      // `keyId` so old packs still verify after rotation). Backfill
+      // creates a single `key:forge:v1` row marked active so existing
+      // installs keep verifying their own packs without operator
+      // action.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS tenant_keys (
+          id TEXT PRIMARY KEY,
+          org_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+          state TEXT NOT NULL DEFAULT 'active',
+          key_fingerprint TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          retired_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_tenant_keys_org_state ON tenant_keys(org_id, state);
+      `);
+      // Seed the global key as the boot-time fallback. The fingerprint
+      // is computed lazily by crypto.js the first time the key is
+      // needed, so we record an empty placeholder here that will be
+      // updated on first sign/verify.
+      db.prepare(`INSERT OR IGNORE INTO tenant_keys (id, org_id, state, key_fingerprint, created_at)
+                  VALUES ('key:forge:v1', NULL, 'active', '', ?)`)
+        .run(new Date().toISOString());
+      setVersion(13);
+    }
+
+    if (getVersion() < 14) {
+      // v14: extend the foreign-key sweep to the rest of the child
+      // tables that v12 left untouched. Same recreate-and-rename
+      // pattern as v12 because SQLite still cannot ALTER a table to
+      // add FKs.
+      //
+      // Tables touched (with ON DELETE policy):
+      //   files               polymorphic parent_kind/parent_id stays
+      //                       untyped; created_by → users SET NULL.
+      //   transmittals        doc_id → documents CASCADE,
+      //                       rev_id → revisions CASCADE.
+      //   comments            doc_id → documents CASCADE,
+      //                       rev_id → revisions CASCADE.
+      //   subscriptions       user_id → users CASCADE.
+      //   notifications       user_id → users CASCADE.
+      //   connector_runs      system_id → enterprise_systems CASCADE.
+      //   connector_mappings  system_id → enterprise_systems CASCADE.
+      //   external_object_links system_id → enterprise_systems CASCADE.
+      //
+      // We deliberately do NOT add FKs on `audit_log.actor`,
+      // `events.*`, or `dead_letters.*` — those are intentionally
+      // free-form polymorphic refs (system events, third-party
+      // sources, polyglot envelopes).
+      db.pragma("foreign_keys = OFF");
+
+      const recreateTable = (createNewSql, copySql, oldName, newName) => {
+        db.exec(createNewSql);
+        db.exec(copySql);
+        db.exec(`DROP TABLE ${oldName}`);
+        db.exec(`ALTER TABLE ${newName} RENAME TO ${oldName}`);
+      };
+
+      recreateTable(
+        `CREATE TABLE files_new (
+          id TEXT PRIMARY KEY,
+          parent_kind TEXT NOT NULL,
+          parent_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          mime TEXT,
+          size INTEGER,
+          sha256 TEXT,
+          path TEXT,
+          created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+          created_at TEXT NOT NULL
+        )`,
+        `INSERT INTO files_new SELECT id, parent_kind, parent_id, name, mime, size, sha256, path, created_by, created_at FROM files`,
+        "files",
+        "files_new",
+      );
+
+      recreateTable(
+        `CREATE TABLE transmittals_new (
+          id TEXT PRIMARY KEY,
+          doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+          rev_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+          subject TEXT NOT NULL,
+          recipients TEXT NOT NULL DEFAULT '[]',
+          message TEXT,
+          sender TEXT,
+          ts TEXT NOT NULL
+        )`,
+        `INSERT INTO transmittals_new SELECT id, doc_id, rev_id, subject, recipients, message, sender, ts FROM transmittals`,
+        "transmittals",
+        "transmittals_new",
+      );
+
+      recreateTable(
+        `CREATE TABLE comments_new (
+          id TEXT PRIMARY KEY,
+          doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+          rev_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+          page INTEGER NOT NULL,
+          x REAL NOT NULL,
+          y REAL NOT NULL,
+          text TEXT NOT NULL,
+          author TEXT,
+          seq INTEGER,
+          replies TEXT NOT NULL DEFAULT '[]',
+          ts TEXT NOT NULL
+        )`,
+        `INSERT INTO comments_new SELECT id, doc_id, rev_id, page, x, y, text, author, seq, replies, ts FROM comments`,
+        "comments",
+        "comments_new",
+      );
+
+      recreateTable(
+        `CREATE TABLE subscriptions_new (
+          id TEXT PRIMARY KEY,
+          subject TEXT NOT NULL,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          events TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          UNIQUE(subject, user_id)
+        )`,
+        `INSERT INTO subscriptions_new SELECT id, subject, user_id, events, created_at FROM subscriptions`,
+        "subscriptions",
+        "subscriptions_new",
+      );
+
+      recreateTable(
+        `CREATE TABLE notifications_new (
+          id TEXT PRIMARY KEY,
+          ts TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          text TEXT NOT NULL,
+          route TEXT,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          subject TEXT,
+          read INTEGER NOT NULL DEFAULT 0
+        )`,
+        `INSERT INTO notifications_new SELECT id, ts, kind, text, route, user_id, subject, read FROM notifications`,
+        "notifications",
+        "notifications_new",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read, ts DESC)");
+
+      recreateTable(
+        `CREATE TABLE connector_runs_new (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL REFERENCES enterprise_systems(id) ON DELETE CASCADE,
+          run_type TEXT NOT NULL,
+          status TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          requested_by TEXT,
+          trace_id TEXT,
+          stats TEXT NOT NULL DEFAULT '{}',
+          error TEXT
+        )`,
+        `INSERT INTO connector_runs_new SELECT id, system_id, run_type, status, started_at, finished_at, requested_by, trace_id, stats, error FROM connector_runs`,
+        "connector_runs",
+        "connector_runs_new",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_connector_runs_system ON connector_runs(system_id, started_at)");
+
+      recreateTable(
+        `CREATE TABLE connector_mappings_new (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL REFERENCES enterprise_systems(id) ON DELETE CASCADE,
+          source_object TEXT NOT NULL,
+          target_kind TEXT NOT NULL,
+          transform TEXT NOT NULL DEFAULT '{}',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `INSERT INTO connector_mappings_new SELECT id, system_id, source_object, target_kind, transform, enabled, created_by, created_at, updated_at FROM connector_mappings`,
+        "connector_mappings",
+        "connector_mappings_new",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_connector_mappings_system ON connector_mappings(system_id, enabled)");
+
+      recreateTable(
+        `CREATE TABLE external_object_links_new (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL REFERENCES enterprise_systems(id) ON DELETE CASCADE,
+          external_kind TEXT NOT NULL,
+          external_id TEXT NOT NULL,
+          forge_kind TEXT NOT NULL,
+          forge_id TEXT NOT NULL,
+          direction TEXT NOT NULL DEFAULT 'bidirectional',
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT,
+          UNIQUE(system_id, external_kind, external_id, forge_kind, forge_id)
+        )`,
+        `INSERT INTO external_object_links_new SELECT id, system_id, external_kind, external_id, forge_kind, forge_id, direction, metadata, created_by, created_at, updated_at FROM external_object_links`,
+        "external_object_links",
+        "external_object_links_new",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_external_links_forge ON external_object_links(forge_kind, forge_id)");
+
+      db.pragma("foreign_keys = ON");
+      const orphans = db.pragma("foreign_key_check", { simple: false });
+      if (orphans && orphans.length) {
+        const summary = orphans.slice(0, 10).map((o) => `${o.table}#${o.rowid}→${o.parent}`).join(", ");
+        throw new Error(`v14 foreign-key migration aborted: ${orphans.length} orphan row(s) detected (${summary}). Run \`node server/db.js --integrity\` to inspect.`);
+      }
+
+      setVersion(14);
+    }
   })();
 }
 
@@ -962,4 +1559,23 @@ export function tx(fn) { return db.transaction(fn)(); }
 if (process.argv.includes("--migrate-only")) {
   console.log("schema_version =", getVersion());
   process.exit(0);
+}
+
+/**
+ * Print orphan row counts per child table — same sweep the v12 migration
+ * does, but standalone so an operator can inspect a database before
+ * upgrading.
+ */
+if (process.argv.includes("--integrity")) {
+  db.pragma("foreign_keys = ON");
+  const result = db.pragma("foreign_key_check", { simple: false });
+  if (!result.length) {
+    console.log("foreign_key_check: no orphans (schema_version =", getVersion(), ")");
+    process.exit(0);
+  }
+  console.log(`foreign_key_check found ${result.length} orphan row(s):`);
+  for (const row of result) {
+    console.log(`  - ${row.table}#${row.rowid} → ${row.parent}${row.fkid != null ? " (fkid=" + row.fkid + ")" : ""}`);
+  }
+  process.exit(1);
 }

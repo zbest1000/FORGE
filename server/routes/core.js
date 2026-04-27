@@ -9,6 +9,14 @@ import { canTransitionRevision, cascadeOnApprove } from "../../src/core/fsm/revi
 import { canTransitionApproval } from "../../src/core/fsm/approval.js";
 import { allows, filterAllowed, requireAccess, requireAuth } from "../acl.js";
 import { tenantOrgId, tenantWhere, requireTenant, orgForRow } from "../tenant.js";
+import { applyEtag, requireIfMatch } from "../etag.js";
+import {
+  WorkItemCreateBody,
+  WorkItemPatchBody,
+  MessagePostBody,
+  RevisionTransitionBody,
+  ApprovalDecideBody,
+} from "../schemas/core.js";
 
 function mapRowJson(row, fields) {
   const out = { ...row };
@@ -136,7 +144,10 @@ export default async function coreRoutes(fastify) {
     return rows.reverse().map(r => ({ ...r, attachments: JSON.parse(r.attachments || "[]"), edits: JSON.parse(r.edits || "[]") }));
   });
 
-  fastify.post("/api/channels/:id/messages", { preHandler: require_("create") }, async (req, reply) => {
+  fastify.post("/api/channels/:id/messages", {
+    preHandler: require_("create"),
+    schema: { body: MessagePostBody },
+  }, async (req, reply) => {
     const { text, type = "discussion", attachments = [] } = req.body || {};
     if (!text || !text.trim()) return reply.code(400).send({ error: "text required" });
     const ch = db.prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id);
@@ -177,7 +188,10 @@ export default async function coreRoutes(fastify) {
     return row;
   });
 
-  fastify.post("/api/revisions/:id/transition", { preHandler: require_("approve") }, async (req, reply) => {
+  fastify.post("/api/revisions/:id/transition", {
+    preHandler: require_("approve"),
+    schema: { body: RevisionTransitionBody },
+  }, async (req, reply) => {
     const { to, notes = "" } = req.body || {};
     const rev = db.prepare("SELECT * FROM revisions WHERE id = ?").get(req.params.id);
     if (!rev) return reply.code(404).send({ error: "not found" });
@@ -221,7 +235,10 @@ export default async function coreRoutes(fastify) {
     return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl", "labels", "blockers"]));
   });
 
-  fastify.post("/api/work-items", { preHandler: require_("create") }, async (req, reply) => {
+  fastify.post("/api/work-items", {
+    preHandler: require_("create"),
+    schema: { body: WorkItemCreateBody },
+  }, async (req, reply) => {
     const { projectId, type = "Task", title, severity = "medium", assigneeId = null, due = null } = req.body || {};
     if (!projectId || !title) return reply.code(400).send({ error: "projectId and title required" });
     const project = db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId);
@@ -236,10 +253,22 @@ export default async function coreRoutes(fastify) {
     return { id };
   });
 
-  fastify.patch("/api/work-items/:id", { preHandler: require_("edit") }, async (req, reply) => {
+  fastify.get("/api/work-items/:id", { preHandler: require_("view") }, async (req, reply) => {
+    const row = db.prepare("SELECT * FROM work_items WHERE id = ?").get(req.params.id);
+    if (!requireTenant(req, reply, row, "work_items")) return;
+    if (!requireAccess(req, reply, row, "view")) return;
+    applyEtag(reply, row);
+    return mapRowJson(row, ["acl", "labels", "blockers"]);
+  });
+
+  fastify.patch("/api/work-items/:id", {
+    preHandler: require_("edit"),
+    schema: { body: WorkItemPatchBody },
+  }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM work_items WHERE id = ?").get(req.params.id);
     if (!requireTenant(req, reply, row, "work_items")) return;
     if (!requireAccess(req, reply, row, "edit")) return;
+    if (!requireIfMatch(req, reply, row)) return;
     const patch = req.body || {};
     const allowed = ["title", "description", "assignee_id", "status", "severity", "due"];
     const sets = [];
@@ -252,12 +281,17 @@ export default async function coreRoutes(fastify) {
     }
     if ("blockers" in patch) { sets.push("blockers = @blockers"); params.blockers = JSON.stringify(patch.blockers); }
     if ("labels" in patch) { sets.push("labels = @labels"); params.labels = JSON.stringify(patch.labels); }
-    if (!sets.length) return row;
+    if (!sets.length) {
+      applyEtag(reply, row);
+      return row;
+    }
     sets.push("updated_at = @now");
     db.prepare(`UPDATE work_items SET ${sets.join(", ")} WHERE id = @id`).run(params);
     audit({ actor: req.user.id, action: "workitem.update", subject: row.id, detail: { changes: patch } });
     broadcast("work-items", { id: row.id });
-    return db.prepare("SELECT * FROM work_items WHERE id = ?").get(row.id);
+    const updated = db.prepare("SELECT * FROM work_items WHERE id = ?").get(row.id);
+    applyEtag(reply, updated);
+    return updated;
   });
 
   // ---------- incidents ----------
@@ -296,7 +330,10 @@ export default async function coreRoutes(fastify) {
       .map(r => ({ ...r, approvers: JSON.parse(r.approvers || "[]"), chain: JSON.parse(r.chain || "[]") }));
   });
 
-  fastify.post("/api/approvals/:id/decide", { preHandler: require_("approve") }, async (req, reply) => {
+  fastify.post("/api/approvals/:id/decide", {
+    preHandler: require_("approve"),
+    schema: { body: ApprovalDecideBody },
+  }, async (req, reply) => {
     const { outcome, notes = "" } = req.body || {};
     if (!["approved","rejected"].includes(outcome)) return reply.code(400).send({ error: "outcome must be approved|rejected" });
     const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(req.params.id);
@@ -310,7 +347,9 @@ export default async function coreRoutes(fastify) {
     }
     const { signHMAC, canonicalJSON } = await import("../crypto.js");
     const payload = { approvalId: row.id, subject: { kind: row.subject_kind, id: row.subject_id }, outcome, notes, signer: req.user.id, ts: now() };
-    const sig = await signHMAC(canonicalJSON(payload));
+    // Sign with the requester's tenant key so a per-tenant rotation
+    // (or a tenant-scoped key history audit) can verify provenance.
+    const sig = await signHMAC(canonicalJSON(payload), { orgId: req.user.org_id || null });
     const chain = JSON.parse(row.chain || "[]");
     chain.push({ ts: payload.ts, action: outcome, actor: req.user.id, signature: sig.signature, keyId: sig.keyId });
     db.prepare("UPDATE approvals SET status = ?, reason = ?, signed_by = ?, signed_at = ?, signature = ?, chain = ?, updated_at = ? WHERE id = ?")
@@ -340,10 +379,15 @@ export default async function coreRoutes(fastify) {
   });
 
   // ---------- audit ----------
+  // Tenant-scoped: a request from ORG-1 only sees ORG-1's entries plus
+  // global system events (`org_id IS NULL`). Cross-tenant audit access
+  // is reserved for the global ops backplane (out-of-band CLI), not the
+  // REST surface.
   fastify.get("/api/audit", { preHandler: require_("view") }, async (req) => {
+    const orgId = tenantOrgId(req);
     const limit = Math.min(500, Number(req.query.limit || 100));
     const { recent } = await import("../audit.js");
-    return recent(limit);
+    return recent(limit, { orgId });
   });
 
   fastify.get("/api/audit/verify", { preHandler: require_("view") }, async () => {
@@ -352,8 +396,9 @@ export default async function coreRoutes(fastify) {
   });
 
   fastify.get("/api/audit/export", { preHandler: require_("view") }, async (req, reply) => {
+    const orgId = tenantOrgId(req);
     const { exportAuditPack } = await import("../audit.js");
-    const pack = await exportAuditPack({ since: req.query.since || null, until: req.query.until || null });
+    const pack = await exportAuditPack({ since: req.query.since || null, until: req.query.until || null, orgId });
     reply.header("Content-Type", "application/json");
     reply.header("Content-Disposition", `attachment; filename=forge-audit-${new Date().toISOString().replace(/[:.]/g,"-")}.json`);
     return pack;
@@ -362,20 +407,20 @@ export default async function coreRoutes(fastify) {
   // ---------- events / DLQ ----------
   fastify.get("/api/events", { preHandler: require_("integration.read") }, async () => (await import("../events.js")).listEvents(200));
   fastify.get("/api/dlq", { preHandler: require_("integration.write") }, async () => (await import("../events.js")).listDLQ(100));
-  fastify.post("/api/events/ingest", { preHandler: require_("integration.read") }, async (req) => (await import("../events.js")).ingest(req.body || {}, { source: req.ip, source_type: "rest" }));
+  fastify.post("/api/events/ingest", { preHandler: require_("integration.write") }, async (req) => (await import("../events.js")).ingest(req.body || {}, { source: req.ip, source_type: "rest" }));
   fastify.post("/api/dlq/:id/replay", { preHandler: require_("integration.write") }, async (req) => (await import("../events.js")).replay(req.params.id));
 
   // ---------- search ----------
   fastify.get("/api/search", { preHandler: require_("view") }, async (req) => {
     const orgId = tenantOrgId(req);
     if (!orgId) return { hits: [], facets: { kind: {}, date: {}, revision: {} } };
-    const q = String(req.query.q || "").trim();
-    if (!q) return { hits: [], facets: { kind: {}, date: {}, revision: {} } };
-    const esc = q.replace(/"/g, '""');
-    const docs = db.prepare(`SELECT id, kind, title, body FROM fts_docs WHERE fts_docs MATCH ? ORDER BY rank LIMIT 25`).all(`"${esc}"*`);
-    const msgs = db.prepare(`SELECT id, channel_id, text FROM fts_messages WHERE fts_messages MATCH ? ORDER BY rank LIMIT 25`).all(`"${esc}"*`);
-    const wis  = db.prepare(`SELECT id, project_id, title, description, labels FROM fts_workitems WHERE fts_workitems MATCH ? ORDER BY rank LIMIT 25`).all(`"${esc}"*`);
-    const ast  = db.prepare(`SELECT id, name, hierarchy, type FROM fts_assets WHERE fts_assets MATCH ? ORDER BY rank LIMIT 25`).all(`"${esc}"*`);
+    const { sanitizeFtsTerm } = await import("../security/fts.js");
+    const phrase = sanitizeFtsTerm(req.query.q);
+    if (!phrase) return { hits: [], facets: { kind: {}, date: {}, revision: {} } };
+    const docs = db.prepare(`SELECT id, kind, title, body FROM fts_docs WHERE fts_docs MATCH ? ORDER BY rank LIMIT 25`).all(phrase);
+    const msgs = db.prepare(`SELECT id, channel_id, text FROM fts_messages WHERE fts_messages MATCH ? ORDER BY rank LIMIT 25`).all(phrase);
+    const wis  = db.prepare(`SELECT id, project_id, title, description, labels FROM fts_workitems WHERE fts_workitems MATCH ? ORDER BY rank LIMIT 25`).all(phrase);
+    const ast  = db.prepare(`SELECT id, name, hierarchy, type FROM fts_assets WHERE fts_assets MATCH ? ORDER BY rank LIMIT 25`).all(phrase);
 
     const hits = [
       ...docs.map(r => {

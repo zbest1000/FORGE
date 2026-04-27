@@ -23,6 +23,7 @@ import {
   listSessions,
   ACCESS_JWT_EXPIRES_IN,
 } from "../sessions.js";
+import { LoginBody, MfaVerifyBody, RefreshBody, MfaCodeOnly } from "../schemas/auth.js";
 
 function hashEmailForAudit(email) {
   if (!email) return "anonymous";
@@ -57,7 +58,7 @@ async function issueSessionPair(reply, req, user, mfaMethod = null) {
 }
 
 export default async function authRoutes(fastify) {
-  fastify.post("/api/auth/login", async (req, reply) => {
+  fastify.post("/api/auth/login", { schema: { body: LoginBody } }, async (req, reply) => {
     const { email, password, mfaCode, recoveryCode } = req.body || {};
     if (!email || !password) return reply.code(400).send({ error: "email and password required" });
     const subjectKey = hashEmailForAudit(email);
@@ -119,7 +120,7 @@ export default async function authRoutes(fastify) {
   // Second leg of the two-step login. Caller passes the challenge token
   // and a code (TOTP or recovery). We deliberately re-check the lockout
   // tracker so brute-forcing the second step is bounded too.
-  fastify.post("/api/auth/mfa/verify", async (req, reply) => {
+  fastify.post("/api/auth/mfa/verify", { schema: { body: MfaVerifyBody } }, async (req, reply) => {
     const { challenge, mfaCode, recoveryCode } = req.body || {};
     const ip = req.ip || "0.0.0.0";
     const payload = consumeChallenge(challenge);
@@ -149,7 +150,7 @@ export default async function authRoutes(fastify) {
   // Refresh-token rotation. Returns a new access JWT + a new refresh
   // token; the old refresh token becomes invalid immediately. Replaying
   // a stale refresh token revokes the entire session.
-  fastify.post("/api/auth/refresh", async (req, reply) => {
+  fastify.post("/api/auth/refresh", { schema: { body: RefreshBody } }, async (req, reply) => {
     const { refreshToken } = req.body || {};
     if (!refreshToken) return reply.code(400).send({ error: "refreshToken required" });
     const r = rotateRefresh(refreshToken);
@@ -241,7 +242,7 @@ export default async function authRoutes(fastify) {
     }
   });
 
-  fastify.post("/api/auth/mfa/recovery/regenerate", async (req, reply) => {
+  fastify.post("/api/auth/mfa/recovery/regenerate", { schema: { body: MfaCodeOnly } }, async (req, reply) => {
     if (!req.user) return reply.code(401).send({ error: "unauthenticated" });
     const { code } = req.body || {};
     if (!verifyMfaCode(req.user.id, code)) return reply.code(401).send({ error: "fresh mfa code required" });
@@ -252,7 +253,7 @@ export default async function authRoutes(fastify) {
     }
   });
 
-  fastify.post("/api/auth/mfa/disable", async (req, reply) => {
+  fastify.post("/api/auth/mfa/disable", { schema: { body: MfaCodeOnly } }, async (req, reply) => {
     if (!req.user) return reply.code(401).send({ error: "unauthenticated" });
     const { code } = req.body || {};
     if (!verifyMfaCode(req.user.id, code)) return reply.code(401).send({ error: "fresh mfa code required" });

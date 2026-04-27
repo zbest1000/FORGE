@@ -36,6 +36,16 @@ function parseCorsOrigin(raw) {
   return list.length ? list : true;
 }
 
+/**
+ * Returns true when the resolved CORS configuration reflects any
+ * origin (the legacy default). Production strict mode rejects this
+ * outright; development is allowed to keep the permissive default but
+ * we emit a warning at boot so operators notice.
+ */
+export function isReflectAnyCorsOrigin(value) {
+  return value === true;
+}
+
 function readNumber(raw, fallback) {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : fallback;

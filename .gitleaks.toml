@@ -1,0 +1,35 @@
+# Gitleaks configuration.
+#
+# We extend the upstream default rule pack and add allowlist entries
+# for the deterministic, public test secrets used by the cross-OS CI
+# matrix. Those values are intentionally low-entropy and fixed across
+# every check-in; they are not credentials for any real system.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "FORGE CI / test fixtures — deterministic, non-secret values"
+
+# Specific test fixtures used to drive the in-process Fastify server
+# in test/*.test.js. The values are checked into git on purpose —
+# they are NOT credentials; CI sets them so config strict-mode does
+# not refuse to start. A real deployment derives FORGE_JWT_SECRET and
+# FORGE_TENANT_KEY from `openssl rand -hex 32` per the runbook.
+regexes = [
+  '''ci-jwt-secret-0123456789abcdef0123456789abcdef''',
+  '''ci-tenant-key-0123456789abcdef0123456789abcdef''',
+  '''forge-(?:routes|etag|schema|fk|tamper|dsar|authz)-test(?:-jwt)?''',
+  '''forge-(?:routes|etag|schema|fk|tamper|dsar|authz)-test-key''',
+  '''forge-test-key''',
+  '''forge-dev-(?:jwt-secret|tenant-key)-please-rotate''',
+]
+
+# Test files only — production code paths still get the full default
+# rule set.
+paths = [
+  '''(?i)test/.*\.test\.js''',
+  '''(?i)\.env\.example''',
+  '''(?i)docs/.*\.md''',
+  '''(?i)\.cursor/skills/.*\.md''',
+]

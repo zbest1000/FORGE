@@ -195,7 +195,10 @@ export default async function fileRoutes(fastify) {
   // DELETE /api/files/:id — soft-delete (keeps the file for retention).
   // Removal on disk is done by a periodic retention sweep (not this endpoint)
   // so legal holds and audit references continue to resolve.
-  fastify.delete("/api/files/:id", { preHandler: require_("edit") }, async (req, reply) => {
+  fastify.delete("/api/files/:id", {
+    preHandler: require_("edit"),
+    schema: { params: { type: "object", required: ["id"], properties: { id: { type: "string", minLength: 1, maxLength: 64 } }, additionalProperties: false } },
+  }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM files WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
     const parent = resolveParent(row.parent_kind, row.parent_id);

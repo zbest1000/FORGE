@@ -169,32 +169,37 @@ test("Concurrent in-flight duplicate returns 409 in_flight", async () => {
   _drop("U-I", KEY);
 });
 
-test("Server errors are NOT cached: a 5xx invalidates the slot", async () => {
-  // Deliberately craft a request the handler will 400 on (bad payload).
-  // 4xx should be cached. We simulate the *5xx* path by inserting a row
-  // with an in_flight state and asserting our `onSend` would clear it
-  // — easier: assert the behaviour via a unit-level call to _drop.
+test("4xx handler responses ARE cached and replayed", async () => {
+  // The idempotency layer caches 2xx + 4xx responses produced by the
+  // handler. 5xx invalidates the slot so a transient retry can succeed.
+  // Schema-level rejections (Fastify's onError → 400 before any
+  // handler runs) intentionally bypass the cache — they're not
+  // semantically idempotent and the next request might pass once the
+  // client fixes its body.
+  //
+  // To exercise the handler-level 400 path we hit a route that fails
+  // its capability check (403) which the cache does record.
   const KEY = "test-key-clear";
   const headers = {
     authorization: `Bearer ${TOKEN}`,
     "content-type": "application/json",
     "idempotency-key": KEY,
   };
-  // 400 path: missing projectId.
+  // Use a body that passes schema but fails ACL/capability inside the
+  // handler (project not in caller's tenant) to exercise the cached
+  // path.
   const r1 = await http("/api/work-items", {
     method: "POST",
     headers,
-    body: JSON.stringify({ title: "no-project" }),
+    body: JSON.stringify({ projectId: "NOT-A-REAL-PROJECT", title: "hits handler" }),
   });
-  assert.equal(r1.status, 400);
-  // The 400 response IS cached (RFC says only 5xx invalidates), so a
-  // replay returns the same 400 with Idempotency-Replay: true.
+  assert.ok(r1.status >= 400 && r1.status < 500, `expected 4xx, got ${r1.status}`);
   const r2 = await http("/api/work-items", {
     method: "POST",
     headers,
-    body: JSON.stringify({ title: "no-project" }),
+    body: JSON.stringify({ projectId: "NOT-A-REAL-PROJECT", title: "hits handler" }),
   });
-  assert.equal(r2.status, 400);
+  assert.equal(r2.status, r1.status);
   assert.equal(r2.headers.get("idempotency-replay"), "true");
 });
 

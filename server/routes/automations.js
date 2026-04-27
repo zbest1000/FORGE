@@ -4,6 +4,7 @@
 
 import { require_ } from "../auth.js";
 import { isConfigured, listWorkflows, getWorkflow, activate, deactivate, listExecutions } from "../connectors/n8n.js";
+import { IdParam } from "../schemas/common.js";
 
 export default async function automationRoutes(fastify) {
   fastify.get("/api/automations/n8n/status", { preHandler: require_("admin.view") }, async () => ({
@@ -23,13 +24,19 @@ export default async function automationRoutes(fastify) {
     catch (err) { return reply.code(502).send({ error: String(err?.message || err) }); }
   });
 
-  fastify.post("/api/automations/n8n/workflows/:id/activate", { preHandler: require_("admin.view") }, async (req, reply) => {
+  fastify.post("/api/automations/n8n/workflows/:id/activate", {
+    preHandler: require_("admin.view"),
+    schema: { params: IdParam },
+  }, async (req, reply) => {
     if (!isConfigured()) return reply.code(503).send({ error: "n8n not configured" });
     try { return await activate(req.params.id, req.user.id); }
     catch (err) { return reply.code(502).send({ error: String(err?.message || err) }); }
   });
 
-  fastify.post("/api/automations/n8n/workflows/:id/deactivate", { preHandler: require_("admin.view") }, async (req, reply) => {
+  fastify.post("/api/automations/n8n/workflows/:id/deactivate", {
+    preHandler: require_("admin.view"),
+    schema: { params: IdParam },
+  }, async (req, reply) => {
     if (!isConfigured()) return reply.code(503).send({ error: "n8n not configured" });
     try { return await deactivate(req.params.id, req.user.id); }
     catch (err) { return reply.code(502).send({ error: String(err?.message || err) }); }

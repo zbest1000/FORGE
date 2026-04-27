@@ -64,7 +64,14 @@ test("login tokens", async () => {
 test("compliance endpoints require admin/audit access", async () => {
   const anon = await req("/api/compliance/processing-activities");
   assert.equal(anon.status, 401);
-  const viewerDenied = await req("/api/compliance/processing-activities", { method: "POST", headers: { authorization: `Bearer ${VIEWER}`, "content-type": "application/json" }, body: JSON.stringify({ name: "Denied" }) });
+  // Body is schema-valid so the request reaches the capability gate;
+  // a minimal `{ name: "Denied" }` would 400 on body validation
+  // before the auth check ever ran.
+  const viewerDenied = await req("/api/compliance/processing-activities", {
+    method: "POST",
+    headers: { authorization: `Bearer ${VIEWER}`, "content-type": "application/json" },
+    body: JSON.stringify({ name: "Denied", purpose: "auth-only", lawfulBasis: "test" }),
+  });
   assert.equal(viewerDenied.status, 403);
 });
 

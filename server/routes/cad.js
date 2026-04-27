@@ -9,6 +9,7 @@ import { audit } from "../audit.js";
 import { require_ } from "../auth.js";
 import { allows } from "../acl.js";
 import { convertDwgToDxf, pathFromFileRow, hasConverter, CONVERTED_DIR_PATH } from "../converters/dwg.js";
+import { CadConvertByUrlBody } from "../schemas/integrations.js";
 
 function detectKindFromName(name) {
   const m = String(name || "").toLowerCase().match(/\.([a-z0-9]+)(?:\?|$)/);
@@ -54,7 +55,10 @@ export default async function cadRoutes(fastify) {
   });
 
   // Convert by external URL (e.g. revision.assetUrl).
-  fastify.post("/api/cad/convert", { preHandler: require_("edit") }, async (req, reply) => {
+  fastify.post("/api/cad/convert", {
+    preHandler: require_("edit"),
+    schema: { body: CadConvertByUrlBody },
+  }, async (req, reply) => {
     const { url, to = "dxf" } = req.body || {};
     if (!url) return reply.code(400).send({ error: "url required" });
     if (to !== "dxf") return reply.code(400).send({ error: "unsupported target" });

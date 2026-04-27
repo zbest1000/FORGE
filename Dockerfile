@@ -53,6 +53,17 @@ COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json ./
 COPY --chown=node:node server ./server
+# The server imports a few shared modules from src/ (state-machine
+# definitions, the i3X engine, the demo seed factory). They live
+# under src/ because the SPA imports them too — duplicating the
+# logic would make drift inevitable.
+#
+# We copy ONLY the directories the server actually requires; the
+# rest of `src/` (screens, shell, charts, …) stays in the build
+# stage and is bundled into `dist/` only.
+COPY --chown=node:node src/core/fsm ./src/core/fsm
+COPY --chown=node:node src/core/i3x ./src/core/i3x
+COPY --chown=node:node src/data ./src/data
 # Only license metadata is required at runtime. Docs and PRODUCT_SPEC.md
 # describe internal auth/audit semantics and were leaking into images.
 COPY --chown=node:node LICENSE ./

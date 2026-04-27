@@ -4,6 +4,7 @@
 
 import { db, now, uuid } from "./db.js";
 import { audit } from "./audit.js";
+import { sanitizeFtsTerm } from "./security/fts.js";
 
 let _handle = null;
 
@@ -63,7 +64,8 @@ async function tick(logger) {
 }
 
 function matchHits(query) {
-  const esc = (query || "").replace(/"/g, '""');
+  const phrase = sanitizeFtsTerm(query);
+  if (!phrase) return [];
   const out = [];
   for (const stmt of [
     [`SELECT id, kind, title FROM fts_docs WHERE fts_docs MATCH ? LIMIT 50`, (r) => ({ id: r.id, route: `/doc/${r.id}`, title: r.title })],
@@ -72,7 +74,7 @@ function matchHits(query) {
     [`SELECT id, name FROM fts_assets WHERE fts_assets MATCH ? LIMIT 50`, (r) => ({ id: r.id, route: `/asset/${r.id}`, title: r.name })],
   ]) {
     try {
-      const rows = db.prepare(stmt[0]).all(`"${esc}"*`);
+      const rows = db.prepare(stmt[0]).all(phrase);
       for (const r of rows) out.push(stmt[1](r));
     } catch { /* invalid FTS query token */ }
   }

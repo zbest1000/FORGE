@@ -46,7 +46,15 @@ async function waitFor(url, timeoutMs = 8000) {
   return false;
 }
 
-test("SIGTERM triggers a graceful shutdown that drains the audit queue", async () => {
+// On Windows, `child.kill('SIGTERM')` is mapped to `TerminateProcess`,
+// which is non-graceful: the JS-level signal handler in
+// `server/main.js` never runs so the audit drain step is bypassed and
+// the child exits with `code: null`. The graceful-shutdown contract is
+// POSIX-only by design (the production deployment target is the Linux
+// container), so skip the assertion on Windows runners.
+test("SIGTERM triggers a graceful shutdown that drains the audit queue",
+  { skip: process.platform === "win32" ? "POSIX-only signal semantics" : false },
+  async () => {
   // Build is required only when the server boots in production mode;
   // we set FORGE_SERVE_SOURCE=1 so the test doesn't depend on `dist/`.
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-shutdown-"));

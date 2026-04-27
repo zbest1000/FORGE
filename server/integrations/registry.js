@@ -24,7 +24,12 @@ function parseSystem(row) {
 }
 
 function parseRun(row) {
-  return row ? { ...row, run_type: row.run_type || row.action, stats: jsonOrDefault(row.stats, {}) } : null;
+  if (!row) return null;
+  // After schema v14 the `action` column is dropped; mirror `run_type`
+  // back into `action` so any older client that reads the legacy field
+  // keeps working.
+  const run_type = row.run_type || row.action || null;
+  return { ...row, run_type, action: run_type, stats: jsonOrDefault(row.stats, {}) };
 }
 
 function parseLink(row) {
@@ -85,14 +90,19 @@ export function updateEnterpriseSystem(id, patch, actor) {
 
 export function createConnectorRun({ systemId, runType, requestedBy, status = "queued", stats = {}, error = null, traceId = null }) {
   const id = uuid("CR");
+  // Schema v14 dropped the legacy `action` column. The active column
+  // is `run_type` (introduced in v7 alongside `trace_id`); rows are
+  // returned via parseRun() which exposes both names for backward
+  // compat with older clients.
   const row = {
-    id, system_id: systemId, action: runType, status,
+    id, system_id: systemId, run_type: runType, status,
     started_at: now(), finished_at: status === "queued" ? null : now(),
     requested_by: requestedBy || null,
+    trace_id: traceId || null,
     stats: JSON.stringify(stats), error,
   };
-  db.prepare(`INSERT INTO connector_runs (id, system_id, action, status, started_at, finished_at, stats, error, requested_by)
-              VALUES (@id, @system_id, @action, @status, @started_at, @finished_at, @stats, @error, @requested_by)`).run(row);
+  db.prepare(`INSERT INTO connector_runs (id, system_id, run_type, status, started_at, finished_at, requested_by, trace_id, stats, error)
+              VALUES (@id, @system_id, @run_type, @status, @started_at, @finished_at, @requested_by, @trace_id, @stats, @error)`).run(row);
   audit({ actor: requestedBy || "system", action: `connector.${runType}`, subject: systemId, detail: { runId: id, status } });
   return parseRun(row);
 }
@@ -103,6 +113,7 @@ export function listConnectorRuns(systemId, limit = 50) {
 
 export function createExternalLink(input, actor) {
   const id = uuid("XLINK");
+  const ts = now();
   const row = {
     id,
     system_id: input.systemId,
@@ -110,11 +121,14 @@ export function createExternalLink(input, actor) {
     external_id: input.externalId,
     forge_kind: input.forgeKind,
     forge_id: input.forgeId,
+    direction: input.direction || "bidirectional",
     metadata: JSON.stringify(input.metadata || {}),
-    created_at: now(),
+    created_by: actor || null,
+    created_at: ts,
+    updated_at: ts,
   };
-  db.prepare(`INSERT INTO external_object_links (id, system_id, external_kind, external_id, forge_kind, forge_id, metadata, created_at)
-              VALUES (@id, @system_id, @external_kind, @external_id, @forge_kind, @forge_id, @metadata, @created_at)`).run(row);
+  db.prepare(`INSERT INTO external_object_links (id, system_id, external_kind, external_id, forge_kind, forge_id, direction, metadata, created_by, created_at, updated_at)
+              VALUES (@id, @system_id, @external_kind, @external_id, @forge_kind, @forge_id, @direction, @metadata, @created_by, @created_at, @updated_at)`).run(row);
   audit({ actor: actor || "system", action: "external_link.create", subject: id, detail: { systemId: input.systemId, forge: `${input.forgeKind}:${input.forgeId}` } });
   return parseLink(row);
 }
