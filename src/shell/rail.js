@@ -4,20 +4,26 @@ import { navigate } from "../core/router.js";
 import { audit } from "../core/audit.js";
 import { portalById, canAccessRoute, isOrgOwner } from "../core/groups.js";
 
+// Rail items map 1:1 to a primary route family; each `match` rule below
+// disambiguates the active state so users don't see "Assets" highlighted while
+// they're inside the UNS or i3X workbench. Order roughly follows the typical
+// engineering workflow (collaborate → review → operate → admin).
 const DEFAULT_ITEMS = [
-  { icon: "🏛", label: "Hub",      route: "/hub" },
-  { icon: "🏠", label: "Home",     route: "/home" },
-  { icon: "✓",  label: "Work",     route: "/projects" },
-  { icon: "Docs", label: "Docs",     route: "/docs" },
+  { icon: "🏛", label: "Hub",       route: "/hub" },
+  { icon: "🏠", label: "Home",      route: "/home" },
+  { icon: "In", label: "Inbox",     route: "/inbox" },
+  { icon: "✓",  label: "Work",      route: "/projects" },
+  { icon: "Docs", label: "Docs",    route: "/docs" },
   { icon: "Draw", label: "Drawings", route: "/drawings" },
-  { icon: "⚙️", label: "Assets",   route: "/assets" },
+  { icon: "⚙️", label: "Assets",    route: "/assets" },
+  { icon: "🌐", label: "UNS",       route: "/uns" },
+  { icon: "i3X", label: "i3X",      route: "/i3x" },
   { icon: "Ops", label: "Ops Data", route: "/operations" },
-  { icon: "🚨", label: "Incidents",route: "/incidents" },
-  { icon: "Team", label: "Teams",    route: "/team-spaces" },
-  { icon: "In", label: "Inbox",    route: "/inbox" },
-  { icon: "🤖", label: "AI",       route: "/ai" },
-  { icon: "🔌", label: "Integ",    route: "/integrations" },
-  { icon: "🛡",  label: "Admin",    route: "/admin" },
+  { icon: "🚨", label: "Incidents", route: "/incidents" },
+  { icon: "Team", label: "Teams",   route: "/team-spaces" },
+  { icon: "🤖", label: "AI",        route: "/ai" },
+  { icon: "🔌", label: "Integ",     route: "/integrations" },
+  { icon: "🛡",  label: "Admin",     route: "/admin" },
 ];
 
 export function renderRail() {
@@ -77,17 +83,28 @@ export function renderRail() {
 function matches(path, route) {
   // Strip query string from path for comparison.
   const p = (path || "").split("?")[0];
+  // Each rail item highlights for its OWN primary route + tightly-related
+  // detail/edit subpaths only. Sibling features like UNS / i3X / Operations
+  // get their own rail entries instead of being folded under "Assets".
   if (route === "/home") return p === "/home";
   if (route === "/hub")  return p === "/hub";
+  if (route === "/inbox") return p === "/inbox";
   if (route === "/docs") return p === "/docs" || p.startsWith("/doc/") || p.startsWith("/compare/");
   if (route === "/drawings") return p === "/drawings" || p.startsWith("/drawing/");
   if (route === "/projects") return p === "/projects" || p.startsWith("/work-board/") || p === "/approvals";
-  if (route === "/assets") return p === "/assets" || p.startsWith("/asset/") || p === "/uns" || p === "/i3x";
-  if (route === "/operations") return p === "/operations";
+  if (route === "/assets") return p === "/assets" || p.startsWith("/asset/");
+  if (route === "/uns") return p === "/uns";
+  if (route === "/i3x") return p === "/i3x";
+  if (route === "/operations") return p === "/operations" || p.startsWith("/operations/");
   if (route === "/incidents") return p === "/incidents" || p.startsWith("/incident/");
   if (route === "/team-spaces") return p === "/team-spaces" || p.startsWith("/team-space/") || p.startsWith("/channel/");
-  const base = route.split("/")[1];
-  return p.startsWith("/" + base);
+  if (route === "/ai") return p === "/ai" || p.startsWith("/ai/");
+  if (route === "/integrations") return p === "/integrations" || p.startsWith("/integrations/");
+  if (route === "/admin") return p === "/admin" || p.startsWith("/admin/");
+  // Defensive fallback: exact match only — no greedy `startsWith` on the bare
+  // base segment (which previously made "/integ" match every "/integrations/*"
+  // and similar collisions across unrelated routes).
+  return p === route;
 }
 
 function workspaceSwitcher() {

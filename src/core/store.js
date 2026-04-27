@@ -53,15 +53,38 @@ function hydrate() {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return;
     const saved = JSON.parse(raw);
-    if (saved.ui) Object.assign(state.ui, saved.ui);
-    if (saved.data) {
-      // Merge select collections the user may have mutated.
+    if (!saved || typeof saved !== "object") {
+      console.warn("hydrate: saved state is not an object, ignoring");
+      return;
+    }
+    // Schema-light validation: only copy keys that already exist on the
+    // in-memory shape, and only when the type matches. Prevents an older
+    // or corrupted payload from replacing an array with a string and
+    // crashing a screen on first render.
+    if (saved.ui && typeof saved.ui === "object") {
+      for (const key of Object.keys(saved.ui)) {
+        if (!(key in state.ui)) continue;
+        const expected = state.ui[key];
+        const incoming = saved.ui[key];
+        if (expected === null || incoming === null) { state.ui[key] = incoming; continue; }
+        if (typeof expected !== typeof incoming) continue;
+        if (Array.isArray(expected) !== Array.isArray(incoming)) continue;
+        state.ui[key] = incoming;
+      }
+    }
+    if (saved.data && typeof saved.data === "object" && state.data) {
       for (const key of Object.keys(saved.data)) {
-        if (state.data[key] != null) state.data[key] = saved.data[key];
+        if (!(key in state.data)) continue;
+        const expected = state.data[key];
+        const incoming = saved.data[key];
+        if (Array.isArray(expected) !== Array.isArray(incoming)) continue;
+        if (expected != null && typeof expected !== typeof incoming) continue;
+        state.data[key] = incoming;
       }
     }
   } catch (e) {
-    console.warn("hydrate failed", e);
+    console.warn("hydrate failed; falling back to fresh seed", e);
+    try { localStorage.removeItem(LS_KEY); } catch { /* ignore */ }
   }
 }
 

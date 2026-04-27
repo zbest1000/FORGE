@@ -20,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -1616,6 +1616,16 @@ function migrate() {
         CREATE INDEX IF NOT EXISTS idx_modbus_registers_device ON modbus_registers(device_id);
       `);
       setVersion(15);
+    }
+
+    if (getVersion() < 16) {
+      // v16: indexes that v15 missed — recipes(asset_id) is a common filter,
+      // modbus_devices(integration_id) supports multi-integration installs.
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_recipes_asset ON recipes(asset_id);
+        CREATE INDEX IF NOT EXISTS idx_modbus_devices_integration ON modbus_devices(integration_id);
+      `);
+      setVersion(16);
     }
   })();
 }

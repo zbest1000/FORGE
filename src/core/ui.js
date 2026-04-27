@@ -10,7 +10,10 @@ export function el(tag, props = {}, children = []) {
     else if (k.startsWith("on") && typeof v === "function") {
       node.addEventListener(k.slice(2).toLowerCase(), v);
     } else if (k === "html") {
-      node.innerHTML = v;
+      // Removed: setting innerHTML from a prop bypassed sanitization (XSS).
+      // Callers that need rendered HTML must go through src/core/md.js
+      // (marked + DOMPurify) and append the resulting Node as a child.
+      console.warn("ui.js el(): `html:` prop is no longer supported. Append a sanitized Node instead.");
     } else if (k in node) {
       try { node[k] = v; } catch { node.setAttribute(k, v); }
     } else {
@@ -547,9 +550,22 @@ export function pageHeader({ title, subtitle, breadcrumbs, status, actions } = {
   ]);
 }
 
-export function formRow(label, input) {
+// Auto-generates a stable-ish id when callers don't supply one, so `formRow`'s
+// label htmlFor and the control's id stay in sync without per-screen wiring.
+let _autoIdCounter = 0;
+function _autoId(prefix = "f") {
+  _autoIdCounter += 1;
+  return `${prefix}-${_autoIdCounter}`;
+}
+
+export function formRow(label, control) {
+  // Ensure the control has an id we can target from the label, so screen
+  // readers announce the label when focus enters the field.
+  if (control && control.nodeType === 1 && !control.id) {
+    control.id = _autoId(control.tagName?.toLowerCase() || "f");
+  }
   return el("div", { class: "form-row" }, [
-    el("label", { htmlFor: id }, [label]),
+    el("label", { htmlFor: control?.id || "" }, [label]),
     control,
   ]);
 }
@@ -574,4 +590,65 @@ export function select(options, props = {}) {
 
 export function textarea(props = {}) {
   return el("textarea", { class: "textarea", ...props });
+}
+
+// ---------- Async-state primitives ----------
+
+// Inline spinner with optional label. Use inside cards or buttons for "loading".
+export function spinner({ label, size = "md", inline = false } = {}) {
+  return el("div", { class: `spinner spinner-${size}${inline ? " inline" : ""}`, role: "status", "aria-live": "polite" }, [
+    el("div", { class: "spinner-ring", "aria-hidden": "true" }),
+    label ? el("span", { class: "spinner-label" }, [label]) : null,
+  ]);
+}
+
+// Error callout — consistent "something failed" affordance with optional retry.
+export function errorCallout({ title = "Something went wrong", body, onRetry, retryLabel = "Retry" } = {}) {
+  return el("div", { class: "error-callout", role: "alert" }, [
+    el("div", { class: "error-callout-icon", "aria-hidden": "true" }, ["!"]),
+    el("div", { class: "error-callout-body" }, [
+      el("div", { class: "error-callout-title" }, [title]),
+      body ? el("div", { class: "error-callout-detail tiny" }, [body]) : null,
+    ]),
+    onRetry ? el("button", { class: "btn ghost sm", onClick: onRetry }, [retryLabel]) : null,
+  ]);
+}
+
+// Button primitive that handles loading/disabled states uniformly. Prefer this
+// over hand-rolled `<button class="btn">` when the click triggers an async
+// operation that should show progress and be re-clickable on completion.
+//
+// Usage:
+//   button({ label: "Save", onClick: async () => {...}, variant: "primary" })
+//
+// When `onClick` returns a promise, the button shows a spinner + becomes
+// disabled until it resolves. Sync onClicks behave like a normal button.
+export function button({ label, onClick, variant = "", size = "", disabled = false, type = "button", ariaLabel } = {}) {
+  const cls = ["btn", variant, size].filter(Boolean).join(" ");
+  const node = el("button", {
+    class: cls,
+    type,
+    disabled: disabled || undefined,
+    "aria-label": ariaLabel || undefined,
+  }, [el("span", { class: "btn-label" }, [label])]);
+
+  if (onClick) {
+    node.addEventListener("click", async (e) => {
+      if (node.disabled) return;
+      const result = onClick(e);
+      if (result && typeof result.then === "function") {
+        node.disabled = true;
+        node.classList.add("is-loading");
+        const ring = el("span", { class: "spinner-ring spinner-sm", "aria-hidden": "true" });
+        node.prepend(ring);
+        try { await result; }
+        finally {
+          ring.remove();
+          node.disabled = !!disabled;
+          node.classList.remove("is-loading");
+        }
+      }
+    });
+  }
+  return node;
 }

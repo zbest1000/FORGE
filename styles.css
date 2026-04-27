@@ -2445,3 +2445,76 @@ dl.kv dd {
   margin-bottom: 4px;
   margin-top: 8px;
 }
+
+/* ---------- Async-state primitives ---------- */
+
+@keyframes spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+}
+.spinner.inline { display: inline-flex; }
+.spinner-ring {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spinner-rotate 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.spinner-sm { width: 12px; height: 12px; border-width: 2px; }
+.spinner-md .spinner-ring { width: 20px; height: 20px; border-width: 2px; }
+.spinner-lg .spinner-ring { width: 28px; height: 28px; border-width: 3px; }
+.spinner-label { font-size: 13px; }
+
+.error-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(220, 38, 38, 0.06);
+  border: 1px solid rgba(220, 38, 38, 0.25);
+  color: var(--text);
+}
+.error-callout-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--danger, #dc2626);
+  color: #fff;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.error-callout-body { flex: 1; min-width: 0; }
+.error-callout-title { font-weight: 600; margin-bottom: 2px; }
+.error-callout-detail { color: var(--muted); }
+
+/* ---------- Button states ---------- */
+
+.btn:disabled,
+.btn[disabled],
+.btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.btn.is-loading {
+  position: relative;
+  cursor: progress;
+  opacity: 0.85;
+}
+.btn.is-loading .spinner-ring {
+  margin-right: 6px;
+  vertical-align: middle;
+}

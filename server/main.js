@@ -48,7 +48,7 @@ import { startAlertWorker, stopAlertWorker } from "./alerts.js";
 import { startRollupWorker, stopRollupWorker, readSeries, listDailySnapshot } from "./metrics-rollup.js";
 import { startRetentionWorker, stopRetentionWorker } from "./retention.js";
 import { startTamperWorker, stopTamperWorker } from "./audit-tamper.js";
-import { stopOutboxWorker } from "./outbox.js";
+import { startOutboxWorker, stopOutboxWorker } from "./outbox.js";
 import { stopWebhookWorker } from "./webhooks.js";
 import { drain as drainAudit } from "./audit.js";
 import { shutdownSSE } from "./sse.js";
@@ -56,7 +56,6 @@ import { shutdownTracing } from "./tracing.js";
 import { errorHandler, buildEnvelope } from "./errors.js";
 
 initTracing("forge-api");
-import { startOutboxWorker } from "./outbox.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -341,7 +340,7 @@ await app.register(async (scope) => {
     validationRules: [],
     context: (request) => ({ user: request.user, tokenScopes: request.tokenScopes || [] }),
     errorFormatter: (err, ctx) => {
-      return { statusCode: err?.errors?.[0]?.extensions?.http?.status || 200, response: { errors: err?.errors || [], data: err?.data ?? null } };
+      return { statusCode: err?.errors?.[0]?.extensions?.http?.status || 400, response: { errors: err?.errors || [], data: err?.data ?? null } };
     },
   });
   // Cheap aliases-cap: count `:` separators in the query string before mercurius
