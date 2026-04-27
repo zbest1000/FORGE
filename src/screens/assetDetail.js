@@ -133,7 +133,9 @@ function assetContextTabs(asset, ctx) {
       { id: "docs", label: `Docs (${ctx.linkedDocs.length})`, content: () => card("Linked documents", documentList(ctx.linkedDocs)) },
       { id: "work", label: `Work (${ctx.tasks.length + ctx.maintenance.length})`, content: () => card("Work and service", workMaintenancePanel(ctx.tasks, ctx.maintenance)) },
       { id: "signals", label: `Signals (${ctx.dataSources.length})`, content: () => el("div", { class: "two-col" }, [
-        card("Operations trend", telemetry(asset)),
+        card("Operations trend", telemetry(asset), {
+          actions: [el("button", { class: "btn sm", onClick: () => navigate("/operations") }, ["Open historian"])],
+        }),
         card("Signal health", signalHealthPanel(ctx.dataSources)),
       ]) },
       { id: "activity", label: "Activity", content: () => card("Asset activity", assetTimeline(asset, ctx)) },
@@ -289,13 +291,23 @@ function editAssignment(a) {
     actions: [
       { label: "Cancel" },
       { label: "Save", variant: "primary", onClick: () => {
+        const userId = userSel.value || null;
+        const groupId = groupSel.value || null;
+        const userName = userId ? users.find(u => u.id === userId)?.name : null;
+        const groupName = groupId ? groups.find(g => g.id === groupId)?.name : null;
+        const prevUserId = a.assignedUserId || null;
+        const prevGroupId = a.assignedGroupId || null;
         update(s => {
           const x = s.data.assets.find(y => y.id === a.id);
           if (!x) return;
-          x.assignedUserId = userSel.value || null;
-          x.assignedGroupId = groupSel.value || null;
+          x.assignedUserId = userId;
+          x.assignedGroupId = groupId;
         });
-        audit("asset.assign", a.id, { userId: userSel.value || null, groupId: groupSel.value || null });
+        audit("asset.assign", a.id, {
+          asset: a.name,
+          userId, userName, groupId, groupName,
+          previousUserId: prevUserId, previousGroupId: prevGroupId,
+        });
         toast("Assignment saved", "success");
       }},
     ],
@@ -304,11 +316,13 @@ function editAssignment(a) {
 
 function telemetry(a) {
   const data = simulation.telemetrySeries(a);
+  const historianPoints = (state.data.historianPoints || []).filter(p => p.assetId === a.id);
   return el("div", { class: "stack" }, [
     sparkline(data, { width: 360, height: 90 }),
     el("div", { class: "row wrap" }, (a.mqttTopics || []).map(t => el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["MQTT"]), t]))),
     el("div", { class: "row wrap" }, (a.opcuaNodes || []).map(n => el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["OPC"]), n]))),
-    el("div", { class: "tiny muted" }, ["Chart rendered by uPlot (MIT) with SVG fallback."]),
+    historianPoints.length ? el("div", { class: "row wrap" }, historianPoints.map(p => el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["HIST"]), p.tag]))) : null,
+    el("div", { class: "tiny muted" }, ["Chart rendered by uPlot (MIT) with SVG fallback. Historian tags are stored with asset DAQ history."]),
   ]);
 }
 

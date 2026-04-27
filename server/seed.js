@@ -143,6 +143,48 @@ insertMany(
   data.dataSources, d => ({ id: d.id, ii: d.integrationId, ep: d.endpoint, as: d.assetId, kind: d.kind })
 );
 
+insertMany(
+  `INSERT OR IGNORE INTO historian_points (id, asset_id, source_id, tag, name, unit, data_type, historian, retention_policy_id, created_at, updated_at)
+   VALUES (@id, @asset, @source, @tag, @name, @unit, @dataType, @historian, NULL, @now, @now)`,
+  data.historianPoints || [],
+  p => ({ id: p.id, asset: p.assetId, source: p.sourceId || null, tag: p.tag, name: p.name, unit: p.unit || null, dataType: p.dataType || "number", historian: p.historian || "sqlite", now: now() })
+);
+
+insertMany(
+  `INSERT OR IGNORE INTO historian_samples (id, point_id, ts, value, quality, source_type, raw_payload)
+   VALUES (@id, @point, @ts, @value, @quality, @sourceType, @raw)`,
+  data.historianSamples || [],
+  s => ({ id: s.id, point: s.pointId, ts: s.ts, value: s.value, quality: s.quality || "Good", sourceType: s.sourceType || "seed", raw: JSON.stringify(s.rawPayload || {}) })
+);
+
+insertMany(
+  `INSERT OR IGNORE INTO recipes (id, asset_id, name, status, current_version_id, created_by, created_at, updated_at)
+   VALUES (@id, @asset, @name, @status, @currentVersion, @createdBy, @createdAt, @updatedAt)`,
+  data.recipes || [],
+  r => ({ id: r.id, asset: r.assetId || null, name: r.name, status: r.status || "draft", currentVersion: r.currentVersionId || null, createdBy: r.createdBy || null, createdAt: r.createdAt || now(), updatedAt: r.updatedAt || now() })
+);
+
+insertMany(
+  `INSERT OR IGNORE INTO recipe_versions (id, recipe_id, version, state, parameters, notes, approved_by, approved_at, created_by, created_at)
+   VALUES (@id, @recipe, @version, @state, @parameters, @notes, @approvedBy, @approvedAt, @createdBy, @createdAt)`,
+  data.recipeVersions || [],
+  v => ({ id: v.id, recipe: v.recipeId, version: v.version, state: v.state || "draft", parameters: JSON.stringify(v.parameters || {}), notes: v.notes || null, approvedBy: v.approvedBy || null, approvedAt: v.approvedAt || null, createdBy: v.createdBy || null, createdAt: v.createdAt || now() })
+);
+
+insertMany(
+  `INSERT OR IGNORE INTO modbus_devices (id, integration_id, name, host, port, unit_id, status, last_poll_at, config, created_at, updated_at)
+   VALUES (@id, @integration, @name, @host, @port, @unitId, @status, @lastPoll, @config, @now, @now)`,
+  data.modbusDevices || [],
+  m => ({ id: m.id, integration: m.integrationId || "INT-MODBUS", name: m.name, host: m.host, port: m.port || 502, unitId: m.unitId || 1, status: m.status || "configured", lastPoll: m.lastPollAt || null, config: JSON.stringify(m.config || {}), now: now() })
+);
+
+insertMany(
+  `INSERT OR IGNORE INTO modbus_registers (id, device_id, asset_id, point_id, name, address, function_code, data_type, scale, unit, polling_ms, last_value, last_quality, last_seen, created_at, updated_at)
+   VALUES (@id, @device, @asset, @point, @name, @address, @functionCode, @dataType, @scale, @unit, @pollingMs, @lastValue, @lastQuality, @lastSeen, @now, @now)`,
+  data.modbusRegisters || [],
+  r => ({ id: r.id, device: r.deviceId, asset: r.assetId || null, point: r.pointId || null, name: r.name, address: r.address, functionCode: r.functionCode || 3, dataType: r.dataType || "float32", scale: r.scale || 1, unit: r.unit || null, pollingMs: r.pollingMs || 1000, lastValue: r.lastValue ?? null, lastQuality: r.lastQuality || null, lastSeen: r.lastSeen || null, now: now() })
+);
+
 // FTS indexing.
 db.exec("DELETE FROM fts_docs;");
 db.prepare(`INSERT INTO fts_docs (id, kind, title, body)

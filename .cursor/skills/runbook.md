@@ -268,7 +268,32 @@ curl -s "localhost:3000/api/search?q=valve" | jq .
 Client side: `src/core/search.js` builds a MiniSearch index lazily from the
 seed; `__forgeSelfTest()` asserts BM25 hits exist.
 
-### 7. Docker / deployment (`Dockerfile`, `docker-compose.yml`)
+### 7. Operations historians, recipes & Modbus (`server/historians/`, `src/screens/operations.js`)
+
+SQLite is always the local cache. Optional production backends are configured
+by env vars:
+
+| Backend | Env vars |
+|---|---|
+| InfluxDB | `FORGE_INFLUX_URL`, `FORGE_INFLUX_TOKEN`, `FORGE_INFLUX_ORG`, `FORGE_INFLUX_BUCKET` |
+| Timebase | `FORGE_TIMEBASE_URL`, optional `FORGE_TIMEBASE_TOKEN` |
+| SQL Server / MSSQL | `FORGE_MSSQL_CONNECTION_STRING` |
+
+Quick server-mode check:
+
+```bash
+TOKEN=$(curl -s -XPOST localhost:3000/api/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"admin@forge.local","password":"forge"}' | jq -r .token)
+curl -s -H "Authorization: Bearer $TOKEN" localhost:3000/api/historian/backends | jq .
+curl -s -H "Authorization: Bearer $TOKEN" "localhost:3000/api/historian/trends?assetId=AS-2" | jq '.series[0].backend'
+```
+
+For UI changes, open `#/operations`, verify **Historian backends** lists
+SQLite/InfluxDB/Timebase/SQL Server, and exercise the ECharts chart type
+selector (Line/Area/Bar/Scatter).
+
+### 8. Docker / deployment (`Dockerfile`, `docker-compose.yml`)
 
 ```bash
 docker compose build forge

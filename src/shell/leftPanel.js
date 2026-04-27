@@ -1,4 +1,4 @@
-import { el, mount } from "../core/ui.js";
+import { el, mount, clickable } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { openPalette } from "../core/palette.js";
@@ -45,15 +45,17 @@ export function renderLeftPanel() {
       ...items.map(item => {
         const m = map(item);
         const isActive = activeRoute === m.route;
-        return el("button", {
-    type: "button",
-    class: `tree-item ${isActive ? "active" : ""} ${m.unread ? "unread" : ""}`,
+        const node = el("div", {
+          class: `tree-item ${isActive ? "active" : ""} ${m.unread ? "unread" : ""}`,
           onClick: () => navigate(m.route),
+          "aria-current": isActive ? "page" : null,
         }, [
           el("span", { class: "tree-dot" }),
           el("span", { class: "tree-label" }, [m.label]),
           m.badge ? el("span", { class: "tree-count" }, [m.badge]) : null,
         ]);
+        clickable(node, () => navigate(m.route), { label: `${m.label}${m.badge ? `, ${m.badge} unread` : ""}` });
+        return node;
       }),
     ]);
   }
@@ -157,9 +159,9 @@ function sectionsFor(domain, d) {
   if (domain === "assets") {
     return [
       makeSection("Assets", visibleAssets, a => ({ route: `/asset/${a.id}`, label: a.name, unread: a.status === "alarm" || a.status === "warning" })),
-      makeSection("Industrial tools", [
+      makeSection("Industrial data & APIs", [
         { route: "/uns", label: "Unified Namespace" },
-        { route: "/i3x", label: "i3X explorer" },
+        { route: "/i3x", label: "i3X API" },
         { route: "/integrations", label: "Integration console" },
       ], x => x),
     ];
@@ -176,12 +178,12 @@ function sectionsFor(domain, d) {
   if (domain === "integrations") {
     return [
       makeSection("Connectors", [
+        { route: "/integrations", label: "Health overview" },
         { route: "/integrations/mqtt", label: "MQTT" },
         { route: "/integrations/opcua", label: "OPC UA" },
         { route: "/integrations/erp", label: "ERP" },
       ], x => x),
-      makeSection("Diagnostics", [
-        { route: "/integrations", label: "Health overview" },
+      makeSection("Interoperability", [
         { route: "/uns", label: "UNS binding" },
         { route: "/i3x", label: "i3X API" },
       ], x => x),

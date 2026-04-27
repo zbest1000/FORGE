@@ -1,7 +1,7 @@
 // Unified Namespace browser.
 // Shows the hierarchical instance graph with live values pulled from the i3X server.
 
-import { el, mount, card, badge, chip, toast, prompt, dangerAction } from "../core/ui.js";
+import { el, mount, card, badge, chip, toast, prompt } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { i3x, getServer } from "../core/i3x/client.js";
@@ -42,7 +42,7 @@ function headerRow(info) {
     el("div", { class: "row" }, [
       badge("i3X: Beta 1.0", "accent"),
       badge("UNS: active", "success"),
-      el("button", { class: "btn sm", onClick: () => navigate("/i3x") }, ["i3X Explorer →"]),
+      el("button", { class: "btn sm", onClick: () => navigate("/i3x") }, ["i3X API →"]),
     ]),
   ]);
 }
@@ -180,7 +180,7 @@ function renderLiveCard(elementId) {
       chartSpark((history.data?.values || []).map(v => Number(v.value) || 0), { width: 280, height: 60 }),
       el("div", { class: "row wrap" }, [
         el("button", { class: "btn sm", onClick: () => writeValue(obj) }, ["Write value"]),
-        el("button", { class: "btn sm", onClick: () => openSubscribe(obj) }, ["Subscribe → Explorer"]),
+        el("button", { class: "btn sm", onClick: () => openSubscribe(obj) }, ["Subscribe → i3X API"]),
       ]),
     );
   } else {
@@ -240,12 +240,7 @@ function sparkline(values) {
 }
 
 async function writeValue(obj) {
-  const raw = await prompt({
-    title: `Write value to ${obj.name}`,
-    label: "Value",
-    defaultValue: "",
-    helpText: `Unit: ${obj.attributes?.unit || "(unknown)"} · Type: ${obj.attributes?.dataType || "auto"}. Routed through PUT /v1/objects/{id}/value.`,
-  });
+  const raw = await prompt({ title: `Write to ${obj.name}`, message: `Current unit: ${obj.attributes?.unit || "?"}`, placeholder: "value" });
   if (raw == null) return;
   const ok = await dangerAction({
     title: "Confirm UNS write",

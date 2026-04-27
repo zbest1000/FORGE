@@ -80,16 +80,17 @@ export const PORTALS = [
   },
   {
     id: "automation",
-    label: "Industrial Operations Data",
+    label: "Industrial Interoperability",
     icon: "🛰",
-    description: "i3X / Unified Namespace, MQTT, OPC UA, telemetry & assets.",
+    description: "UNS and i3X APIs, historians, recipes, Modbus TCP, MQTT, OPC UA, telemetry, and assets.",
     accent: "#f59e0b",
-    routes: ["/i3x", "/uns", "/integrations/mqtt", "/integrations/opcua", "/assets"],
+    routes: ["/i3x", "/uns", "/operations", "/integrations/mqtt", "/integrations/opcua", "/assets"],
     items: [
       { icon: "🏠", label: "Home",     route: "/home" },
       { icon: "🌐", label: "UNS",      route: "/uns" },
       { icon: "🧩", label: "i3X",      route: "/i3x" },
       { icon: "⚙️", label: "Assets",   route: "/assets" },
+      { icon: "📈", label: "Ops Data", route: "/operations" },
       { icon: "🛰",  label: "MQTT",    route: "/integrations/mqtt" },
       { icon: "🔌", label: "OPC UA",   route: "/integrations/opcua" },
       { icon: "🚨", label: "Incidents",route: "/incidents" },
@@ -215,6 +216,7 @@ export function visiblePortals() {
 const ROUTE_GROUPS = {
   "/i3x":                 ["G-automation","G-scada","G-engineering","G-eng"],
   "/uns":                 ["G-automation","G-scada","G-engineering","G-eng"],
+  "/operations":          ["G-automation","G-scada","G-engineering","G-eng"],
   "/integrations":        ["G-it","G-automation","G-erp"],
   "/integrations/mqtt":   ["G-it","G-automation","G-scada"],
   "/integrations/opcua":  ["G-it","G-automation","G-scada"],

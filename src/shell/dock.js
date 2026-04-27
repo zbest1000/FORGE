@@ -1,4 +1,4 @@
-import { el, mount } from "../core/ui.js";
+import { el, mount, clickable } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { effectiveGroupIds, currentUserId, isOrgOwner } from "../core/groups.js";
@@ -49,14 +49,17 @@ export function renderDock() {
 
   mount(root, [
     el("div", { class: "dock-title" }, ["Operations Dock"]),
-    el("div", { class: "dock-items" }, items.map(it =>
-      el("div", {
+    el("div", { class: "dock-items", role: "list" }, items.map(it => {
+      const node = el("div", {
         class: "dock-item",
         onClick: () => navigate(it.route),
+        role: "listitem",
       }, [
-        el("span", { class: `dock-dot ${it.dot}` }),
+        el("span", { class: `dock-dot ${it.dot}`, "aria-hidden": "true" }),
         el("span", {}, [it.text]),
-      ])
-    )),
+      ]);
+      clickable(node, () => navigate(it.route), { label: it.text });
+      return node;
+    })),
   ]);
 }

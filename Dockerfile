@@ -13,7 +13,7 @@
 #   FORGE_MQTT_URL          optional MQTT bridge
 #   FORGE_CORS_ORIGIN       comma-separated origins; default '*'
 
-FROM node:20-bookworm-slim AS builder
+FROM node:25-bookworm-slim AS builder
 WORKDIR /app
 
 # Build tools for better-sqlite3 native binding.
@@ -32,7 +32,7 @@ COPY vite.config.js ./
 RUN npm run build
 RUN npm prune --omit=dev --no-audit --no-fund
 
-FROM node:20-bookworm-slim
+FROM node:25-bookworm-slim
 ENV NODE_ENV=production
 WORKDIR /app
 

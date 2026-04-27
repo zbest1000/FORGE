@@ -7,7 +7,7 @@
 //   * Publish test with QoS, retain flag
 //   * Namespace policy checker (naming convention validation)
 
-import { el, mount, card, badge, toast, input, select, formRow, modal, textarea, dangerAction } from "../core/ui.js";
+import { el, mount, card, badge, toast, input, select, formRow, modal, textarea, confirm } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { can } from "../core/permissions.js";
@@ -271,14 +271,7 @@ function editRule(ds) {
 }
 
 async function deleteRule(ds) {
-  const ok = await dangerAction({
-    title: `Delete mapping for ${ds.endpoint}?`,
-    message: ds.assetId
-      ? `This mapping currently routes to asset ${ds.assetId}. Removing it will stop signal updates from this topic.`
-      : "This mapping is unmapped — removing it just removes the entry.",
-    confirmLabel: "Delete",
-  });
-  if (!ok) return;
+  if (!await confirm({ title: "Delete mapping", message: `Delete mapping for ${ds.endpoint}?`, confirmLabel: "Delete", variant: "danger" })) return;
   update(s => { s.data.dataSources = s.data.dataSources.filter(y => y.id !== ds.id); });
   audit("mqtt.mapping.delete", ds.endpoint);
 }

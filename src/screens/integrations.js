@@ -3,7 +3,7 @@
 // Surface: per-connector health, test connection, rotate credential,
 // live recent-events feed from core/events, DLQ browser with replay.
 
-import { el, mount, card, badge, toast, modal, formRow, input, dangerAction } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, input, confirm } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -38,12 +38,13 @@ export function renderIntegrations() {
           el("button", { class: "btn sm", disabled: !can("integration.write"), onClick: () => rotateCred(i) }, ["Rotate cred"]),
           i.kind === "mqtt"  ? el("button", { class: "btn sm primary", onClick: () => navigate("/integrations/mqtt") }, ["MQTT browser →"]) : null,
           i.kind === "opcua" ? el("button", { class: "btn sm primary", onClick: () => navigate("/integrations/opcua") }, ["OPC UA browser →"]) : null,
+          i.kind === "modbus" ? el("button", { class: "btn sm primary", onClick: () => navigate("/operations") }, ["Historian & Modbus →"]) : null,
           i.kind === "erp"   ? el("button", { class: "btn sm primary", onClick: () => navigate("/integrations/erp") }, ["ERP mapping →"]) : null,
         ]),
       ]));
     })),
 
-    card("Unified Namespace binding", el("div", { class: "stack" }, [
+    card("Interoperability binding", el("div", { class: "stack" }, [
       el("div", { class: "small" }, ["All connectors publish into the canonical UNS and surface as i3X variables (see /uns, /i3x)."]),
       el("div", { class: "row wrap" }, [
         badge("urn:cesmii:isa95:1", "purple"),
@@ -52,7 +53,7 @@ export function renderIntegrations() {
       ]),
       el("div", { class: "row" }, [
         el("button", { class: "btn sm", onClick: () => navigate("/uns") }, ["Open UNS browser →"]),
-        el("button", { class: "btn sm", onClick: () => navigate("/i3x") }, ["Open i3X Explorer →"]),
+        el("button", { class: "btn sm", onClick: () => navigate("/i3x") }, ["Open i3X API →"]),
       ]),
     ])),
 
@@ -79,13 +80,7 @@ function testConnection(i) {
 
 async function rotateCred(i) {
   if (!can("integration.write")) return;
-  const ok = await dangerAction({
-    title: `Rotate credentials for ${i.name}?`,
-    message: "Existing sessions and downstream consumers will be re-authenticated. Plan a maintenance window if this connector is in production.",
-    confirmLabel: "Rotate",
-    details: `Connector ${i.kind.toUpperCase()} · ${i.name}`,
-  });
-  if (!ok) return;
+  if (!await confirm({ title: "Rotate credentials", message: `Rotate credentials for ${i.name}? Existing sessions will be re-authenticated.`, confirmLabel: "Rotate", variant: "danger" })) return;
   audit("integration.cred.rotate", i.id);
   toast(`${i.name}: credential rotated (demo)`, "success");
 }

@@ -417,12 +417,7 @@ function askCard(doc, rev) {
 // ---------- actions ----------
 async function addCommentPin(docId, revId, page, presetX, presetY) {
   if (!can("create")) { toast("No permission", "warn"); return; }
-  const text = await prompt({
-    title: "Regional comment",
-    label: "Comment",
-    placeholder: "Pinned to this page region",
-    multiline: true,
-  });
+  const text = await prompt({ title: "Regional comment", placeholder: "Comment text" });
   if (!text) return;
   const x = presetX != null ? presetX : 0.25 + Math.random() * 0.5;
   const y = presetY != null ? presetY : 0.15 + Math.random() * 0.6;
@@ -477,11 +472,7 @@ function openComment(c) {
 async function convertCommentToIssue(c) {
   if (!can("create")) return;
   const doc = getById("documents", c.docId);
-  const title = await prompt({
-    title: "Convert to issue",
-    label: "Issue title",
-    defaultValue: c.text.slice(0, 60),
-  });
+  const title = await prompt({ title: "Convert to issue", message: "Issue title:", defaultValue: c.text.slice(0, 60) });
   if (!title) return;
   const projectId = doc?.projectId || (state.data.projects || [])[0]?.id;
   const id = "WI-" + Math.floor(Math.random() * 900 + 100);
@@ -500,11 +491,10 @@ async function convertCommentToIssue(c) {
 
 async function attachPdf(doc, rev) {
   const url = await prompt({
-    title: rev.pdfUrl || rev.assetUrl ? "Replace attached file" : "Attach file",
-    label: "URL",
+    title: "Attach asset URL",
+    message: "Supported: PDF, image, CSV, CAD (" + supportedExtensions().join(", ") + "). Must be CORS-enabled.",
     defaultValue: rev.pdfUrl || rev.assetUrl || "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf",
-    helpText: `Supported: PDF, images (png/jpg/svg), CSV, and CAD (${supportedExtensions().join(", ")}). URL must be CORS-enabled.`,
-    validate: (v) => /^https?:\/\//i.test(v) ? null : "Must be an http(s) URL",
+    placeholder: "https://...",
   });
   if (!url) return;
   const cad = detectCad(url);
