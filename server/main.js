@@ -140,6 +140,18 @@ const app = Fastify({
   rewriteUrl: versionRewrite,
 });
 
+// CORS. Production strict mode (`server/config.js`) refuses to start
+// when `FORGE_CORS_ORIGIN` is unset — `corsOrigin === true` (reflect
+// any origin) is too dangerous for a credentialed cookie-bearing API.
+// Development keeps the legacy permissive default for friction-free
+// local work, but we log a clear warning at boot so the operator
+// notices.
+if (config.corsOrigin === true) {
+  app.log.warn({
+    nodeEnv: config.nodeEnv,
+    fix: "FORGE_CORS_ORIGIN=https://your-tenant.example.com,https://second-origin",
+  }, "CORS is reflecting any origin (development default). Set FORGE_CORS_ORIGIN to a comma-separated allowlist for production.");
+}
 await app.register(cors, {
   origin: config.corsOrigin,
   credentials: true,

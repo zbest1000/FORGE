@@ -53,6 +53,9 @@ Tasks marked **DONE** in this branch (`cursor/enterprise-readiness-audit-603f`):
 | B.11 #5 — Tenant scope on /api/audit* | `audit_log.org_id` (v11), `server/audit.js`, `server/routes/core.js` |
 | B.4 #1, #3 — Foreign-key sweep with ON DELETE policies + pre-migrate snapshot + `--integrity` CLI | `server/db.js` v12, new `test/foreign-keys.test.js` |
 | B.6 #5, B.8 #6 — Periodic verifyLedger worker + Prometheus tamper metrics | `server/audit-tamper.js` (new), `server/main.js`, new `test/audit-tamper.test.js` |
+| B.2 #2/#3, B.8 #4 — Per-tenant signing key history (registry + rotation) | `tenant_keys` (v13), `server/crypto.js`, `server/audit.js`, `server/routes/core.js`, `server/graphql/resolvers.js`, `server/routes/extras.js`, new `test/tenant-keys.test.js` |
+| B.3 #4 — ACL fallback deny-by-default under FORGE_ACL_DENY_BY_DEFAULT (default ON in strict mode) | `server/acl.js`, new `test/acl-deny.test.js` |
+| B.7 #3 — CORS reflect-any default narrowed: warn at boot in dev, reject in strict mode | `server/config.js`, `server/main.js`, `test/config.test.js` |
 | B.7 #10 — Per-route Fastify JSON-schema validation on auth/core/webhook writes | `server/schemas/{common,auth,core,webhooks}.js` (new), every write route, new `test/schema-validation.test.js` |
 | B.3 #6 — `webhook.write` capability separates from `admin.view` | `server/auth.js`, `server/routes/webhooks.js` |
 | B.3 #7 — Event ingest requires `integration.write` | `server/routes/core.js`, `server/graphql/resolvers.js` |
@@ -66,11 +69,12 @@ Tasks marked **DONE** in this branch (`cursor/enterprise-readiness-audit-603f`):
 | B.13 #4 — `docs/SCHEMA_UPGRADE.md` covering v8–v12 | docs/ |
 | B.13 #5 — `docs/THREAT_MODEL.md` (STRIDE per surface) | docs/ |
 
-Test suite: 168/168 passing locally on Linux (Windows runs all but
+Test suite: 180/180 passing locally on Linux (Windows runs all but
 the POSIX-signal shutdown test; macOS runs the full suite). New
 regression files: `api-versioning`, `etag`, `error-envelope`,
 `foreign-keys`, `audit-tamper`, `schema-validation`,
-`authz-tightening`, `dsar-redaction`, `fts-injection`.
+`authz-tightening`, `dsar-redaction`, `fts-injection`,
+`tenant-keys`, `acl-deny`.
 
 Remaining tasks are tracked in the developer-ready list (Section E)
 and in the prioritized roadmap.
