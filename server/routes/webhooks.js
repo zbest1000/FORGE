@@ -2,11 +2,15 @@
 
 import { require_ } from "../auth.js";
 import { listWebhooks, createWebhook, toggleWebhook, deleteWebhook, listDeliveries } from "../webhooks.js";
+import { WebhookCreateBody, WebhookPatchBody } from "../schemas/webhooks.js";
 
 export default async function webhookRoutes(fastify) {
   fastify.get("/api/webhooks", { preHandler: require_("admin.view") }, async () => listWebhooks());
 
-  fastify.post("/api/webhooks", { preHandler: require_("admin.view") }, async (req, reply) => {
+  fastify.post("/api/webhooks", {
+    preHandler: require_("admin.view"),
+    schema: { body: WebhookCreateBody },
+  }, async (req, reply) => {
     const { name, url, events, secret } = req.body || {};
     if (!name || !url) return reply.code(400).send({ error: "name and url required" });
     try {
@@ -18,7 +22,10 @@ export default async function webhookRoutes(fastify) {
     }
   });
 
-  fastify.patch("/api/webhooks/:id", { preHandler: require_("admin.view") }, async (req, reply) => {
+  fastify.patch("/api/webhooks/:id", {
+    preHandler: require_("admin.view"),
+    schema: { body: WebhookPatchBody },
+  }, async (req, reply) => {
     if ("enabled" in (req.body || {})) toggleWebhook(req.params.id, !!req.body.enabled, req.user.id);
     return { ok: true };
   });

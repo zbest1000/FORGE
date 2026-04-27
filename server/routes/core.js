@@ -10,6 +10,13 @@ import { canTransitionApproval } from "../../src/core/fsm/approval.js";
 import { allows, filterAllowed, requireAccess, requireAuth } from "../acl.js";
 import { tenantOrgId, tenantWhere, requireTenant, orgForRow } from "../tenant.js";
 import { applyEtag, requireIfMatch } from "../etag.js";
+import {
+  WorkItemCreateBody,
+  WorkItemPatchBody,
+  MessagePostBody,
+  RevisionTransitionBody,
+  ApprovalDecideBody,
+} from "../schemas/core.js";
 
 function mapRowJson(row, fields) {
   const out = { ...row };
@@ -137,7 +144,10 @@ export default async function coreRoutes(fastify) {
     return rows.reverse().map(r => ({ ...r, attachments: JSON.parse(r.attachments || "[]"), edits: JSON.parse(r.edits || "[]") }));
   });
 
-  fastify.post("/api/channels/:id/messages", { preHandler: require_("create") }, async (req, reply) => {
+  fastify.post("/api/channels/:id/messages", {
+    preHandler: require_("create"),
+    schema: { body: MessagePostBody },
+  }, async (req, reply) => {
     const { text, type = "discussion", attachments = [] } = req.body || {};
     if (!text || !text.trim()) return reply.code(400).send({ error: "text required" });
     const ch = db.prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id);
@@ -178,7 +188,10 @@ export default async function coreRoutes(fastify) {
     return row;
   });
 
-  fastify.post("/api/revisions/:id/transition", { preHandler: require_("approve") }, async (req, reply) => {
+  fastify.post("/api/revisions/:id/transition", {
+    preHandler: require_("approve"),
+    schema: { body: RevisionTransitionBody },
+  }, async (req, reply) => {
     const { to, notes = "" } = req.body || {};
     const rev = db.prepare("SELECT * FROM revisions WHERE id = ?").get(req.params.id);
     if (!rev) return reply.code(404).send({ error: "not found" });
@@ -222,7 +235,10 @@ export default async function coreRoutes(fastify) {
     return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl", "labels", "blockers"]));
   });
 
-  fastify.post("/api/work-items", { preHandler: require_("create") }, async (req, reply) => {
+  fastify.post("/api/work-items", {
+    preHandler: require_("create"),
+    schema: { body: WorkItemCreateBody },
+  }, async (req, reply) => {
     const { projectId, type = "Task", title, severity = "medium", assigneeId = null, due = null } = req.body || {};
     if (!projectId || !title) return reply.code(400).send({ error: "projectId and title required" });
     const project = db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId);
@@ -245,7 +261,10 @@ export default async function coreRoutes(fastify) {
     return mapRowJson(row, ["acl", "labels", "blockers"]);
   });
 
-  fastify.patch("/api/work-items/:id", { preHandler: require_("edit") }, async (req, reply) => {
+  fastify.patch("/api/work-items/:id", {
+    preHandler: require_("edit"),
+    schema: { body: WorkItemPatchBody },
+  }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM work_items WHERE id = ?").get(req.params.id);
     if (!requireTenant(req, reply, row, "work_items")) return;
     if (!requireAccess(req, reply, row, "edit")) return;
@@ -311,7 +330,10 @@ export default async function coreRoutes(fastify) {
       .map(r => ({ ...r, approvers: JSON.parse(r.approvers || "[]"), chain: JSON.parse(r.chain || "[]") }));
   });
 
-  fastify.post("/api/approvals/:id/decide", { preHandler: require_("approve") }, async (req, reply) => {
+  fastify.post("/api/approvals/:id/decide", {
+    preHandler: require_("approve"),
+    schema: { body: ApprovalDecideBody },
+  }, async (req, reply) => {
     const { outcome, notes = "" } = req.body || {};
     if (!["approved","rejected"].includes(outcome)) return reply.code(400).send({ error: "outcome must be approved|rejected" });
     const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(req.params.id);
