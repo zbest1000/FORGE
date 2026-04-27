@@ -16,9 +16,28 @@ process.env.LOG_LEVEL = "warn";
 
 const { db } = await import("../server/db.js");
 
-test("schema_version reaches 12", () => {
+test("schema_version reaches 14", () => {
   const v = Number(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value);
-  assert.ok(v >= 12, `expected schema_version >= 12, got ${v}`);
+  assert.ok(v >= 14, `expected schema_version >= 14, got ${v}`);
+});
+
+test("v14 FK sweep installs declared FKs on auxiliary child tables", () => {
+  const expectations = {
+    files:                { col: "created_by", on_delete: "SET NULL" },
+    transmittals:         { col: "doc_id",     on_delete: "CASCADE" },
+    comments:             { col: "rev_id",     on_delete: "CASCADE" },
+    subscriptions:        { col: "user_id",    on_delete: "CASCADE" },
+    notifications:        { col: "user_id",    on_delete: "CASCADE" },
+    connector_runs:       { col: "system_id",  on_delete: "CASCADE" },
+    connector_mappings:   { col: "system_id",  on_delete: "CASCADE" },
+    external_object_links:{ col: "system_id",  on_delete: "CASCADE" },
+  };
+  for (const [table, want] of Object.entries(expectations)) {
+    const fks = db.pragma(`foreign_key_list(${table})`, { simple: false });
+    const fk = fks.find((r) => r.from === want.col);
+    assert.ok(fk, `${table}.${want.col} missing FK after v14`);
+    assert.equal(fk.on_delete, want.on_delete, `${table}.${want.col} ON DELETE policy mismatch`);
+  }
 });
 
 test("foreign_key_check passes on a freshly-migrated DB", () => {

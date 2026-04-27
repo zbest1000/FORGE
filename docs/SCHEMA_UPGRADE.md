@@ -213,6 +213,34 @@ at v11. Resolve by:
 5. Start the new binary. Tail `pino` logs for any
    `migrate failed` line.
 
+### v13 — per-tenant signing key registry
+
+`tenant_keys` records the lifecycle of each audit-pack signing key
+(when active, when retired, sha256 fingerprint of material). Key
+material itself stays in env vars / KMS — see `server/crypto.js`.
+Backfill seeds a single `key:forge:v1` row marked active so existing
+installs keep verifying their own packs without operator action.
+
+### v14 — extended foreign-key sweep
+
+Same recreate-and-rename pattern as v12, applied to the auxiliary
+child tables that v12 left untouched:
+
+- `files`           created_by → users SET NULL.
+- `transmittals`    doc_id → documents CASCADE; rev_id → revisions CASCADE.
+- `comments`        doc_id → documents CASCADE; rev_id → revisions CASCADE.
+- `subscriptions`   user_id → users CASCADE.
+- `notifications`   user_id → users CASCADE.
+- `connector_runs`  system_id → enterprise_systems CASCADE; legacy
+                    `action` column dropped (use `run_type`).
+- `connector_mappings`     system_id → enterprise_systems CASCADE.
+- `external_object_links`  system_id → enterprise_systems CASCADE.
+
+Same orphan check as v12: `PRAGMA foreign_key_check` runs at the
+end and aborts the migration on any orphan, leaving schema_version
+at 13 so the operator can clean up via `node server/db.js --integrity`
+and retry.
+
 ## Known sharp edges
 
 - v7 silently re-creates tables that already exist with different

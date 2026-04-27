@@ -20,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -1340,6 +1340,190 @@ function migrate() {
                   VALUES ('key:forge:v1', NULL, 'active', '', ?)`)
         .run(new Date().toISOString());
       setVersion(13);
+    }
+
+    if (getVersion() < 14) {
+      // v14: extend the foreign-key sweep to the rest of the child
+      // tables that v12 left untouched. Same recreate-and-rename
+      // pattern as v12 because SQLite still cannot ALTER a table to
+      // add FKs.
+      //
+      // Tables touched (with ON DELETE policy):
+      //   files               polymorphic parent_kind/parent_id stays
+      //                       untyped; created_by → users SET NULL.
+      //   transmittals        doc_id → documents CASCADE,
+      //                       rev_id → revisions CASCADE.
+      //   comments            doc_id → documents CASCADE,
+      //                       rev_id → revisions CASCADE.
+      //   subscriptions       user_id → users CASCADE.
+      //   notifications       user_id → users CASCADE.
+      //   connector_runs      system_id → enterprise_systems CASCADE.
+      //   connector_mappings  system_id → enterprise_systems CASCADE.
+      //   external_object_links system_id → enterprise_systems CASCADE.
+      //
+      // We deliberately do NOT add FKs on `audit_log.actor`,
+      // `events.*`, or `dead_letters.*` — those are intentionally
+      // free-form polymorphic refs (system events, third-party
+      // sources, polyglot envelopes).
+      db.pragma("foreign_keys = OFF");
+
+      const recreateTable = (createNewSql, copySql, oldName, newName) => {
+        db.exec(createNewSql);
+        db.exec(copySql);
+        db.exec(`DROP TABLE ${oldName}`);
+        db.exec(`ALTER TABLE ${newName} RENAME TO ${oldName}`);
+      };
+
+      recreateTable(
+        `CREATE TABLE files_new (
+          id TEXT PRIMARY KEY,
+          parent_kind TEXT NOT NULL,
+          parent_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          mime TEXT,
+          size INTEGER,
+          sha256 TEXT,
+          path TEXT,
+          created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+          created_at TEXT NOT NULL
+        )`,
+        `INSERT INTO files_new SELECT id, parent_kind, parent_id, name, mime, size, sha256, path, created_by, created_at FROM files`,
+        "files",
+        "files_new",
+      );
+
+      recreateTable(
+        `CREATE TABLE transmittals_new (
+          id TEXT PRIMARY KEY,
+          doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+          rev_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+          subject TEXT NOT NULL,
+          recipients TEXT NOT NULL DEFAULT '[]',
+          message TEXT,
+          sender TEXT,
+          ts TEXT NOT NULL
+        )`,
+        `INSERT INTO transmittals_new SELECT id, doc_id, rev_id, subject, recipients, message, sender, ts FROM transmittals`,
+        "transmittals",
+        "transmittals_new",
+      );
+
+      recreateTable(
+        `CREATE TABLE comments_new (
+          id TEXT PRIMARY KEY,
+          doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+          rev_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+          page INTEGER NOT NULL,
+          x REAL NOT NULL,
+          y REAL NOT NULL,
+          text TEXT NOT NULL,
+          author TEXT,
+          seq INTEGER,
+          replies TEXT NOT NULL DEFAULT '[]',
+          ts TEXT NOT NULL
+        )`,
+        `INSERT INTO comments_new SELECT id, doc_id, rev_id, page, x, y, text, author, seq, replies, ts FROM comments`,
+        "comments",
+        "comments_new",
+      );
+
+      recreateTable(
+        `CREATE TABLE subscriptions_new (
+          id TEXT PRIMARY KEY,
+          subject TEXT NOT NULL,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          events TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          UNIQUE(subject, user_id)
+        )`,
+        `INSERT INTO subscriptions_new SELECT id, subject, user_id, events, created_at FROM subscriptions`,
+        "subscriptions",
+        "subscriptions_new",
+      );
+
+      recreateTable(
+        `CREATE TABLE notifications_new (
+          id TEXT PRIMARY KEY,
+          ts TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          text TEXT NOT NULL,
+          route TEXT,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          subject TEXT,
+          read INTEGER NOT NULL DEFAULT 0
+        )`,
+        `INSERT INTO notifications_new SELECT id, ts, kind, text, route, user_id, subject, read FROM notifications`,
+        "notifications",
+        "notifications_new",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read, ts DESC)");
+
+      recreateTable(
+        `CREATE TABLE connector_runs_new (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL REFERENCES enterprise_systems(id) ON DELETE CASCADE,
+          run_type TEXT NOT NULL,
+          status TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          requested_by TEXT,
+          trace_id TEXT,
+          stats TEXT NOT NULL DEFAULT '{}',
+          error TEXT
+        )`,
+        `INSERT INTO connector_runs_new SELECT id, system_id, run_type, status, started_at, finished_at, requested_by, trace_id, stats, error FROM connector_runs`,
+        "connector_runs",
+        "connector_runs_new",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_connector_runs_system ON connector_runs(system_id, started_at)");
+
+      recreateTable(
+        `CREATE TABLE connector_mappings_new (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL REFERENCES enterprise_systems(id) ON DELETE CASCADE,
+          source_object TEXT NOT NULL,
+          target_kind TEXT NOT NULL,
+          transform TEXT NOT NULL DEFAULT '{}',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `INSERT INTO connector_mappings_new SELECT id, system_id, source_object, target_kind, transform, enabled, created_by, created_at, updated_at FROM connector_mappings`,
+        "connector_mappings",
+        "connector_mappings_new",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_connector_mappings_system ON connector_mappings(system_id, enabled)");
+
+      recreateTable(
+        `CREATE TABLE external_object_links_new (
+          id TEXT PRIMARY KEY,
+          system_id TEXT NOT NULL REFERENCES enterprise_systems(id) ON DELETE CASCADE,
+          external_kind TEXT NOT NULL,
+          external_id TEXT NOT NULL,
+          forge_kind TEXT NOT NULL,
+          forge_id TEXT NOT NULL,
+          direction TEXT NOT NULL DEFAULT 'bidirectional',
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT,
+          UNIQUE(system_id, external_kind, external_id, forge_kind, forge_id)
+        )`,
+        `INSERT INTO external_object_links_new SELECT id, system_id, external_kind, external_id, forge_kind, forge_id, direction, metadata, created_by, created_at, updated_at FROM external_object_links`,
+        "external_object_links",
+        "external_object_links_new",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_external_links_forge ON external_object_links(forge_kind, forge_id)");
+
+      db.pragma("foreign_keys = ON");
+      const orphans = db.pragma("foreign_key_check", { simple: false });
+      if (orphans && orphans.length) {
+        const summary = orphans.slice(0, 10).map((o) => `${o.table}#${o.rowid}→${o.parent}`).join(", ");
+        throw new Error(`v14 foreign-key migration aborted: ${orphans.length} orphan row(s) detected (${summary}). Run \`node server/db.js --integrity\` to inspect.`);
+      }
+
+      setVersion(14);
     }
   })();
 }

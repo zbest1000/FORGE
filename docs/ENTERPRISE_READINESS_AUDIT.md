@@ -51,7 +51,7 @@ Tasks marked **DONE** in this branch (`cursor/enterprise-readiness-audit-603f`):
 | B.11 #2 — Unified error envelope + X-Request-Id | `server/errors.js` (new), `server/main.js`, new `test/error-envelope.test.js` |
 | B.11 #4 — ETag / If-Match optimistic concurrency on PATCH | `server/etag.js` (new), `server/routes/core.js`, `server/routes/compliance.js`, new `test/etag.test.js` |
 | B.11 #5 — Tenant scope on /api/audit* | `audit_log.org_id` (v11), `server/audit.js`, `server/routes/core.js` |
-| B.4 #1, #3 — Foreign-key sweep with ON DELETE policies + pre-migrate snapshot + `--integrity` CLI | `server/db.js` v12, new `test/foreign-keys.test.js` |
+| B.4 #1, #3 — Foreign-key sweep with ON DELETE policies + pre-migrate snapshot + `--integrity` CLI | `server/db.js` v12 (core ownership chains), v14 (auxiliary child tables: files, transmittals, comments, subscriptions, notifications, connector_*, external_object_links), `scripts/migrate-snapshot.js` (manual snapshot CLI), new `test/foreign-keys.test.js` |
 | B.6 #5, B.8 #6 — Periodic verifyLedger worker + Prometheus tamper metrics | `server/audit-tamper.js` (new), `server/main.js`, new `test/audit-tamper.test.js` |
 | B.2 #2/#3, B.8 #4 — Per-tenant signing key history (registry + rotation) | `tenant_keys` (v13), `server/crypto.js`, `server/audit.js`, `server/routes/core.js`, `server/graphql/resolvers.js`, `server/routes/extras.js`, new `test/tenant-keys.test.js` |
 | B.3 #4 — ACL fallback deny-by-default under FORGE_ACL_DENY_BY_DEFAULT (default ON in strict mode) | `server/acl.js`, new `test/acl-deny.test.js` |
