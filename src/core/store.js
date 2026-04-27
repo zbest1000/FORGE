@@ -23,6 +23,10 @@ export const state = {
     // work board) the first time per session — see `app.js`.
     showContextPanel: false,
     showHeader: true,
+    // User-set widths for the resizable side panels. Null = use the
+    // CSS-default (260 / 340). Persisted across reloads via hydrate().
+    leftPanelWidth: null,
+    rightPanelWidth: null,
     // True once the user has manually changed `state.ui.role`. Prevents
     // the post-login server role sync from blowing away an explicit
     // override.

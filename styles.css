@@ -120,10 +120,19 @@ button {
   cursor: pointer;
 }
 
-/* App shell */
+/* App shell — column widths are CSS variables so the user can drag the
+   resize handles at runtime without us having to recompute the grid
+   template in JS. The variables default to the original sizes; persisted
+   user preferences in state.ui.{leftPanelWidth,rightPanelWidth} override
+   them via inline styles set in app.js / applyTheme(). */
+:root {
+  --rail-w: 72px;
+  --left-panel-w: 260px;
+  --right-panel-w: 340px;
+}
 .app-shell {
   display: grid;
-  grid-template-columns: 72px 260px 1fr 340px;
+  grid-template-columns: var(--rail-w) var(--left-panel-w) 1fr var(--right-panel-w);
   min-height: 100vh;
 }
 
@@ -133,12 +142,34 @@ button {
   background: var(--surface);
   border-right: 1px solid var(--border);
   overflow: auto;
+  position: relative;
 }
 
 .right-context-panel {
   border-right: none;
   border-left: 1px solid var(--border);
 }
+
+/* Resize handles — thin draggable strips on the inner edge of each side
+   panel. Hover state is more visible so users can find them. */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.resize-handle:hover,
+.resize-handle.dragging {
+  background: var(--accent);
+}
+.resize-handle.left  { right: -2px; }
+.resize-handle.right { left: -2px; }
+body.is-resizing { cursor: col-resize !important; user-select: none; }
+body.is-resizing * { cursor: col-resize !important; }
 
 /* Far-left rail */
 .far-left-rail {
@@ -197,6 +228,18 @@ button {
 .rail-btn .rail-icon {
   font-size: 16px;
   font-weight: 600;
+  line-height: 1;
+}
+
+/* Keep the rail label on a single line; truncate with ellipsis if a label
+   somehow grows past the 44px button width. Prevents two-line wraps that
+   misalign rail buttons against each other. */
+.rail-btn > span:not(.rail-icon) {
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 9px;
 }
 
 .rail-spacer {

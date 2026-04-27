@@ -32,9 +32,10 @@ import { renderChannel } from "./src/screens/channel.js";
 import { renderProjectsIndex, renderWorkBoard } from "./src/screens/workBoard.js";
 import { renderDocsIndex, renderDocViewer } from "./src/screens/docViewer.js";
 import { renderApprovals } from "./src/screens/approvals.js";
-import { renderIntegrations } from "./src/screens/integrations.js";
-import { renderOperationsData } from "./src/screens/operations.js";
 import { renderAdmin } from "./src/screens/admin.js";
+// integrations and operations get lazy-loaded — operations only the v15 ops
+// users hit, and integrations indexes nested screens (mqtt/opcua/erp) that
+// are themselves lazy. Lazy here keeps the eager bundle smaller.
 
 // Heavy / specialist screens are lazy-loaded the first time the user
 // navigates to them. This keeps the initial bundle small — the WebGL,
@@ -108,11 +109,13 @@ function setupRoutes() {
     lazy(() => import("./src/screens/incident.js"), "renderIncident", "Incident"));
 
   defineRoute("/approvals", renderApprovals);
-  defineRoute("/operations", renderOperationsData);
+  defineRoute("/operations",
+    lazy(() => import("./src/screens/operations.js"), "renderOperationsData", "Operations Data"));
   defineRoute("/ai",
     lazy(() => import("./src/screens/ai.js"), "renderAI", "AI Workspace"));
 
-  defineRoute("/integrations", renderIntegrations);
+  defineRoute("/integrations",
+    lazy(() => import("./src/screens/integrations.js"), "renderIntegrations", "Integrations"));
   defineRoute("/integrations/mqtt",
     lazy(() => import("./src/screens/mqtt.js"), "renderMQTT", "MQTT"));
   defineRoute("/integrations/opcua",
@@ -143,6 +146,106 @@ function applyTheme() {
   if (state.ui.fieldMode) cls.push("field-mode");
   if (state.ui.portalId) cls.push("portal-mode", "portal-" + state.ui.portalId);
   document.body.className = cls.join(" ");
+
+  // User-resizable side panels — written as CSS variables so the grid
+  // template in styles.css picks them up without reflow gymnastics.
+  const root = document.documentElement;
+  const lw = clampPanelWidth(state.ui.leftPanelWidth, 180, 520);
+  const rw = clampPanelWidth(state.ui.rightPanelWidth, 220, 600);
+  if (lw) root.style.setProperty("--left-panel-w", `${lw}px`);
+  if (rw) root.style.setProperty("--right-panel-w", `${rw}px`);
+}
+
+function clampPanelWidth(v, min, max) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+// Attach drag handles to the left and right panels. Called once after the
+// shell is rendered. Persists the new width to state.ui.{leftPanelWidth|
+// rightPanelWidth} on mouseup so it survives a reload.
+function installResizeHandles() {
+  installHandle("leftPanel", "left", (delta, start) => start + delta, "leftPanelWidth", 180, 520);
+  installHandle("contextPanel", "right", (delta, start) => start - delta, "rightPanelWidth", 220, 600);
+}
+
+function installHandle(elementId, side, computeFn, stateKey, min, max) {
+  const panel = document.getElementById(elementId);
+  if (!panel) return;
+  if (panel.querySelector(":scope > .resize-handle")) return; // already installed
+  const handle = document.createElement("div");
+  handle.className = `resize-handle ${side}`;
+  handle.setAttribute("role", "separator");
+  handle.setAttribute("aria-orientation", "vertical");
+  handle.setAttribute("aria-label", `Resize ${side === "left" ? "left" : "right"} panel`);
+  handle.tabIndex = 0;
+  panel.appendChild(handle);
+
+  let dragging = false;
+  let startX = 0;
+  let startW = 0;
+
+  function onMove(e) {
+    if (!dragging) return;
+    const next = clampPanelWidth(computeFn(e.clientX - startX, startW), min, max);
+    if (next == null) return;
+    document.documentElement.style.setProperty(
+      side === "left" ? "--left-panel-w" : "--right-panel-w",
+      `${next}px`,
+    );
+  }
+  function onUp() {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove("dragging");
+    document.body.classList.remove("is-resizing");
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    // Read back the resolved width and persist to store.
+    const root = document.documentElement;
+    const cssVar = side === "left" ? "--left-panel-w" : "--right-panel-w";
+    const px = parseInt(getComputedStyle(root).getPropertyValue(cssVar), 10);
+    if (Number.isFinite(px)) {
+      import("./src/core/store.js").then(({ update }) => {
+        update(s => { s.ui[stateKey] = px; });
+      });
+    }
+  }
+
+  handle.addEventListener("mousedown", (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startW = panel.getBoundingClientRect().width;
+    handle.classList.add("dragging");
+    document.body.classList.add("is-resizing");
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    e.preventDefault();
+  });
+
+  // Keyboard: Arrow keys nudge by 8px, Shift for 32px, Home/End to min/max.
+  handle.addEventListener("keydown", (e) => {
+    const cur = panel.getBoundingClientRect().width;
+    const dir = side === "left" ? 1 : -1;
+    const big = e.shiftKey ? 32 : 8;
+    let next = cur;
+    if (e.key === "ArrowRight") next = cur + dir * big;
+    else if (e.key === "ArrowLeft") next = cur - dir * big;
+    else if (e.key === "Home") next = min;
+    else if (e.key === "End") next = max;
+    else return;
+    e.preventDefault();
+    next = clampPanelWidth(next, min, max);
+    if (next == null) return;
+    document.documentElement.style.setProperty(
+      side === "left" ? "--left-panel-w" : "--right-panel-w",
+      `${next}px`,
+    );
+    import("./src/core/store.js").then(({ update }) => {
+      update(s => { s.ui[stateKey] = next; });
+    });
+  });
 }
 
 // Routes where the right context panel adds enough value that we auto-open
@@ -236,11 +339,22 @@ async function boot() {
   installHotkeys();
   installRowKeyboardHandlers();
 
+  // Coalesce re-renders to one per animation frame. A burst of updates (e.g.
+  // typing in an input that mutates state on each keystroke, or a server
+  // response that updates several collections at once) used to fire
+  // renderShell + rerenderCurrent + scheduleRebuild N times. Now they run
+  // at most once per frame.
+  let _renderScheduled = false;
   subscribe(() => {
-    applyTheme();
-    renderShell();
-    rerenderCurrent();
-    scheduleRebuild();
+    if (_renderScheduled) return;
+    _renderScheduled = true;
+    requestAnimationFrame(() => {
+      _renderScheduled = false;
+      applyTheme();
+      renderShell();
+      rerenderCurrent();
+      scheduleRebuild();
+    });
   });
 
   // Re-render the UNS browser at a slow cadence so VQT values refresh live.
@@ -317,6 +431,7 @@ async function boot() {
 
   startRouter();
   renderShell();
+  installResizeHandles();
 
   const health = await healthP;
   if (health) {

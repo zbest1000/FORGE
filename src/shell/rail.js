@@ -6,24 +6,26 @@ import { portalById, canAccessRoute, isOrgOwner } from "../core/groups.js";
 
 // Rail items map 1:1 to a primary route family; each `match` rule below
 // disambiguates the active state so users don't see "Assets" highlighted while
-// they're inside the UNS or i3X workbench. Order roughly follows the typical
-// engineering workflow (collaborate → review → operate → admin).
+// they're inside the UNS or i3X workbench. Labels are kept to one short word
+// (no spaces) so they fit a 44px-wide rail-btn without wrapping. Order
+// roughly follows the typical engineering workflow (collaborate → review →
+// operate → admin).
 const DEFAULT_ITEMS = [
-  { icon: "🏛", label: "Hub",       route: "/hub" },
-  { icon: "🏠", label: "Home",      route: "/home" },
-  { icon: "In", label: "Inbox",     route: "/inbox" },
-  { icon: "✓",  label: "Work",      route: "/projects" },
-  { icon: "Docs", label: "Docs",    route: "/docs" },
-  { icon: "Draw", label: "Drawings", route: "/drawings" },
-  { icon: "⚙️", label: "Assets",    route: "/assets" },
-  { icon: "🌐", label: "UNS",       route: "/uns" },
-  { icon: "i3X", label: "i3X",      route: "/i3x" },
-  { icon: "Ops", label: "Ops Data", route: "/operations" },
-  { icon: "🚨", label: "Incidents", route: "/incidents" },
-  { icon: "Team", label: "Teams",   route: "/team-spaces" },
-  { icon: "🤖", label: "AI",        route: "/ai" },
-  { icon: "🔌", label: "Integ",     route: "/integrations" },
-  { icon: "🛡",  label: "Admin",     route: "/admin" },
+  { icon: "🏛", label: "Hub",     route: "/hub" },
+  { icon: "🏠", label: "Home",    route: "/home" },
+  { icon: "📥", label: "Inbox",   route: "/inbox" },
+  { icon: "✓",  label: "Work",    route: "/projects" },
+  { icon: "📄", label: "Docs",    route: "/docs" },
+  { icon: "📐", label: "Draw",    route: "/drawings" },
+  { icon: "⚙️", label: "Assets",  route: "/assets" },
+  { icon: "🌐", label: "UNS",     route: "/uns" },
+  { icon: "i3X", label: "i3X",    route: "/i3x" },
+  { icon: "📊", label: "Ops",     route: "/operations" },
+  { icon: "🚨", label: "Issues",  route: "/incidents" },
+  { icon: "👥", label: "Teams",   route: "/team-spaces" },
+  { icon: "🤖", label: "AI",      route: "/ai" },
+  { icon: "🔌", label: "Integ",   route: "/integrations" },
+  { icon: "🛡",  label: "Admin",   route: "/admin" },
 ];
 
 export function renderRail() {
