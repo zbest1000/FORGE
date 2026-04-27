@@ -2,6 +2,7 @@
 // Supports optional query strings (?q=foo).
 
 import { state } from "./store.js";
+import { _resetScreen } from "./lifecycle.js";
 
 const ROUTES = [];
 let currentHandler = null;
@@ -43,6 +44,7 @@ export function resolve() {
       r.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1])));
       currentHandler = r.handler;
       currentParams = params;
+      _resetScreen();
       r.handler(params);
       emitRouteChange();
       return;
@@ -53,12 +55,16 @@ export function resolve() {
   currentHandler = fallback ? fallback.handler : null;
   currentParams = {};
   state.route = fallback ? fallback.pattern : "/hub";
+  _resetScreen();
   if (fallback) fallback.handler({});
   emitRouteChange();
 }
 
 export function rerenderCurrent() {
-  if (currentHandler) currentHandler(currentParams);
+  if (currentHandler) {
+    _resetScreen();
+    currentHandler(currentParams);
+  }
 }
 
 const routeListeners = new Set();

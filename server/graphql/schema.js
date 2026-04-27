@@ -38,6 +38,17 @@ export const typeDefs = /* GraphQL */ `
     audit(limit: Int = 100): [AuditEvent!]!
     events(limit: Int = 50): [Event!]!
     metricsSeries(metric: String!, days: Int = 14): [MetricPoint!]!
+
+    # Operations surface (v15) — historian, Modbus, recipes
+    historianBackends: [HistorianBackend!]!
+    historianPoints(assetId: ID): [HistorianPoint!]!
+    historianPoint(id: ID, tag: String): HistorianPoint
+    historianSamples(pointId: ID, tag: String, from: DateTime, to: DateTime, limit: Int = 200): [HistorianSample!]!
+    recipes(assetId: ID): [Recipe!]!
+    recipe(id: ID!): Recipe
+    modbusDevices: [ModbusDevice!]!
+    modbusDevice(id: ID!): ModbusDevice
+    modbusRegisters(deviceId: ID): [ModbusRegister!]!
   }
 
   type Mutation {
@@ -56,6 +67,39 @@ export const typeDefs = /* GraphQL */ `
 
     # Events / automations
     ingestEvent(input: EventIngestInput!): Event!
+
+    # Operations mutations
+    createHistorianPoint(input: HistorianPointInput!): HistorianPoint!
+    writeHistorianSample(input: HistorianSampleInput!): HistorianSample!
+    createRecipe(input: RecipeInput!): Recipe!
+    activateRecipeVersion(versionId: ID!): Recipe!
+  }
+
+  input HistorianPointInput {
+    assetId: ID!
+    tag: String!
+    name: String!
+    unit: String
+    dataType: String
+    historian: String
+    sourceId: ID
+    retentionPolicyId: ID
+  }
+
+  input HistorianSampleInput {
+    pointId: ID
+    tag: String
+    ts: DateTime
+    value: Float!
+    quality: String
+    sourceType: String
+  }
+
+  input RecipeInput {
+    name: String!
+    assetId: ID
+    parameters: JSON
+    notes: String
   }
 
   input EventIngestInput {
@@ -285,4 +329,99 @@ export const typeDefs = /* GraphQL */ `
   }
 
   type MetricPoint { day: String!, value: Float! }
+
+  # ---------- Operations surface (v15) ----------
+
+  type HistorianBackend {
+    id: String!
+    label: String
+    available: Boolean!
+    description: String
+  }
+
+  type HistorianPoint {
+    id: ID!
+    assetId: ID!
+    sourceId: ID
+    tag: String!
+    name: String!
+    unit: String
+    dataType: String!
+    historian: String!
+    retentionPolicyId: ID
+    createdAt: DateTime!
+    updatedAt: DateTime!
+    asset: Asset
+    samples(limit: Int = 50): [HistorianSample!]!
+  }
+
+  type HistorianSample {
+    id: ID!
+    pointId: ID!
+    ts: DateTime!
+    value: Float!
+    quality: String!
+    sourceType: String!
+    rawPayload: JSON
+  }
+
+  type Recipe {
+    id: ID!
+    assetId: ID
+    name: String!
+    status: String!
+    currentVersionId: ID
+    createdBy: String
+    createdAt: DateTime!
+    updatedAt: DateTime!
+    asset: Asset
+    versions: [RecipeVersion!]!
+    currentVersion: RecipeVersion
+  }
+
+  type RecipeVersion {
+    id: ID!
+    recipeId: ID!
+    version: Int!
+    state: String!
+    parameters: JSON
+    notes: String
+    approvedBy: String
+    approvedAt: DateTime
+    createdBy: String
+    createdAt: DateTime!
+  }
+
+  type ModbusDevice {
+    id: ID!
+    integrationId: ID
+    name: String!
+    host: String!
+    port: Int!
+    unitId: Int!
+    status: String!
+    lastPollAt: DateTime
+    config: JSON
+    createdAt: DateTime!
+    updatedAt: DateTime!
+    registers: [ModbusRegister!]!
+  }
+
+  type ModbusRegister {
+    id: ID!
+    deviceId: ID!
+    assetId: ID
+    pointId: ID
+    name: String!
+    address: Int!
+    functionCode: Int!
+    dataType: String!
+    scale: Float!
+    unit: String
+    pollingMs: Int!
+    lastValue: Float
+    lastQuality: String
+    lastSeen: DateTime
+    device: ModbusDevice
+  }
 `;

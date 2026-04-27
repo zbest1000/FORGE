@@ -8,6 +8,12 @@ import { can } from "../auth.js";
 import { signHMAC, canonicalJSON } from "../crypto.js";
 import { ingest } from "../events.js";
 import { readSeries } from "../metrics-rollup.js";
+import {
+  archiveRecipeEvent,
+  listHistorianBackends,
+  readHistorianSamples,
+  writeHistorianSample,
+} from "../historians/index.js";
 import { canTransitionRevision, cascadeOnApprove } from "../../src/core/fsm/revision.js";
 import { canTransitionApproval } from "../../src/core/fsm/approval.js";
 import { GraphQLError, GraphQLScalarType, Kind } from "graphql";
@@ -220,6 +226,58 @@ export const resolvers = {
     },
 
     metricsSeries: (_, { metric, days = 14 }) => readSeries(metric, Math.min(60, days)).map(p => ({ day: p.day, value: p.value })),
+
+    // ---------- Operations queries (v15) ----------
+    historianBackends: (_, __, ctx) => {
+      requireCap(ctx, "view");
+      return listHistorianBackends();
+    },
+    historianPoints: (_, { assetId }, ctx) => {
+      requireCap(ctx, "view");
+      const rows = assetId
+        ? db.prepare("SELECT * FROM historian_points WHERE asset_id = ? ORDER BY tag").all(assetId)
+        : db.prepare("SELECT * FROM historian_points ORDER BY tag").all();
+      return rows;
+    },
+    historianPoint: (_, { id, tag }, ctx) => {
+      requireCap(ctx, "view");
+      if (id) return db.prepare("SELECT * FROM historian_points WHERE id = ?").get(id) || null;
+      if (tag) return db.prepare("SELECT * FROM historian_points WHERE tag = ?").get(tag) || null;
+      return null;
+    },
+    historianSamples: async (_, { pointId, tag, from, to, limit = 200 }, ctx) => {
+      requireCap(ctx, "view");
+      const point = pointId
+        ? db.prepare("SELECT * FROM historian_points WHERE id = ?").get(pointId)
+        : tag ? db.prepare("SELECT * FROM historian_points WHERE tag = ?").get(tag) : null;
+      if (!point) throw new GraphQLError("point not found", { extensions: { http: { status: 404 } } });
+      const result = await readHistorianSamples(point, { from, to, limit: Math.min(2000, Number(limit) || 200) });
+      return Array.isArray(result?.samples) ? result.samples : [];
+    },
+    recipes: (_, { assetId }, ctx) => {
+      requireCap(ctx, "view");
+      return assetId
+        ? db.prepare("SELECT * FROM recipes WHERE asset_id = ? ORDER BY name").all(assetId)
+        : db.prepare("SELECT * FROM recipes ORDER BY name").all();
+    },
+    recipe: (_, { id }, ctx) => {
+      requireCap(ctx, "view");
+      return db.prepare("SELECT * FROM recipes WHERE id = ?").get(id) || null;
+    },
+    modbusDevices: (_, __, ctx) => {
+      requireCap(ctx, "view");
+      return db.prepare("SELECT * FROM modbus_devices ORDER BY name").all();
+    },
+    modbusDevice: (_, { id }, ctx) => {
+      requireCap(ctx, "view");
+      return db.prepare("SELECT * FROM modbus_devices WHERE id = ?").get(id) || null;
+    },
+    modbusRegisters: (_, { deviceId }, ctx) => {
+      requireCap(ctx, "view");
+      return deviceId
+        ? db.prepare("SELECT * FROM modbus_registers WHERE device_id = ? ORDER BY address").all(deviceId)
+        : db.prepare("SELECT * FROM modbus_registers ORDER BY address").all();
+    },
   },
 
   Mutation: {
@@ -326,6 +384,100 @@ export const resolvers = {
       if (!env) throw new GraphQLError("duplicate (deduped)", { extensions: { http: { status: 409 } } });
       return rowToEvent(env);
     },
+
+    // ---------- Operations mutations (v15) ----------
+    createHistorianPoint: (_, { input }, ctx) => {
+      requireCap(ctx, "integration.write");
+      const asset = db.prepare("SELECT id FROM assets WHERE id = ?").get(input.assetId);
+      if (!asset) throw new GraphQLError("asset not found", { extensions: { http: { status: 404 } } });
+      const id = uuid("PT");
+      const ts = now();
+      db.prepare(`INSERT INTO historian_points
+                  (id, asset_id, source_id, tag, name, unit, data_type, historian, retention_policy_id, created_at, updated_at)
+                  VALUES (@id, @asset, @source, @tag, @name, @unit, @dtype, @hist, @rp, @ts, @ts)`)
+        .run({
+          id,
+          asset: input.assetId,
+          source: input.sourceId || null,
+          tag: input.tag,
+          name: input.name,
+          unit: input.unit || null,
+          dtype: input.dataType || "number",
+          hist: input.historian || "sqlite",
+          rp: input.retentionPolicyId || null,
+          ts,
+        });
+      audit({ actor: ctx.user.id, action: "historian.point.create", subject: id, detail: { tag: input.tag, via: "graphql" } });
+      return db.prepare("SELECT * FROM historian_points WHERE id = ?").get(id);
+    },
+
+    writeHistorianSample: async (_, { input }, ctx) => {
+      requireCap(ctx, "integration.write");
+      const point = input.pointId
+        ? db.prepare("SELECT * FROM historian_points WHERE id = ?").get(input.pointId)
+        : input.tag ? db.prepare("SELECT * FROM historian_points WHERE tag = ?").get(input.tag) : null;
+      if (!point) throw new GraphQLError("point not found", { extensions: { http: { status: 404 } } });
+      const sample = {
+        id: uuid("SM"),
+        point_id: point.id,
+        ts: input.ts || now(),
+        value: Number(input.value),
+        quality: input.quality || "Good",
+        source_type: input.sourceType || "graphql",
+        raw_payload: "{}",
+      };
+      await writeHistorianSample(point, sample);
+      audit({ actor: ctx.user.id, action: "historian.sample.write", subject: point.id, detail: { ts: sample.ts, via: "graphql" } });
+      return sample;
+    },
+
+    createRecipe: async (_, { input }, ctx) => {
+      requireCap(ctx, "edit");
+      const id = uuid("RC");
+      const ts = now();
+      db.prepare(`INSERT INTO recipes (id, asset_id, name, status, created_by, created_at, updated_at)
+                  VALUES (@id, @asset, @name, 'draft', @by, @ts, @ts)`)
+        .run({ id, asset: input.assetId || null, name: input.name, by: ctx.user.id, ts });
+      // Initial version 1 with the supplied parameters/notes.
+      const versionId = uuid("RV");
+      db.prepare(`INSERT INTO recipe_versions (id, recipe_id, version, state, parameters, notes, created_by, created_at)
+                  VALUES (@id, @recipe, 1, 'draft', @params, @notes, @by, @ts)`)
+        .run({
+          id: versionId,
+          recipe: id,
+          params: JSON.stringify(input.parameters || {}),
+          notes: input.notes || null,
+          by: ctx.user.id,
+          ts,
+        });
+      db.prepare("UPDATE recipes SET current_version_id = ? WHERE id = ?").run(versionId, id);
+      audit({ actor: ctx.user.id, action: "recipe.create", subject: id, detail: { name: input.name, via: "graphql" } });
+      const created = db.prepare("SELECT * FROM recipes WHERE id = ?").get(id);
+      await archiveRecipeEvent("recipe.create", created).catch((err) =>
+        console.warn("recipe.create archive failed", String(err?.message || err)),
+      );
+      return created;
+    },
+
+    activateRecipeVersion: async (_, { versionId }, ctx) => {
+      requireCap(ctx, "approve");
+      const version = db.prepare("SELECT * FROM recipe_versions WHERE id = ?").get(versionId);
+      if (!version) throw new GraphQLError("version not found", { extensions: { http: { status: 404 } } });
+      const recipe = db.prepare("SELECT * FROM recipes WHERE id = ?").get(version.recipe_id);
+      if (!recipe) throw new GraphQLError("recipe not found", { extensions: { http: { status: 404 } } });
+      const ts = now();
+      db.transaction(() => {
+        db.prepare("UPDATE recipe_versions SET state = 'approved', approved_by = ?, approved_at = ? WHERE id = ?")
+          .run(ctx.user.id, ts, versionId);
+        db.prepare("UPDATE recipes SET status = 'active', current_version_id = ?, updated_at = ? WHERE id = ?")
+          .run(versionId, ts, recipe.id);
+      })();
+      audit({ actor: ctx.user.id, action: "recipe.activate", subject: recipe.id, detail: { versionId, via: "graphql" } });
+      const updated = db.prepare("SELECT * FROM recipes WHERE id = ?").get(recipe.id);
+      await archiveRecipeEvent("recipe.activate", updated, db.prepare("SELECT * FROM recipe_versions WHERE id = ?").get(versionId))
+        .catch((err) => console.warn("recipe.activate archive failed", String(err?.message || err)));
+      return updated;
+    },
   },
 
   // ---- Field resolvers (server-side joins) ----
@@ -431,6 +583,71 @@ export const resolvers = {
     payload: (e) => obj(e.payload),
     traceId: (e) => e.trace_id,
     dedupeKey: (e) => e.dedupe_key,
+  },
+
+  // ---------- Operations field resolvers (v15) ----------
+  HistorianPoint: {
+    assetId: (p) => p.asset_id,
+    sourceId: (p) => p.source_id,
+    dataType: (p) => p.data_type,
+    retentionPolicyId: (p) => p.retention_policy_id,
+    createdAt: (p) => p.created_at,
+    updatedAt: (p) => p.updated_at,
+    asset: (p) => p.asset_id ? db.prepare("SELECT * FROM assets WHERE id = ?").get(p.asset_id) : null,
+    samples: (p, { limit = 50 }) =>
+      db.prepare("SELECT * FROM historian_samples WHERE point_id = ? ORDER BY ts DESC LIMIT ?").all(p.id, Math.min(500, Number(limit) || 50)),
+  },
+
+  HistorianSample: {
+    pointId: (s) => s.point_id,
+    sourceType: (s) => s.source_type,
+    rawPayload: (s) => obj(s.raw_payload),
+  },
+
+  Recipe: {
+    assetId: (r) => r.asset_id,
+    currentVersionId: (r) => r.current_version_id,
+    createdBy: (r) => r.created_by,
+    createdAt: (r) => r.created_at,
+    updatedAt: (r) => r.updated_at,
+    asset: (r) => r.asset_id ? db.prepare("SELECT * FROM assets WHERE id = ?").get(r.asset_id) : null,
+    versions: (r) => db.prepare("SELECT * FROM recipe_versions WHERE recipe_id = ? ORDER BY version DESC").all(r.id),
+    currentVersion: (r) => r.current_version_id
+      ? db.prepare("SELECT * FROM recipe_versions WHERE id = ?").get(r.current_version_id) || null
+      : null,
+  },
+
+  RecipeVersion: {
+    recipeId: (v) => v.recipe_id,
+    parameters: (v) => obj(v.parameters),
+    approvedBy: (v) => v.approved_by,
+    approvedAt: (v) => v.approved_at,
+    createdBy: (v) => v.created_by,
+    createdAt: (v) => v.created_at,
+  },
+
+  ModbusDevice: {
+    integrationId: (d) => d.integration_id,
+    unitId: (d) => d.unit_id,
+    lastPollAt: (d) => d.last_poll_at,
+    config: (d) => obj(d.config),
+    createdAt: (d) => d.created_at,
+    updatedAt: (d) => d.updated_at,
+    registers: (d) => db.prepare("SELECT * FROM modbus_registers WHERE device_id = ? ORDER BY address").all(d.id),
+  },
+
+  ModbusRegister: {
+    deviceId: (r) => r.device_id,
+    assetId: (r) => r.asset_id,
+    pointId: (r) => r.point_id,
+    functionCode: (r) => r.function_code,
+    dataType: (r) => r.data_type,
+    scale: (r) => Number(r.scale),
+    pollingMs: (r) => r.polling_ms,
+    lastValue: (r) => r.last_value,
+    lastQuality: (r) => r.last_quality,
+    lastSeen: (r) => r.last_seen,
+    device: (r) => db.prepare("SELECT * FROM modbus_devices WHERE id = ?").get(r.device_id),
   },
 };
 
