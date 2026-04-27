@@ -18,5 +18,5 @@ export const SCREEN_ROUTES = {
   "Approvals": "/approvals",
   "Spec reference": "/spec",
   "Unified Namespace": "/uns",
-  "i3X Explorer": "/i3x",
+  "i3X API Workbench": "/i3x",
 };

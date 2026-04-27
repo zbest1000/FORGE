@@ -53,7 +53,7 @@ export function renderIntegrations() {
       ]),
       el("div", { class: "row" }, [
         el("button", { class: "btn sm", onClick: () => navigate("/uns") }, ["Open UNS browser →"]),
-        el("button", { class: "btn sm", onClick: () => navigate("/i3x") }, ["Open i3X Explorer →"]),
+        el("button", { class: "btn sm", onClick: () => navigate("/i3x") }, ["Open i3X API →"]),
       ]),
     ])),
 

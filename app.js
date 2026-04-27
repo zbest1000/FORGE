@@ -130,7 +130,7 @@ function setupRoutes() {
   defineRoute("/uns",
     lazy(() => import("./src/screens/uns.js"), "renderUNSIndex", "Unified Namespace"));
   defineRoute("/i3x",
-    lazy(() => import("./src/screens/i3x.js"), "renderI3X", "i3X Explorer"));
+    lazy(() => import("./src/screens/i3x.js"), "renderI3X", "i3X API Workbench"));
 }
 
 function applyTheme() {

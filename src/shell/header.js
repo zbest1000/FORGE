@@ -31,7 +31,7 @@ const TITLES = {
   "/approvals":   { title: "Approval Queue",   crumb: "Approvals" },
   "/spec":        { title: "Product Spec Reference", crumb: "Spec" },
   "/uns":         { title: "Unified Namespace", crumb: "UNS" },
-  "/i3x":         { title: "i3X API Explorer",  crumb: "i3X" },
+  "/i3x":         { title: "i3X API Workbench", crumb: "i3X" },
 };
 
 export function renderHeader() {
