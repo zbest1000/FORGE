@@ -20,7 +20,11 @@ process.env.FORGE_JWT_SECRET = "forge-authz-test-jwt";
 process.env.FORGE_RATELIMIT_MAX = "10000";
 process.env.LOG_LEVEL = "warn";
 
-const { db } = await import("../server/db.js");
+// Importing server/db.js triggers schema migrations against the
+// FORGE_DATA_DIR set above. The tests themselves only inspect the
+// in-memory CAPABILITIES table, but auth.js depends on db.js so the
+// import has to happen before the matrix is read.
+await import("../server/db.js");
 const { CAPABILITIES } = await import("../server/auth.js");
 
 test("Viewer/Auditor lacks admin.edit and webhook.write", () => {

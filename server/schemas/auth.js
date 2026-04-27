@@ -4,7 +4,7 @@
 // future fields (`mfaCode`, `recoveryCode`, `device_id`, …) can roll
 // out without coordinated client changes.
 
-import { Email, Id, NonEmptyString } from "./common.js";
+import { Email, NonEmptyString } from "./common.js";
 
 export const LoginBody = {
   type: "object",

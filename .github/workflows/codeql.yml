@@ -40,7 +40,12 @@ jobs:
         uses: github/codeql-action/init@717e230604b28efc38d8b4d3737d0611b16bc19a # v3.30.0
         with:
           languages: ${{ matrix.language }}
-          queries: security-extended,security-and-quality
+          # Query selection + per-rule filters live in the dedicated
+          # config file so the workflow stays clean. The config also
+          # suppresses `js/missing-rate-limiting` (Fastify's
+          # plugin-registered rate limiter is not traceable by
+          # CodeQL's data-flow analysis).
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@717e230604b28efc38d8b4d3737d0611b16bc19a # v3.30.0
