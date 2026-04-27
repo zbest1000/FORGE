@@ -197,9 +197,11 @@ jobs:
       - name: Run container health check
         run: |
           set -euo pipefail
+          # Strict-mode (NODE_ENV=production in the image) requires
+          # >=32-char secrets; matrix-step values reused here.
           docker run -d --name forge-ci -p 3000:3000 \
-            -e FORGE_JWT_SECRET=ci-jwt-secret-0123456789abcdef \
-            -e FORGE_TENANT_KEY=ci-tenant-key-0123456789abcdef \
+            -e FORGE_JWT_SECRET=ci-jwt-secret-0123456789abcdef0123456789abcdef \
+            -e FORGE_TENANT_KEY=ci-tenant-key-0123456789abcdef0123456789abcdef \
             -e FORGE_CORS_ORIGIN=http://localhost:3000 \
             forge:ci
           ok=0
