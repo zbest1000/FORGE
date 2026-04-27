@@ -59,7 +59,13 @@ test("issued challenge round-trips and is bound to the user", () => {
   const decoded = mfa.consumeChallenge(tok);
   assert.equal(decoded.sub, "U-MFA");
   assert.equal(decoded.mfa, true);
-  assert.equal(mfa.consumeChallenge(tok.replace(/.$/, "0")), null);
+  // Tampering with the signature must invalidate the token. Flip the
+  // last char to a value guaranteed to differ — a blanket
+  // `tok.replace(/.$/, "0")` is a no-op when the sig already ends in
+  // `0` (~1/16 of all runs in hex), which used to flake the macOS CI.
+  const last = tok.slice(-1);
+  const tampered = tok.slice(0, -1) + (last === "0" ? "1" : "0");
+  assert.equal(mfa.consumeChallenge(tampered), null);
   assert.equal(mfa.consumeChallenge("mfa1.bogus.deadbeef"), null);
 });
 
