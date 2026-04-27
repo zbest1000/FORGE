@@ -2,13 +2,17 @@
 
 import { require_ } from "../auth.js";
 import { createToken, listTokens, revokeToken } from "../tokens.js";
+import { TokenCreateBody } from "../schemas/integrations.js";
 
 export default async function tokenRoutes(fastify) {
   fastify.get("/api/tokens", { preHandler: require_() }, async (req) => {
     return listTokens(req.user.id);
   });
 
-  fastify.post("/api/tokens", { preHandler: require_() }, async (req, reply) => {
+  fastify.post("/api/tokens", {
+    preHandler: require_(),
+    schema: { body: TokenCreateBody },
+  }, async (req, reply) => {
     const { name = "api token", scopes = ["view"], ttlDays = null } = req.body || {};
     const t = createToken({ userId: req.user.id, name, scopes, ttlDays });
     // `plaintext` is returned exactly once; client must store it.

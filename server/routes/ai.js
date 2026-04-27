@@ -5,11 +5,15 @@ import { db } from "../db.js";
 import { require_ } from "../auth.js";
 import { ask, listProviders } from "../ai.js";
 import { sanitizeFtsTerm } from "../security/fts.js";
+import { AiAskBody } from "../schemas/integrations.js";
 
 export default async function aiRoutes(fastify) {
   fastify.get("/api/ai/providers", { preHandler: require_("view") }, async () => listProviders());
 
-  fastify.post("/api/ai/ask", { preHandler: require_("view") }, async (req, reply) => {
+  fastify.post("/api/ai/ask", {
+    preHandler: require_("view"),
+    schema: { body: AiAskBody },
+  }, async (req, reply) => {
     const { prompt, provider, scope = {} } = req.body || {};
     if (!prompt) return reply.code(400).send({ error: "prompt required" });
 

@@ -14,6 +14,16 @@ import { audit } from "../audit.js";
 import { require_ } from "../auth.js";
 import { signHMAC, canonicalJSON } from "../crypto.js";
 import { allows, filterAllowed, requireAccess } from "../acl.js";
+import {
+  ReviewCycleCreateBody,
+  FormSubmissionBody,
+  CommissioningCreateBody,
+  CommissioningCheckBody,
+  RfiLinkBody,
+  SearchAlertCreateBody,
+  DrawingIngestBody,
+  ModelPinCreateBody,
+} from "../schemas/extras.js";
 
 function parentFor(kind, id) {
   const table = ({
@@ -52,7 +62,10 @@ export default async function extrasRoutes(fastify) {
       .map(parseReviewCycle);
   });
 
-  fastify.post("/api/review-cycles", { preHandler: require_("create") }, async (req, reply) => {
+  fastify.post("/api/review-cycles", {
+    preHandler: require_("create"),
+    schema: { body: ReviewCycleCreateBody },
+  }, async (req, reply) => {
     const { docId, revId, name, reviewers = [], dueTs = null, notes = null } = req.body || {};
     if (!docId || !revId || !name) return reply.code(400).send({ error: "docId, revId, name required" });
     if (!requireAccess(req, reply, parentFor("document", docId), "create")) return;
@@ -81,7 +94,10 @@ export default async function extrasRoutes(fastify) {
     return [];
   });
 
-  fastify.post("/api/form-submissions", { preHandler: require_("create") }, async (req, reply) => {
+  fastify.post("/api/form-submissions", {
+    preHandler: require_("create"),
+    schema: { body: FormSubmissionBody },
+  }, async (req, reply) => {
     const { formId, parentKind = null, parentId = null, answers = {} } = req.body || {};
     if (!formId) return reply.code(400).send({ error: "formId required" });
     if (parentKind && parentId && !requireAccess(req, reply, parentFor(parentKind, parentId), "create")) return;
@@ -119,7 +135,10 @@ export default async function extrasRoutes(fastify) {
     return rows.filter(r => allows(req.user, parentFor("project", r.project_id)?.acl, "view")).map(parseCommissioning);
   });
 
-  fastify.post("/api/commissioning", { preHandler: require_("create") }, async (req, reply) => {
+  fastify.post("/api/commissioning", {
+    preHandler: require_("create"),
+    schema: { body: CommissioningCreateBody },
+  }, async (req, reply) => {
     const { name, projectId, system = null, panel = null, package: pkg = null, items = [] } = req.body || {};
     if (!name || !projectId) return reply.code(400).send({ error: "name + projectId required" });
     if (!requireAccess(req, reply, parentFor("project", projectId), "create")) return;
@@ -131,7 +150,10 @@ export default async function extrasRoutes(fastify) {
     return { id };
   });
 
-  fastify.post("/api/commissioning/:id/check", { preHandler: require_("edit") }, async (req, reply) => {
+  fastify.post("/api/commissioning/:id/check", {
+    preHandler: require_("edit"),
+    schema: { body: CommissioningCheckBody },
+  }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM commissioning_checklists WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
     if (!requireAccess(req, reply, projectForChecklist(row.id), "edit")) return;
@@ -157,7 +179,10 @@ export default async function extrasRoutes(fastify) {
     return db.prepare("SELECT * FROM rfi_links WHERE rfi_id = ?").all(req.params.id);
   });
 
-  fastify.post("/api/rfi/:id/links", { preHandler: require_("edit") }, async (req, reply) => {
+  fastify.post("/api/rfi/:id/links", {
+    preHandler: require_("edit"),
+    schema: { body: RfiLinkBody },
+  }, async (req, reply) => {
     const { targetKind, targetId, relation = "references" } = req.body || {};
     if (!targetKind || !targetId) return reply.code(400).send({ error: "targetKind, targetId required" });
     if (!requireAccess(req, reply, parentFor("work_item", req.params.id), "edit")) return;
@@ -185,7 +210,10 @@ export default async function extrasRoutes(fastify) {
       .map(r => ({ ...r, last_seen_ids: JSON.parse(r.last_seen_ids || "[]") }));
   });
 
-  fastify.post("/api/search/alerts", { preHandler: require_() }, async (req, reply) => {
+  fastify.post("/api/search/alerts", {
+    preHandler: require_(),
+    schema: { body: SearchAlertCreateBody },
+  }, async (req, reply) => {
     const { name, query } = req.body || {};
     if (!name || !query) return reply.code(400).send({ error: "name + query required" });
     const id = uuid("SA");
@@ -203,7 +231,10 @@ export default async function extrasRoutes(fastify) {
   });
 
   // ------- Drawing ingestion auto-parse -------
-  fastify.post("/api/drawings/:id/ingest", { preHandler: require_("create") }, async (req, reply) => {
+  fastify.post("/api/drawings/:id/ingest", {
+    preHandler: require_("create"),
+    schema: { body: DrawingIngestBody },
+  }, async (req, reply) => {
     const dr = db.prepare("SELECT * FROM drawings WHERE id = ?").get(req.params.id);
     if (!dr) return reply.code(404).send({ error: "drawing not found" });
     if (!requireAccess(req, reply, dr, "create")) return;
@@ -246,7 +277,10 @@ export default async function extrasRoutes(fastify) {
     return db.prepare("SELECT * FROM model_pins WHERE drawing_id = ? ORDER BY created_at DESC").all(drawingId);
   });
 
-  fastify.post("/api/model-pins", { preHandler: require_("edit.markup") }, async (req, reply) => {
+  fastify.post("/api/model-pins", {
+    preHandler: require_("edit.markup"),
+    schema: { body: ModelPinCreateBody },
+  }, async (req, reply) => {
     const { drawingId, elementId, text } = req.body || {};
     if (!drawingId || !elementId || !text) return reply.code(400).send({ error: "drawingId, elementId, text required" });
     if (!requireAccess(req, reply, drawingParent(drawingId), "edit.markup")) return;
