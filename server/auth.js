@@ -5,14 +5,28 @@ import bcrypt from "bcryptjs";
 import { db, now, uuid } from "./db.js";
 import { audit } from "./audit.js";
 
+// Capability matrix.
+//
+// Capabilities are role-bound and additive. The wildcard `"*"` grants
+// every capability and is reserved for `Organization Owner`. Every
+// other role enumerates exactly what it can do — adding a new
+// capability to a role is the only way to extend its surface.
+//
+// Recent additions (B.3 from the enterprise readiness audit):
+//   - `webhook.write`  separates outbound-webhook mutation from
+//     `admin.view`. Read-only auditors with `admin.view` can no
+//     longer create or delete webhooks.
+//   - `admin.edit`     gates compliance writes (DSAR, legal-hold,
+//     ROPA, evidence, AI-system inventory). `admin.view` keeps
+//     read-only access.
 export const CAPABILITIES = {
   "Organization Owner":   ["*"],
-  "Workspace Admin":      ["view","create","edit","approve","incident.command","integration.read","ai.configure","admin.view"],
+  "Workspace Admin":      ["view","create","edit","approve","incident.command","integration.read","integration.write","ai.configure","admin.view","admin.edit","webhook.write"],
   "Team Space Admin":     ["view","create","edit","approve","integration.read","ai.configure"],
   "Engineer/Contributor": ["view","create","edit"],
   "Reviewer/Approver":    ["view","approve","edit.markup"],
   "Operator/Technician":  ["view","incident.respond","edit.markup"],
-  "Viewer/Auditor":       ["view","audit.view"],
+  "Viewer/Auditor":       ["view","audit.view","admin.view"],
   "Integration Admin":    ["view","integration.read","integration.write"],
   "AI Admin":             ["view","ai.configure"],
   "External Guest/Vendor":["view.external","edit.markup.external"],

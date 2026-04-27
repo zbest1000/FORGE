@@ -308,9 +308,11 @@ export const resolvers = {
     },
 
     ingestEvent: (_, { input }, ctx) => {
-      // Either an authenticated user with integration.read OR a system token
-      // can ingest. Here we just require auth.
-      requireCap(ctx, "integration.read");
+      // Event ingest is a write operation: the resulting event drops
+      // into the rule engine, fans out to webhooks, and may trigger
+      // alerts. `integration.read` was a misclassification; we now
+      // require `integration.write`.
+      requireCap(ctx, "integration.write");
       const env = ingest({
         event_type: input.eventType,
         severity: input.severity,

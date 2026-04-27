@@ -405,7 +405,7 @@ export default async function coreRoutes(fastify) {
   // ---------- events / DLQ ----------
   fastify.get("/api/events", { preHandler: require_("integration.read") }, async () => (await import("../events.js")).listEvents(200));
   fastify.get("/api/dlq", { preHandler: require_("integration.write") }, async () => (await import("../events.js")).listDLQ(100));
-  fastify.post("/api/events/ingest", { preHandler: require_("integration.read") }, async (req) => (await import("../events.js")).ingest(req.body || {}, { source: req.ip, source_type: "rest" }));
+  fastify.post("/api/events/ingest", { preHandler: require_("integration.write") }, async (req) => (await import("../events.js")).ingest(req.body || {}, { source: req.ip, source_type: "rest" }));
   fastify.post("/api/dlq/:id/replay", { preHandler: require_("integration.write") }, async (req) => (await import("../events.js")).replay(req.params.id));
 
   // ---------- search ----------

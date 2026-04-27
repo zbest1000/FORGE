@@ -8,7 +8,7 @@ export default async function webhookRoutes(fastify) {
   fastify.get("/api/webhooks", { preHandler: require_("admin.view") }, async () => listWebhooks());
 
   fastify.post("/api/webhooks", {
-    preHandler: require_("admin.view"),
+    preHandler: require_("webhook.write"),
     schema: { body: WebhookCreateBody },
   }, async (req, reply) => {
     const { name, url, events, secret } = req.body || {};
@@ -23,14 +23,14 @@ export default async function webhookRoutes(fastify) {
   });
 
   fastify.patch("/api/webhooks/:id", {
-    preHandler: require_("admin.view"),
+    preHandler: require_("webhook.write"),
     schema: { body: WebhookPatchBody },
   }, async (req, reply) => {
     if ("enabled" in (req.body || {})) toggleWebhook(req.params.id, !!req.body.enabled, req.user.id);
     return { ok: true };
   });
 
-  fastify.delete("/api/webhooks/:id", { preHandler: require_("admin.view") }, async (req, reply) => {
+  fastify.delete("/api/webhooks/:id", { preHandler: require_("webhook.write") }, async (req, reply) => {
     deleteWebhook(req.params.id, req.user.id);
     return { ok: true };
   });

@@ -98,6 +98,34 @@ function versionRewrite(rawReq) {
   return original;
 }
 
+// Pino redaction list. Any path matching one of these is replaced
+// with `[Redacted]` before the log line is serialised, so a future
+// debug call that accidentally logs the request body or response
+// payload doesn't leak credentials.
+//
+// We deliberately scope these to common secret-bearing fields rather
+// than applying a regex over every value — pino's path matcher is a
+// fixed list, and overly broad redaction breaks observability.
+const LOG_REDACT_PATHS = [
+  "req.headers.authorization",
+  "req.headers.cookie",
+  "req.headers['x-forge-token']",
+  "headers.authorization",
+  "headers.cookie",
+  "secret",
+  "*.secret",
+  "password",
+  "*.password",
+  "token",
+  "*.token",
+  "refreshToken",
+  "*.refreshToken",
+  "totpSecret",
+  "*.totpSecret",
+  "recoveryCodes",
+  "*.recoveryCodes",
+];
+
 const app = Fastify({
   logger: {
     transport: process.env.NODE_ENV === "production" ? undefined : {
@@ -105,6 +133,7 @@ const app = Fastify({
       options: { destination: 1 },
     },
     level: config.logLevel,
+    redact: { paths: LOG_REDACT_PATHS, censor: "[Redacted]" },
   },
   bodyLimit: 10 * 1024 * 1024,
   trustProxy: true,
