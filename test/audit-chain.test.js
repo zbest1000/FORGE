@@ -3,10 +3,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-// Isolate each run to its own DB.
-const tmp = fs.mkdtempSync(path.join("/tmp", "forge-test-"));
+// Isolate each run to its own DB. `os.tmpdir()` is the cross-platform
+// path for per-user scratch space — hardcoding `/tmp` breaks on Windows
+// where it resolves to a UNC root (`\\tmp\…`) and `mkdtempSync` returns
+// `ENOENT`.
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-test-"));
 process.env.FORGE_DATA_DIR = tmp;
 process.env.FORGE_TENANT_KEY = "forge-test-key";
 
