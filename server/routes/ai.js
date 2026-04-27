@@ -4,6 +4,7 @@
 import { db } from "../db.js";
 import { require_ } from "../auth.js";
 import { ask, listProviders } from "../ai.js";
+import { sanitizeFtsTerm } from "../security/fts.js";
 
 export default async function aiRoutes(fastify) {
   fastify.get("/api/ai/providers", { preHandler: require_("view") }, async () => listProviders());
@@ -12,14 +13,18 @@ export default async function aiRoutes(fastify) {
     const { prompt, provider, scope = {} } = req.body || {};
     if (!prompt) return reply.code(400).send({ error: "prompt required" });
 
-    // Pre-fetch a few citations from FTS so the response always has anchors.
-    const esc = String(prompt).replace(/"/g, '""');
+    // Pre-fetch a few citations from FTS so the response always has
+    // anchors. The prompt is user-supplied free-form text; sanitise
+    // before handing it to FTS5 (strip control chars + operators).
     let cites = [];
-    try {
-      const docs = db.prepare("SELECT id FROM fts_docs WHERE fts_docs MATCH ? LIMIT 3").all(`"${esc}"*`);
-      const wis  = db.prepare("SELECT id FROM fts_workitems WHERE fts_workitems MATCH ? LIMIT 2").all(`"${esc}"*`);
-      cites = [...docs.map(r => r.id), ...wis.map(r => r.id)];
-    } catch { /* invalid token */ }
+    const phrase = sanitizeFtsTerm(prompt);
+    if (phrase) {
+      try {
+        const docs = db.prepare("SELECT id FROM fts_docs WHERE fts_docs MATCH ? LIMIT 3").all(phrase);
+        const wis  = db.prepare("SELECT id FROM fts_workitems WHERE fts_workitems MATCH ? LIMIT 2").all(phrase);
+        cites = [...docs.map(r => r.id), ...wis.map(r => r.id)];
+      } catch { /* invalid token */ }
+    }
 
     const result = await ask({ prompt, provider, scope, citations: cites, userId: req.user.id });
     return result;

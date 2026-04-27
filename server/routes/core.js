@@ -412,13 +412,13 @@ export default async function coreRoutes(fastify) {
   fastify.get("/api/search", { preHandler: require_("view") }, async (req) => {
     const orgId = tenantOrgId(req);
     if (!orgId) return { hits: [], facets: { kind: {}, date: {}, revision: {} } };
-    const q = String(req.query.q || "").trim();
-    if (!q) return { hits: [], facets: { kind: {}, date: {}, revision: {} } };
-    const esc = q.replace(/"/g, '""');
-    const docs = db.prepare(`SELECT id, kind, title, body FROM fts_docs WHERE fts_docs MATCH ? ORDER BY rank LIMIT 25`).all(`"${esc}"*`);
-    const msgs = db.prepare(`SELECT id, channel_id, text FROM fts_messages WHERE fts_messages MATCH ? ORDER BY rank LIMIT 25`).all(`"${esc}"*`);
-    const wis  = db.prepare(`SELECT id, project_id, title, description, labels FROM fts_workitems WHERE fts_workitems MATCH ? ORDER BY rank LIMIT 25`).all(`"${esc}"*`);
-    const ast  = db.prepare(`SELECT id, name, hierarchy, type FROM fts_assets WHERE fts_assets MATCH ? ORDER BY rank LIMIT 25`).all(`"${esc}"*`);
+    const { sanitizeFtsTerm } = await import("../security/fts.js");
+    const phrase = sanitizeFtsTerm(req.query.q);
+    if (!phrase) return { hits: [], facets: { kind: {}, date: {}, revision: {} } };
+    const docs = db.prepare(`SELECT id, kind, title, body FROM fts_docs WHERE fts_docs MATCH ? ORDER BY rank LIMIT 25`).all(phrase);
+    const msgs = db.prepare(`SELECT id, channel_id, text FROM fts_messages WHERE fts_messages MATCH ? ORDER BY rank LIMIT 25`).all(phrase);
+    const wis  = db.prepare(`SELECT id, project_id, title, description, labels FROM fts_workitems WHERE fts_workitems MATCH ? ORDER BY rank LIMIT 25`).all(phrase);
+    const ast  = db.prepare(`SELECT id, name, hierarchy, type FROM fts_assets WHERE fts_assets MATCH ? ORDER BY rank LIMIT 25`).all(phrase);
 
     const hits = [
       ...docs.map(r => {

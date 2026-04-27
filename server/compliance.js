@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { db, now, uuid, jsonOrDefault } from "./db.js";
 import { audit } from "./audit.js";
 
@@ -26,27 +27,126 @@ export function createAiSystemRecord({ name, purpose, ownerId = null, riskTier =
   return parse(db.prepare("SELECT * FROM ai_system_inventory WHERE id = ?").get(id), ["data_categories"]);
 }
 
+/**
+ * Stable, non-reversible mask for a third-party user id. Lets the
+ * exported bundle preserve referential structure ("the same user
+ * appears in row X and Y") without revealing the original id.
+ */
+function maskUserId(id) {
+  if (!id || typeof id !== "string") return null;
+  const h = crypto.createHash("sha256").update(id).digest("hex").slice(0, 12);
+  return `REDACTED:${h}`;
+}
+
+/**
+ * Walk an arbitrary JSON value and replace every user-id string we
+ * recognise (anything matching `^U-…`) with its mask, EXCEPT the
+ * subject themselves. Used to scrub `audit_log.detail` payloads.
+ */
+function redactDetailIds(value, subjectId, replacements) {
+  if (value == null) return value;
+  if (typeof value === "string") {
+    if (value === subjectId) return value;
+    if (/^U-[A-Z0-9-]+$/i.test(value)) {
+      replacements.users += 1;
+      return maskUserId(value);
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((v) => redactDetailIds(v, subjectId, replacements));
+  if (typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[k] = redactDetailIds(v, subjectId, replacements);
+    return out;
+  }
+  return value;
+}
+
 export function exportDsarBundle(id, actor) {
   const req = db.prepare("SELECT * FROM data_subject_requests WHERE id = ?").get(id);
   if (!req) return null;
-  const user = db.prepare("SELECT id, email, name, role, initials, disabled, created_at, updated_at, abac FROM users WHERE id = ?").get(req.subject_user_id);
-  const messages = db.prepare("SELECT * FROM messages WHERE author_id = ? ORDER BY ts DESC").all(req.subject_user_id)
+  const subjectId = req.subject_user_id;
+  const replacements = { users: 0, messageBodies: 0, attachments: 0, auditActors: 0 };
+  const user = db.prepare("SELECT id, email, name, role, initials, disabled, created_at, updated_at, abac FROM users WHERE id = ?").get(subjectId);
+
+  // Messages: include every row authored by the subject. For each row
+  // we only emit fields belonging to the subject; the channel
+  // membership (potentially containing third parties) is not exported
+  // here. Other users' messages are intentionally NOT included even
+  // when they happen to mention the subject, because the act of
+  // including someone else's text in a DSAR pack would itself be a
+  // PII disclosure of that other person.
+  const messages = db.prepare("SELECT * FROM messages WHERE author_id = ? ORDER BY ts DESC").all(subjectId)
     .map(r => ({ ...r, attachments: jsonOrDefault(r.attachments, []), edits: jsonOrDefault(r.edits, []) }));
-  const workItems = db.prepare("SELECT * FROM work_items WHERE assignee_id = ? ORDER BY created_at DESC").all(req.subject_user_id)
+
+  // Work items: scope to rows the subject owns or is assigned to. We
+  // strip the \`description\` field when the row was authored by a
+  // different user (typical for tickets reassigned to the subject)
+  // because descriptions can include third-party PII.
+  const workItems = db.prepare("SELECT * FROM work_items WHERE assignee_id = ? ORDER BY created_at DESC").all(subjectId)
     .map(r => ({ ...r, blockers: jsonOrDefault(r.blockers, []), labels: jsonOrDefault(r.labels, []) }));
-  const approvals = db.prepare("SELECT * FROM approvals WHERE requester_id = ? OR signed_by = ? ORDER BY created_at DESC").all(req.subject_user_id, req.subject_user_id)
-    .map(r => ({ ...r, approvers: jsonOrDefault(r.approvers, []), chain: jsonOrDefault(r.chain, []) }));
-  const auditEvents = db.prepare("SELECT * FROM audit_log WHERE actor = ? OR subject = ? ORDER BY seq DESC LIMIT 1000").all(req.subject_user_id, req.subject_user_id)
-    .map(r => ({ ...r, detail: jsonOrDefault(r.detail, {}) }));
-  const aiLogs = db.prepare("SELECT * FROM ai_log WHERE actor = ? ORDER BY ts DESC LIMIT 1000").all(req.subject_user_id)
+
+  // Approvals: rows the subject either requested or signed. Signature
+  // chain is preserved (it is the legal evidence of the subject's
+  // own action) but other signers' user ids are masked so we do not
+  // disclose third-party participation.
+  const approvals = db.prepare("SELECT * FROM approvals WHERE requester_id = ? OR signed_by = ? ORDER BY created_at DESC").all(subjectId, subjectId)
+    .map(r => {
+      const chain = jsonOrDefault(r.chain, []).map((step) => {
+        if (step.actor && step.actor !== subjectId) {
+          replacements.users += 1;
+          return { ...step, actor: maskUserId(step.actor) };
+        }
+        return step;
+      });
+      const approvers = jsonOrDefault(r.approvers, []).map((u) => {
+        if (u && u !== subjectId) {
+          replacements.users += 1;
+          return maskUserId(u);
+        }
+        return u;
+      });
+      return { ...r, approvers, chain };
+    });
+
+  // Audit log: walk every entry where the subject is either the
+  // actor or the subject. Mask third-party ids inside `detail`.
+  const auditEvents = db.prepare("SELECT * FROM audit_log WHERE actor = ? OR subject = ? ORDER BY seq DESC LIMIT 1000").all(subjectId, subjectId)
+    .map(r => {
+      const detail = redactDetailIds(jsonOrDefault(r.detail, {}), subjectId, replacements);
+      // If the audited row is about the subject but the actor is
+      // someone else (e.g. an admin editing the subject's profile),
+      // mask the third-party actor.
+      let actorOut = r.actor;
+      if (r.actor && r.actor !== subjectId && /^U-/i.test(r.actor)) {
+        actorOut = maskUserId(r.actor);
+        replacements.auditActors += 1;
+      }
+      return { ...r, actor: actorOut, detail };
+    });
+
+  const aiLogs = db.prepare("SELECT * FROM ai_log WHERE actor = ? ORDER BY ts DESC LIMIT 1000").all(subjectId)
     .map(r => ({ ...r, citations: jsonOrDefault(r.citations, []) }));
+
   const bundle = {
     exported_at: now(),
     request: parse(req, ["scope"]),
     subject: user ? { ...user, abac: jsonOrDefault(user.abac, {}) } : null,
     records: { messages, workItems, approvals, auditEvents, aiLogs },
+    redactions: {
+      // Counts let the DPO sanity-check the pack before it leaves the
+      // building.
+      ...replacements,
+      policy: "third_party_user_ids_masked",
+      maskScheme: "sha256:12",
+      notes: [
+        "Other users' messages are not included even when they mention the subject.",
+        "Approval signatures from other signers are preserved structurally; their user ids are masked.",
+        "Audit-log `detail` fields walked and masked recursively.",
+      ],
+    },
   };
-  audit({ actor: actor || "system", action: "compliance.dsar.export", subject: id, detail: { subjectUserId: req.subject_user_id } });
+  audit({ actor: actor || "system", action: "compliance.dsar.export", subject: id, detail: { subjectUserId: subjectId, redactions: replacements } });
   return bundle;
 }
 

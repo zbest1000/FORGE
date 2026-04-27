@@ -13,6 +13,7 @@ import { canTransitionApproval } from "../../src/core/fsm/approval.js";
 import { GraphQLError, GraphQLScalarType, Kind } from "graphql";
 import { allows, filterAllowed } from "../acl.js";
 import { tenantWhere, orgForRow } from "../tenant.js";
+import { sanitizeFtsTerm } from "../security/fts.js";
 
 const json = arr => (Array.isArray(arr) ? arr : jsonOrDefault(arr, []));
 const obj = v => (typeof v === "object" && v ? v : jsonOrDefault(v, {}));
@@ -434,11 +435,12 @@ export const resolvers = {
 
 // ---------- search shim shared with REST ----------
 function searchHits({ q, kind, from, to, revision }) {
-  const esc = String(q || "").replace(/"/g, '""');
-  const docs = db.prepare("SELECT id, kind, title, body FROM fts_docs WHERE fts_docs MATCH ? ORDER BY rank LIMIT 25").all(`"${esc}"*`);
-  const msgs = db.prepare("SELECT id, channel_id, text FROM fts_messages WHERE fts_messages MATCH ? ORDER BY rank LIMIT 25").all(`"${esc}"*`);
-  const wis  = db.prepare("SELECT id, project_id, title, description FROM fts_workitems WHERE fts_workitems MATCH ? ORDER BY rank LIMIT 25").all(`"${esc}"*`);
-  const ast  = db.prepare("SELECT id, name, hierarchy FROM fts_assets WHERE fts_assets MATCH ? ORDER BY rank LIMIT 25").all(`"${esc}"*`);
+  const phrase = sanitizeFtsTerm(q);
+  if (!phrase) return { hits: [], facets: { kind: {}, date: {}, revision: {} } };
+  const docs = db.prepare("SELECT id, kind, title, body FROM fts_docs WHERE fts_docs MATCH ? ORDER BY rank LIMIT 25").all(phrase);
+  const msgs = db.prepare("SELECT id, channel_id, text FROM fts_messages WHERE fts_messages MATCH ? ORDER BY rank LIMIT 25").all(phrase);
+  const wis  = db.prepare("SELECT id, project_id, title, description FROM fts_workitems WHERE fts_workitems MATCH ? ORDER BY rank LIMIT 25").all(phrase);
+  const ast  = db.prepare("SELECT id, name, hierarchy FROM fts_assets WHERE fts_assets MATCH ? ORDER BY rank LIMIT 25").all(phrase);
   const all = [
     ...docs.map(r => {
       if (r.kind === "Revision") {
