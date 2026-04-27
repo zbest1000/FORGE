@@ -16,6 +16,8 @@ import { db } from "./db.js";
 import { audit } from "./audit.js";
 import { userById } from "./auth.js";
 import { resolveToken } from "./tokens.js";
+import { authenticateAccess } from "./sessions.js";
+import { registerIdempotency } from "./idempotency.js";
 import { attachSSE } from "./sse.js";
 import { register_ as registerMetrics } from "./metrics.js";
 
@@ -39,10 +41,16 @@ import licenseRoutes from "./routes/license.js";
 import { config } from "./config.js";
 import { getLicense, requireFeature, FEATURES, pollLocalLicenseServer, loadPersistedActivation, localLicenseStatus } from "./license.js";
 
-import { startMqttBridge } from "./connectors/mqtt.js";
-import { startOpcuaBridge } from "./connectors/opcua.js";
-import { startAlertWorker } from "./alerts.js";
-import { startRollupWorker, readSeries, listDailySnapshot } from "./metrics-rollup.js";
+import { startMqttBridge, stopMqttBridge } from "./connectors/mqtt.js";
+import { startOpcuaBridge, stopOpcuaBridge } from "./connectors/opcua.js";
+import { startAlertWorker, stopAlertWorker } from "./alerts.js";
+import { startRollupWorker, stopRollupWorker, readSeries, listDailySnapshot } from "./metrics-rollup.js";
+import { startRetentionWorker, stopRetentionWorker } from "./retention.js";
+import { stopOutboxWorker } from "./outbox.js";
+import { stopWebhookWorker } from "./webhooks.js";
+import { drain as drainAudit } from "./audit.js";
+import { shutdownSSE } from "./sse.js";
+import { shutdownTracing } from "./tracing.js";
 
 initTracing("forge-api");
 import { startOutboxWorker } from "./outbox.js";
@@ -136,9 +144,18 @@ await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } });
 //   - JWT bearer  (signed by FORGE_JWT_SECRET; short-lived)
 //   - API token   (long-lived, fgt_…; user-scoped, revocable)
 // The first match wins.
+//
+// `?token=` query-string auth is only accepted on streaming endpoints
+// (SSE) where browser EventSource cannot set Authorization headers.
+// Allowing it on every route would leak tokens into proxy access logs,
+// HTTP referrer headers, and CDN caches.
+const QUERY_AUTH_PATHS = ["/api/events/stream", "/v1/subscriptions/stream"];
 app.addHook("onRequest", async (req) => {
   const h = req.headers.authorization || "";
-  const token = h.startsWith("Bearer ") ? h.slice(7) : (req.query?.token ? String(req.query.token) : null);
+  const reqPath = (req.url || "").split("?")[0];
+  const allowQueryToken = QUERY_AUTH_PATHS.some((p) => reqPath === p || reqPath.startsWith(p + "/"));
+  const queryToken = (allowQueryToken && req.query?.token) ? String(req.query.token) : null;
+  const token = h.startsWith("Bearer ") ? h.slice(7) : queryToken;
   if (!token) { req.user = null; return; }
 
   // 1) API token (machine clients).
@@ -152,12 +169,19 @@ app.addHook("onRequest", async (req) => {
   // 2) JWT bearer (interactive clients).
   try {
     const decoded = app.jwt.verify(token);
-    if (decoded?.sub) {
-      const user = userById(decoded.sub);
-      req.user = user || null;
-    } else {
-      req.user = null;
+    if (!decoded?.sub) { req.user = null; return; }
+    // Session-bound JWTs (issued by login / mfa/verify / refresh) carry
+    // `sid` + `jti`. Reject when the session is revoked or the jti has
+    // been rotated. Bearer tokens that don't carry `sid` are treated as
+    // legacy/non-session (no check) — useful for short-lived service
+    // tokens minted out-of-band; in production every login mints a sid.
+    if (decoded.sid) {
+      const session = authenticateAccess({ sid: decoded.sid, jti: decoded.jti });
+      if (!session) { req.user = null; return; }
+      req.sessionId = session.id;
     }
+    const user = userById(decoded.sub);
+    req.user = user || null;
   } catch (err) {
     req.user = null;
     req.log.warn({ err: String(err?.message || err) }, "auth verify failed");
@@ -173,20 +197,44 @@ app.get("/api/health", async () => ({
 }));
 
 // GraphQL — mercurius mounted at /graphql with the same auth context as REST.
-// Use `graphiql: true` only in non-production for the UX and tooling.
+//
+// GraphIQL is **opt-in**: it is only rendered when `FORGE_GRAPHIQL=1` is
+// set explicitly. Earlier the playground was on whenever `NODE_ENV` was
+// not `production`, which exposed schema introspection on any deployment
+// that forgot to flip that env var.
+//
+// Query depth and aliases are bounded so a single authenticated user
+// cannot DoS the resolver by issuing a 50-level deep graph or thousands
+// of aliased fields. Both bounds can be tuned with env vars.
+//
 // The /graphql endpoint itself is gated by the GRAPHQL_API feature flag —
 // installations on community/personal tiers see a 402 instead.
+const GRAPHIQL_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.FORGE_GRAPHIQL || ""));
+const GQL_DEPTH = Number(process.env.FORGE_GRAPHQL_MAX_DEPTH || 12);
+const GQL_ALIASES = Number(process.env.FORGE_GRAPHQL_MAX_ALIASES || 20);
 await app.register(async (scope) => {
   scope.addHook("onRequest", requireFeature(FEATURES.GRAPHQL_API));
   await scope.register(mercurius, {
     schema: typeDefs,
     resolvers,
-    graphiql: process.env.NODE_ENV !== "production",
-    ide: process.env.NODE_ENV !== "production",
+    graphiql: GRAPHIQL_ENABLED,
+    ide: GRAPHIQL_ENABLED,
+    queryDepth: GQL_DEPTH,
+    validationRules: [],
     context: (request) => ({ user: request.user, tokenScopes: request.tokenScopes || [] }),
     errorFormatter: (err, ctx) => {
       return { statusCode: err?.errors?.[0]?.extensions?.http?.status || 200, response: { errors: err?.errors || [], data: err?.data ?? null } };
     },
+  });
+  // Cheap aliases-cap: count `:` separators in the query string before mercurius
+  // hits the resolver pool. Runs only on graphql endpoints.
+  scope.addHook("preValidation", async (req, reply) => {
+    if (!req.url.startsWith("/graphql")) return;
+    const q = (req.body && typeof req.body === "object" ? req.body.query : null) || "";
+    const aliasCount = (String(q).match(/\b[a-zA-Z_][a-zA-Z0-9_]*\s*:\s*[a-zA-Z_]/g) || []).length;
+    if (aliasCount > GQL_ALIASES) {
+      return reply.code(400).send({ errors: [{ message: "graphql query has too many aliases", extensions: { code: "QUERY_COMPLEXITY", limit: GQL_ALIASES } }] });
+    }
   });
 });
 
@@ -204,6 +252,10 @@ async function registerWithFeature(plugin, feature) {
     await scope.register(plugin);
   });
 }
+
+// Idempotency-Key handling. Registered before the routes so its
+// preHandler can short-circuit replays before any handler-side work.
+await registerIdempotency(app);
 
 await app.register(authRoutes);
 await app.register(coreRoutes);
@@ -278,6 +330,7 @@ startOpcuaBridge(app.log);
 startAlertWorker(app.log);
 startRollupWorker(app.log);
 startOutboxWorker(app.log);
+startRetentionWorker(app.log);
 
 // Record boot in the audit ledger.
 audit({ actor: "system", action: "server.start", subject: "forge", detail: { host: HOST, port: PORT, pid: process.pid } });
@@ -343,10 +396,60 @@ try {
   process.exit(1);
 }
 
-function shutdown(sig) {
-  app.log.info({ sig }, "shutting down");
+// Graceful shutdown.
+//
+// Sequence is deliberate: stop accepting new connections first, then
+// close every long-running worker so no new background work is queued,
+// then drain whatever is in flight (audit hash queue + Fastify), and
+// finally hard-exit if any of the above hangs past the grace period.
+const SHUTDOWN_GRACE_MS = Number(process.env.FORGE_SHUTDOWN_GRACE_MS || 15_000);
+let _shuttingDown = false;
+
+async function shutdown(sig) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  app.log.info({ sig, graceMs: SHUTDOWN_GRACE_MS }, "shutting down");
   audit({ actor: "system", action: "server.stop", subject: "forge", detail: { sig } });
-  app.close().finally(() => process.exit(0));
+
+  // Force-exit timer in case any async step deadlocks.
+  const killSwitch = setTimeout(() => {
+    app.log.error({ sig }, "shutdown grace exceeded; forcing exit");
+    process.exit(1);
+  }, SHUTDOWN_GRACE_MS);
+  if (typeof killSwitch.unref === "function") killSwitch.unref();
+
+  try {
+    // 1) Drain SSE clients (sends `event: shutdown`, ends sockets).
+    await shutdownSSE({ logger: app.log });
+
+    // 2) Stop every background worker. Each is a synchronous interval
+    //    teardown today; promisified so future async closers fit in.
+    await Promise.allSettled([
+      Promise.resolve().then(() => stopWebhookWorker()),
+      Promise.resolve().then(() => stopOutboxWorker()),
+      Promise.resolve().then(() => stopAlertWorker()),
+      Promise.resolve().then(() => stopRetentionWorker()),
+      Promise.resolve().then(() => stopRollupWorker()),
+      Promise.resolve().then(() => stopMqttBridge()),
+      Promise.resolve().then(() => stopOpcuaBridge()),
+    ]);
+
+    // 3) Stop Fastify (closes the listener + pending requests).
+    await app.close();
+
+    // 4) Flush the audit hash queue so the last entries (including
+    //    `server.stop`) are persisted before we exit.
+    await drainAudit();
+
+    // 5) Flush OpenTelemetry traces if enabled.
+    await shutdownTracing();
+  } catch (err) {
+    app.log.error({ err: String(err?.message || err) }, "shutdown step failed");
+  } finally {
+    clearTimeout(killSwitch);
+    process.exit(0);
+  }
 }
+
 process.on("SIGINT",  () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));

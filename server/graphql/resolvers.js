@@ -12,6 +12,7 @@ import { canTransitionRevision, cascadeOnApprove } from "../../src/core/fsm/revi
 import { canTransitionApproval } from "../../src/core/fsm/approval.js";
 import { GraphQLError, GraphQLScalarType, Kind } from "graphql";
 import { allows, filterAllowed } from "../acl.js";
+import { tenantWhere, orgForRow } from "../tenant.js";
 
 const json = arr => (Array.isArray(arr) ? arr : jsonOrDefault(arr, []));
 const obj = v => (typeof v === "object" && v ? v : jsonOrDefault(v, {}));
@@ -37,6 +38,37 @@ function requireCap(ctx, capability) {
 function requireAcl(ctx, row, capability = "view") {
   const u = requireCap(ctx, capability);
   if (!row) return null;
+  if (!allows(u, row.acl, capability)) throw forbiddenError(`${capability}:object`);
+  return row;
+}
+
+/** Returns the requester's org id, or throws an UNAUTHENTICATED error. */
+function tenantOrgIdCtx(ctx) {
+  const u = requireUser(ctx);
+  if (!u.org_id) throw forbiddenError("tenant:missing");
+  return u.org_id;
+}
+
+/**
+ * Filter a list of rows to those (a) in the requester's tenant and (b)
+ * permitted by ACL. The companion to `aclList` for tables that carry an
+ * `org_id` either directly or via a known join.
+ */
+function tenantAclList(ctx, rows, table, capability = "view") {
+  const u = requireCap(ctx, capability);
+  const orgId = tenantOrgIdCtx(ctx);
+  return filterAllowed(rows.filter(r => orgForRow(table, r) === orgId), u, capability);
+}
+
+/**
+ * Treat a single-row lookup as 'not found' when the row belongs to a
+ * different tenant. Avoids leaking row existence across orgs.
+ */
+function tenantAcl(ctx, row, table, capability = "view") {
+  const u = requireCap(ctx, capability);
+  if (!row) return null;
+  const orgId = tenantOrgIdCtx(ctx);
+  if (orgForRow(table, row) !== orgId) return null;
   if (!allows(u, row.acl, capability)) throw forbiddenError(`${capability}:object`);
   return row;
 }
@@ -99,47 +131,76 @@ export const resolvers = {
 
   Query: {
     me: (_, __, ctx) => ctx.user || null,
-    organization: () => db.prepare("SELECT id, name, tenant_key AS tenantKey FROM organizations LIMIT 1").get(),
-    workspaces: () => db.prepare("SELECT id, name, region FROM workspaces").all(),
-    teamSpaces: (_, __, ctx) => aclList(ctx, db.prepare("SELECT * FROM team_spaces").all()),
-    teamSpace: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM team_spaces WHERE id = ?").get(id)),
-    projects: (_, { teamSpaceId }, ctx) => aclList(ctx, teamSpaceId
-      ? db.prepare("SELECT * FROM projects WHERE team_space_id = ?").all(teamSpaceId)
-      : db.prepare("SELECT * FROM projects").all()),
-    project: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM projects WHERE id = ?").get(id)),
-    channels: (_, { teamSpaceId }, ctx) => aclList(ctx, teamSpaceId
-      ? db.prepare("SELECT * FROM channels WHERE team_space_id = ?").all(teamSpaceId)
-      : db.prepare("SELECT * FROM channels").all()),
-    channel: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM channels WHERE id = ?").get(id)),
-    documents: (_, __, ctx) => aclList(ctx, db.prepare("SELECT * FROM documents").all()),
-    document: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM documents WHERE id = ?").get(id)),
+    organization: (_, __, ctx) => {
+      const orgId = tenantOrgIdCtx(ctx);
+      return db.prepare("SELECT id, name, tenant_key AS tenantKey FROM organizations WHERE id = ?").get(orgId);
+    },
+    workspaces: (_, __, ctx) => {
+      const orgId = tenantOrgIdCtx(ctx);
+      return db.prepare("SELECT id, name, region FROM workspaces WHERE org_id = ?").all(orgId);
+    },
+    teamSpaces: (_, __, ctx) => {
+      const orgId = tenantOrgIdCtx(ctx);
+      return aclList(ctx, db.prepare("SELECT * FROM team_spaces WHERE org_id = ?").all(orgId));
+    },
+    teamSpace: (_, { id }, ctx) => tenantAcl(ctx, db.prepare("SELECT * FROM team_spaces WHERE id = ?").get(id), "team_spaces"),
+    projects: (_, { teamSpaceId }, ctx) => {
+      const orgId = tenantOrgIdCtx(ctx);
+      const rows = teamSpaceId
+        ? db.prepare("SELECT * FROM projects WHERE team_space_id = ?").all(teamSpaceId)
+        : db.prepare("SELECT * FROM projects").all();
+      return tenantAclList(ctx, rows, "projects");
+    },
+    project: (_, { id }, ctx) => tenantAcl(ctx, db.prepare("SELECT * FROM projects WHERE id = ?").get(id), "projects"),
+    channels: (_, { teamSpaceId }, ctx) => {
+      const rows = teamSpaceId
+        ? db.prepare("SELECT * FROM channels WHERE team_space_id = ?").all(teamSpaceId)
+        : db.prepare("SELECT * FROM channels").all();
+      return tenantAclList(ctx, rows, "channels");
+    },
+    channel: (_, { id }, ctx) => tenantAcl(ctx, db.prepare("SELECT * FROM channels WHERE id = ?").get(id), "channels"),
+    documents: (_, __, ctx) => tenantAclList(ctx, db.prepare("SELECT * FROM documents").all(), "documents"),
+    document: (_, { id }, ctx) => tenantAcl(ctx, db.prepare("SELECT * FROM documents WHERE id = ?").get(id), "documents"),
     revision: (_, { id }, ctx) => {
       const rev = db.prepare("SELECT * FROM revisions WHERE id = ?").get(id);
       if (!rev) return null;
-      requireAcl(ctx, docForRevision(id));
+      const doc = docForRevision(id);
+      if (!tenantAcl(ctx, doc, "documents")) return null;
       return rev;
     },
-    drawings: (_, __, ctx) => aclList(ctx, db.prepare("SELECT * FROM drawings").all()),
-    drawing: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM drawings WHERE id = ?").get(id)),
-    assets: (_, __, ctx) => aclList(ctx, db.prepare("SELECT * FROM assets").all()),
-    asset: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM assets WHERE id = ?").get(id)),
-    workItems: (_, { projectId }, ctx) => aclList(ctx, projectId
-      ? db.prepare("SELECT * FROM work_items WHERE project_id = ? ORDER BY created_at DESC").all(projectId)
-      : db.prepare("SELECT * FROM work_items ORDER BY created_at DESC").all()),
-    workItem: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM work_items WHERE id = ?").get(id)),
-    incidents: (_, __, ctx) => aclList(ctx, db.prepare("SELECT * FROM incidents ORDER BY started_at DESC").all()),
-    incident: (_, { id }, ctx) => requireAcl(ctx, db.prepare("SELECT * FROM incidents WHERE id = ?").get(id)),
+    drawings: (_, __, ctx) => tenantAclList(ctx, db.prepare("SELECT * FROM drawings").all(), "drawings"),
+    drawing: (_, { id }, ctx) => tenantAcl(ctx, db.prepare("SELECT * FROM drawings WHERE id = ?").get(id), "drawings"),
+    assets: (_, __, ctx) => tenantAclList(ctx, db.prepare("SELECT * FROM assets").all(), "assets"),
+    asset: (_, { id }, ctx) => tenantAcl(ctx, db.prepare("SELECT * FROM assets WHERE id = ?").get(id), "assets"),
+    workItems: (_, { projectId }, ctx) => {
+      const rows = projectId
+        ? db.prepare("SELECT * FROM work_items WHERE project_id = ? ORDER BY created_at DESC").all(projectId)
+        : db.prepare("SELECT * FROM work_items ORDER BY created_at DESC").all();
+      return tenantAclList(ctx, rows, "work_items");
+    },
+    workItem: (_, { id }, ctx) => tenantAcl(ctx, db.prepare("SELECT * FROM work_items WHERE id = ?").get(id), "work_items"),
+    incidents: (_, __, ctx) => tenantAclList(ctx, db.prepare("SELECT * FROM incidents ORDER BY started_at DESC").all(), "incidents"),
+    incident: (_, { id }, ctx) => tenantAcl(ctx, db.prepare("SELECT * FROM incidents WHERE id = ?").get(id), "incidents"),
     approvals: (_, { status }, ctx) => {
       const u = requireCap(ctx, "view");
+      const orgId = tenantOrgIdCtx(ctx);
       const rows = status
-      ? db.prepare("SELECT * FROM approvals WHERE status = ?").all(status)
-      : db.prepare("SELECT * FROM approvals").all();
-      return rows.filter(a => allows(u, subjectAclRow(a)?.acl, "view"));
+        ? db.prepare("SELECT * FROM approvals WHERE status = ?").all(status)
+        : db.prepare("SELECT * FROM approvals").all();
+      return rows.filter(a => {
+        const subject = subjectAclRow(a);
+        if (!subject) return false;
+        const subjectTable = ({ Revision: "documents", Document: "documents", WorkItem: "work_items", Incident: "incidents" })[a.subject_kind];
+        if (subjectTable && orgForRow(subjectTable, subject) !== orgId) return false;
+        return allows(u, subject.acl, "view");
+      });
     },
     approval: (_, { id }, ctx) => {
       const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(id);
       if (!row) return null;
-      requireAcl(ctx, subjectAclRow(row));
+      const subject = subjectAclRow(row);
+      const subjectTable = ({ Revision: "documents", Document: "documents", WorkItem: "work_items", Incident: "incidents" })[row.subject_kind];
+      if (subjectTable && !tenantAcl(ctx, subject, subjectTable)) return null;
       return row;
     },
 
@@ -163,7 +224,8 @@ export const resolvers = {
   Mutation: {
     createWorkItem: (_, { projectId, type, title, severity = "medium", assigneeId = null, due = null }, ctx) => {
       requireCap(ctx, "create");
-      requireAcl(ctx, db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId), "create");
+      const project = db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId);
+      if (!tenantAcl(ctx, project, "projects", "create")) throw forbiddenError("create:object");
       const id = uuid("WI");
       db.prepare(`INSERT INTO work_items (id, project_id, type, title, description, assignee_id, status, severity, due, blockers, labels, acl, created_at, updated_at)
                   VALUES (@id, @pid, @type, @title, '', @assignee, 'Open', @sev, @due, '[]', '[]', '{}', @ts, @ts)`)
@@ -176,7 +238,7 @@ export const resolvers = {
       requireCap(ctx, "edit");
       const row = db.prepare("SELECT * FROM work_items WHERE id = ?").get(args.id);
       if (!row) throw new GraphQLError("not found", { extensions: { http: { status: 404 } } });
-      requireAcl(ctx, row, "edit");
+      if (!tenantAcl(ctx, row, "work_items", "edit")) throw new GraphQLError("not found", { extensions: { http: { status: 404 } } });
       const sets = [];
       const params = { id: row.id, now: now() };
       const map = { status: "status", severity: "severity", title: "title", description: "description" };
@@ -195,7 +257,7 @@ export const resolvers = {
       requireCap(ctx, "create");
       const ch = db.prepare("SELECT * FROM channels WHERE id = ?").get(channelId);
       if (!ch) throw new GraphQLError("channel not found", { extensions: { http: { status: 404 } } });
-      requireAcl(ctx, ch, "create");
+      if (!tenantAcl(ctx, ch, "channels", "create")) throw new GraphQLError("channel not found", { extensions: { http: { status: 404 } } });
       const id = uuid("M");
       const ts = now();
       db.prepare(`INSERT INTO messages (id, channel_id, author_id, ts, type, text, attachments, edits, deleted)
@@ -209,7 +271,8 @@ export const resolvers = {
       requireCap(ctx, "approve");
       const rev = db.prepare("SELECT * FROM revisions WHERE id = ?").get(id);
       if (!rev) throw new GraphQLError("not found", { extensions: { http: { status: 404 } } });
-      requireAcl(ctx, docForRevision(id), "approve");
+      const doc = docForRevision(id);
+      if (!tenantAcl(ctx, doc, "documents", "approve")) throw new GraphQLError("not found", { extensions: { http: { status: 404 } } });
       if (!canTransitionRevision(rev.status, to))
         throw new GraphQLError(`cannot transition ${rev.status} → ${to}`, { extensions: { http: { status: 400 } } });
       db.transaction(() => {
@@ -229,7 +292,9 @@ export const resolvers = {
         throw new GraphQLError("outcome must be approved|rejected", { extensions: { http: { status: 400 } } });
       const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(id);
       if (!row) throw new GraphQLError("not found", { extensions: { http: { status: 404 } } });
-      requireAcl(ctx, subjectAclRow(row), "approve");
+      const subject = subjectAclRow(row);
+      const subjectTable = ({ Revision: "documents", Document: "documents", WorkItem: "work_items", Incident: "incidents" })[row.subject_kind];
+      if (subjectTable && !tenantAcl(ctx, subject, subjectTable, "approve")) throw new GraphQLError("not found", { extensions: { http: { status: 404 } } });
       if (!canTransitionApproval(row.status, outcome))
         throw new GraphQLError(`cannot decide approval in status '${row.status}'`, { extensions: { http: { status: 400 } } });
       const payload = { approvalId: row.id, subject: { kind: row.subject_kind, id: row.subject_id }, outcome, notes, signer: ctx.user.id, ts: now() };

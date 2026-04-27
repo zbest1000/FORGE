@@ -94,7 +94,31 @@ function extractToken(req) {
 }
 
 /**
+ * Returns true when the request's API token (if any) is authorised for the
+ * given capability. A token authenticated as a JWT bearer (no `tokenScopes`
+ * field) is treated as fully delegated and returns true.
+ *
+ * Token scopes are matched against capability names. The wildcard `"*"`
+ * grants every capability. Without a `capability` argument this returns
+ * true so endpoints that only require authentication keep working with
+ * any token.
+ */
+export function tokenScopeAllows(req, capability) {
+  if (!req || !Array.isArray(req.tokenScopes)) return true;
+  if (!capability) return true;
+  if (req.tokenScopes.includes("*")) return true;
+  return req.tokenScopes.includes(capability);
+}
+
+/**
  * Route pre-handler that requires an authenticated user with a capability.
+ *
+ * Two layers must allow the request:
+ *   1. The user's role grants the capability (`can(...)`).
+ *   2. If the request was authenticated via a long-lived API token
+ *      (`fgt_…`), the token's scope list must also include the capability
+ *      (or the wildcard `"*"`). JWT bearers carry no scope filter and
+ *      pass this layer unconditionally.
  */
 export function require_(capability) {
   return async (req, reply) => {
@@ -102,6 +126,10 @@ export function require_(capability) {
     if (capability && !can(req.user, capability)) {
       audit({ actor: req.user.id, action: "authz.deny", subject: capability, detail: { path: req.url } });
       return reply.code(403).send({ error: "forbidden", capability });
+    }
+    if (capability && !tokenScopeAllows(req, capability)) {
+      audit({ actor: req.user.id, action: "authz.deny", subject: capability, detail: { path: req.url, reason: "token_scope", scopes: req.tokenScopes } });
+      return reply.code(403).send({ error: "forbidden", capability, reason: "token_scope" });
     }
   };
 }

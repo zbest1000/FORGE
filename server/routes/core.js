@@ -8,11 +8,23 @@ import { broadcast } from "../sse.js";
 import { canTransitionRevision, cascadeOnApprove } from "../../src/core/fsm/revision.js";
 import { canTransitionApproval } from "../../src/core/fsm/approval.js";
 import { allows, filterAllowed, requireAccess, requireAuth } from "../acl.js";
+import { tenantOrgId, tenantWhere, requireTenant, orgForRow } from "../tenant.js";
 
 function mapRowJson(row, fields) {
   const out = { ...row };
   for (const f of fields) out[f] = jsonOrDefault(row[f], f === "acl" ? {} : []);
   return out;
+}
+
+/**
+ * Resolve `?limit=` and `?offset=` from the request query, clamped to a
+ * sensible enterprise cap. Defaults to a high limit so existing clients
+ * keep working; callers that page should pass explicit values.
+ */
+function readPage(req, { defaultLimit = 200, maxLimit = 500 } = {}) {
+  const limit = Math.min(maxLimit, Math.max(1, Number(req.query?.limit || defaultLimit)));
+  const offset = Math.max(0, Number(req.query?.offset || 0));
+  return { limit, offset };
 }
 
 function docForRevision(revId) {
@@ -28,28 +40,35 @@ function rowForApprovalSubject(row) {
   return row;
 }
 
-function canSeeSearchHit(user, h) {
+function canSeeSearchHit(user, h, orgId) {
+  // Helper that returns true only when the hit's owning row exists, is in
+  // the requester's tenant, and the user's ACL permits read.
+  const inOrg = (table, row) => row && (!orgId || orgForRow(table, row) === orgId);
   if (h.kind === "Revision") {
-    const doc = h.docId ? db.prepare("SELECT acl FROM documents WHERE id = ?").get(h.docId) : docForRevision(h.id);
-    return allows(user, doc?.acl, "view");
+    const doc = h.docId ? db.prepare("SELECT * FROM documents WHERE id = ?").get(h.docId) : docForRevision(h.id);
+    return inOrg("documents", doc) && allows(user, doc?.acl, "view");
   }
-  if (h.kind === "Document" || h.kind === "Drawing") {
-    const row = h.kind === "Document"
-      ? db.prepare("SELECT acl FROM documents WHERE id = ?").get(h.id)
-      : db.prepare("SELECT acl FROM drawings WHERE id = ?").get(h.id);
-    return allows(user, row?.acl, "view");
+  if (h.kind === "Document") {
+    const row = db.prepare("SELECT * FROM documents WHERE id = ?").get(h.id);
+    return inOrg("documents", row) && allows(user, row?.acl, "view");
+  }
+  if (h.kind === "Drawing") {
+    const row = db.prepare("SELECT * FROM drawings WHERE id = ?").get(h.id);
+    return inOrg("drawings", row) && allows(user, row?.acl, "view");
   }
   if (h.kind === "Message") {
-    const ch = db.prepare("SELECT c.acl FROM channels c JOIN messages m ON m.channel_id = c.id WHERE m.id = ?").get(h.id);
-    return allows(user, ch?.acl, "view");
+    const m = db.prepare("SELECT * FROM messages WHERE id = ?").get(h.id);
+    if (!m) return false;
+    const ch = db.prepare("SELECT * FROM channels WHERE id = ?").get(m.channel_id);
+    return inOrg("channels", ch) && allows(user, ch?.acl, "view");
   }
   if (h.kind === "WorkItem") {
-    const row = db.prepare("SELECT acl FROM work_items WHERE id = ?").get(h.id);
-    return allows(user, row?.acl, "view");
+    const row = db.prepare("SELECT * FROM work_items WHERE id = ?").get(h.id);
+    return inOrg("work_items", row) && allows(user, row?.acl, "view");
   }
   if (h.kind === "Asset") {
-    const row = db.prepare("SELECT acl FROM assets WHERE id = ?").get(h.id);
-    return allows(user, row?.acl, "view");
+    const row = db.prepare("SELECT * FROM assets WHERE id = ?").get(h.id);
+    return inOrg("assets", row) && allows(user, row?.acl, "view");
   }
   return true;
 }
@@ -61,38 +80,56 @@ export default async function coreRoutes(fastify) {
     return { user: req.user, capabilities: CAPABILITIES[req.user.role] || [] };
   });
 
-  fastify.get("/api/users", { preHandler: require_("view") }, async () => listUsers());
+  fastify.get("/api/users", { preHandler: require_("view") }, async (req) => {
+    const orgId = tenantOrgId(req);
+    if (!orgId) return [];
+    return listUsers().filter(u => u.org_id === orgId);
+  });
 
   // ---------- team spaces ----------
   fastify.get("/api/team-spaces", { preHandler: require_("view") }, async (req) => {
-    return filterAllowed(db.prepare("SELECT * FROM team_spaces ORDER BY name").all(), req.user, "view")
-      .map(r => mapRowJson(r, ["acl", "labels"]));
+    const t = tenantWhere(req, "team_spaces");
+    const { limit, offset } = readPage(req);
+    const rows = db.prepare(`SELECT * FROM team_spaces WHERE ${t.where} ORDER BY name LIMIT ? OFFSET ?`).all(...t.params, limit, offset);
+    return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl", "labels"]));
   });
 
   fastify.get("/api/team-spaces/:id", { preHandler: require_("view") }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM team_spaces WHERE id = ?").get(req.params.id);
+    if (!requireTenant(req, reply, row, "team_spaces")) return;
     if (!requireAccess(req, reply, row, "view")) return;
     return mapRowJson(row, ["acl", "labels"]);
   });
 
   // ---------- projects ----------
   fastify.get("/api/projects", { preHandler: require_("view") }, async (req) => {
+    const t = tenantWhere(req, "projects");
     const ts = req.query.teamSpaceId;
-    const sql = ts ? "SELECT * FROM projects WHERE team_space_id = ? ORDER BY name" : "SELECT * FROM projects ORDER BY name";
-    const rows = ts ? db.prepare(sql).all(ts) : db.prepare(sql).all();
+    const { limit, offset } = readPage(req);
+    const sql = ts
+      ? `SELECT * FROM projects WHERE team_space_id = ? AND ${t.where} ORDER BY name LIMIT ? OFFSET ?`
+      : `SELECT * FROM projects WHERE ${t.where} ORDER BY name LIMIT ? OFFSET ?`;
+    const params = ts ? [ts, ...t.params, limit, offset] : [...t.params, limit, offset];
+    const rows = db.prepare(sql).all(...params);
     return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl", "labels", "milestones"]));
   });
 
   // ---------- channels ----------
   fastify.get("/api/channels", { preHandler: require_("view") }, async (req) => {
+    const t = tenantWhere(req, "channels");
     const ts = req.query.teamSpaceId;
-    const sql = ts ? "SELECT * FROM channels WHERE team_space_id = ? ORDER BY name" : "SELECT * FROM channels ORDER BY name";
-    const rows = ts ? db.prepare(sql).all(ts) : db.prepare(sql).all();
+    const { limit, offset } = readPage(req);
+    const sql = ts
+      ? `SELECT * FROM channels WHERE team_space_id = ? AND ${t.where} ORDER BY name LIMIT ? OFFSET ?`
+      : `SELECT * FROM channels WHERE ${t.where} ORDER BY name LIMIT ? OFFSET ?`;
+    const params = ts ? [ts, ...t.params, limit, offset] : [...t.params, limit, offset];
+    const rows = db.prepare(sql).all(...params);
     return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl"]));
   });
 
   fastify.get("/api/channels/:id/messages", { preHandler: require_("view") }, async (req, reply) => {
     const ch = db.prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id);
+    if (!requireTenant(req, reply, ch, "channels")) return;
     if (!requireAccess(req, reply, ch, "view")) return;
     const limit = Math.min(500, Number(req.query.limit || 200));
     const rows = db.prepare("SELECT * FROM messages WHERE channel_id = ? ORDER BY ts DESC LIMIT ?").all(req.params.id, limit);
@@ -103,6 +140,7 @@ export default async function coreRoutes(fastify) {
     const { text, type = "discussion", attachments = [] } = req.body || {};
     if (!text || !text.trim()) return reply.code(400).send({ error: "text required" });
     const ch = db.prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id);
+    if (!requireTenant(req, reply, ch, "channels")) return;
     if (!requireAccess(req, reply, ch, "create")) return;
     const id = uuid("M");
     const ts = now();
@@ -116,12 +154,15 @@ export default async function coreRoutes(fastify) {
 
   // ---------- documents & revisions ----------
   fastify.get("/api/documents", { preHandler: require_("view") }, async (req) => {
-    return filterAllowed(db.prepare("SELECT * FROM documents ORDER BY name").all(), req.user, "view")
-      .map(r => mapRowJson(r, ["acl", "labels"]));
+    const t = tenantWhere(req, "documents");
+    const { limit, offset } = readPage(req);
+    const rows = db.prepare(`SELECT * FROM documents WHERE ${t.where} ORDER BY name LIMIT ? OFFSET ?`).all(...t.params, limit, offset);
+    return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl", "labels"]));
   });
 
   fastify.get("/api/documents/:id", { preHandler: require_("view") }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM documents WHERE id = ?").get(req.params.id);
+    if (!requireTenant(req, reply, row, "documents")) return;
     if (!requireAccess(req, reply, row, "view")) return;
     const revs = db.prepare("SELECT * FROM revisions WHERE doc_id = ? ORDER BY created_at").all(req.params.id);
     return { ...mapRowJson(row, ["acl", "labels"]), revisions: revs };
@@ -131,6 +172,7 @@ export default async function coreRoutes(fastify) {
     const row = db.prepare("SELECT * FROM revisions WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
     const doc = db.prepare("SELECT * FROM documents WHERE id = ?").get(row.doc_id);
+    if (!requireTenant(req, reply, doc, "documents")) return;
     if (!requireAccess(req, reply, doc, "view")) return;
     return row;
   });
@@ -140,6 +182,7 @@ export default async function coreRoutes(fastify) {
     const rev = db.prepare("SELECT * FROM revisions WHERE id = ?").get(req.params.id);
     if (!rev) return reply.code(404).send({ error: "not found" });
     const doc = db.prepare("SELECT * FROM documents WHERE id = ?").get(rev.doc_id);
+    if (!requireTenant(req, reply, doc, "documents")) return;
     if (!requireAccess(req, reply, doc, "approve")) return;
     if (!canTransitionRevision(rev.status, to)) {
       return reply.code(400).send({ error: `cannot transition ${rev.status} → ${to}` });
@@ -161,16 +204,20 @@ export default async function coreRoutes(fastify) {
 
   // ---------- assets ----------
   fastify.get("/api/assets", { preHandler: require_("view") }, async (req) => {
-    return filterAllowed(db.prepare("SELECT * FROM assets ORDER BY name").all(), req.user, "view")
-      .map(r => mapRowJson(r, ["acl", "labels", "mqtt_topics", "opcua_nodes", "doc_ids"]));
+    const t = tenantWhere(req, "assets");
+    const { limit, offset } = readPage(req);
+    const rows = db.prepare(`SELECT * FROM assets WHERE ${t.where} ORDER BY name LIMIT ? OFFSET ?`).all(...t.params, limit, offset);
+    return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl", "labels", "mqtt_topics", "opcua_nodes", "doc_ids"]));
   });
 
   // ---------- work items ----------
   fastify.get("/api/work-items", { preHandler: require_("view") }, async (req) => {
+    const t = tenantWhere(req, "work_items");
     const pid = req.query.projectId;
+    const { limit, offset } = readPage(req);
     const rows = pid
-      ? db.prepare("SELECT * FROM work_items WHERE project_id = ? ORDER BY created_at DESC").all(pid)
-      : db.prepare("SELECT * FROM work_items ORDER BY created_at DESC").all();
+      ? db.prepare(`SELECT * FROM work_items WHERE project_id = ? AND ${t.where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(pid, ...t.params, limit, offset)
+      : db.prepare(`SELECT * FROM work_items WHERE ${t.where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...t.params, limit, offset);
     return filterAllowed(rows, req.user, "view").map(r => mapRowJson(r, ["acl", "labels", "blockers"]));
   });
 
@@ -178,6 +225,7 @@ export default async function coreRoutes(fastify) {
     const { projectId, type = "Task", title, severity = "medium", assigneeId = null, due = null } = req.body || {};
     if (!projectId || !title) return reply.code(400).send({ error: "projectId and title required" });
     const project = db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId);
+    if (!requireTenant(req, reply, project, "projects")) return;
     if (!requireAccess(req, reply, project, "create")) return;
     const id = uuid("WI");
     db.prepare(`INSERT INTO work_items (id, project_id, type, title, description, assignee_id, status, severity, due, blockers, labels, acl, created_at, updated_at)
@@ -190,6 +238,7 @@ export default async function coreRoutes(fastify) {
 
   fastify.patch("/api/work-items/:id", { preHandler: require_("edit") }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM work_items WHERE id = ?").get(req.params.id);
+    if (!requireTenant(req, reply, row, "work_items")) return;
     if (!requireAccess(req, reply, row, "edit")) return;
     const patch = req.body || {};
     const allowed = ["title", "description", "assignee_id", "status", "severity", "due"];
@@ -213,12 +262,16 @@ export default async function coreRoutes(fastify) {
 
   // ---------- incidents ----------
   fastify.get("/api/incidents", { preHandler: require_("view") }, async (req) => {
-    return filterAllowed(db.prepare("SELECT * FROM incidents ORDER BY started_at DESC").all(), req.user, "view")
+    const t = tenantWhere(req, "incidents");
+    const { limit, offset } = readPage(req);
+    const rows = db.prepare(`SELECT * FROM incidents WHERE ${t.where} ORDER BY started_at DESC LIMIT ? OFFSET ?`).all(...t.params, limit, offset);
+    return filterAllowed(rows, req.user, "view")
       .map(r => ({ ...r, timeline: JSON.parse(r.timeline || "[]"), checklist_state: JSON.parse(r.checklist_state || "{}"), roster: JSON.parse(r.roster || "{}") }));
   });
 
   fastify.post("/api/incidents/:id/entry", { preHandler: require_("incident.respond") }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM incidents WHERE id = ?").get(req.params.id);
+    if (!requireTenant(req, reply, row, "incidents")) return;
     if (!requireAccess(req, reply, row, "incident.respond")) return;
     const tl = JSON.parse(row.timeline || "[]");
     tl.push({ ts: now(), actor: req.user.id, text: req.body?.text || "" });
@@ -230,8 +283,16 @@ export default async function coreRoutes(fastify) {
 
   // ---------- approvals ----------
   fastify.get("/api/approvals", { preHandler: require_("view") }, async (req) => {
+    const orgId = tenantOrgId(req);
+    if (!orgId) return [];
     return db.prepare("SELECT * FROM approvals ORDER BY created_at DESC").all()
-      .filter(r => allows(req.user, rowForApprovalSubject(r)?.acl, "view"))
+      .filter(r => {
+        const subject = rowForApprovalSubject(r);
+        if (!subject) return false;
+        const subjectTable = ({ Revision: "documents", Document: "documents", WorkItem: "work_items", Incident: "incidents" })[r.subject_kind];
+        if (subjectTable && orgForRow(subjectTable, subject) !== orgId) return false;
+        return allows(req.user, subject.acl, "view");
+      })
       .map(r => ({ ...r, approvers: JSON.parse(r.approvers || "[]"), chain: JSON.parse(r.chain || "[]") }));
   });
 
@@ -240,7 +301,10 @@ export default async function coreRoutes(fastify) {
     if (!["approved","rejected"].includes(outcome)) return reply.code(400).send({ error: "outcome must be approved|rejected" });
     const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
-    if (!requireAccess(req, reply, rowForApprovalSubject(row), "approve")) return;
+    const subject = rowForApprovalSubject(row);
+    const subjectTable = ({ Revision: "documents", Document: "documents", WorkItem: "work_items", Incident: "incidents" })[row.subject_kind];
+    if (subjectTable && !requireTenant(req, reply, subject, subjectTable)) return;
+    if (!requireAccess(req, reply, subject, "approve")) return;
     if (!canTransitionApproval(row.status, outcome)) {
       return reply.code(400).send({ error: `cannot decide approval in status '${row.status}' → '${outcome}'` });
     }
@@ -303,6 +367,8 @@ export default async function coreRoutes(fastify) {
 
   // ---------- search ----------
   fastify.get("/api/search", { preHandler: require_("view") }, async (req) => {
+    const orgId = tenantOrgId(req);
+    if (!orgId) return { hits: [], facets: { kind: {}, date: {}, revision: {} } };
     const q = String(req.query.q || "").trim();
     if (!q) return { hits: [], facets: { kind: {}, date: {}, revision: {} } };
     const esc = q.replace(/"/g, '""');
@@ -343,7 +409,7 @@ export default async function coreRoutes(fastify) {
     const fromDate = req.query.from || null;
     const toDate = req.query.to || null;
 
-    const aclFiltered = hits.filter(h => canSeeSearchHit(req.user, h));
+    const aclFiltered = hits.filter(h => canSeeSearchHit(req.user, h, orgId));
     const filtered = aclFiltered.filter(h => {
       if (wantKind.length && !wantKind.includes(h.kind)) return false;
       if (wantRev.length && !(h.revision && wantRev.includes(h.revision))) return false;

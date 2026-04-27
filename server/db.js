@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.FORGE_DATA_DIR || path.resolve(__dirname, "..", "data");
@@ -19,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 10;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -840,6 +841,93 @@ function migrate() {
       `);
       setVersion(7);
     }
+
+    if (getVersion() < 8) {
+      // Per-session row backing access tokens + refresh tokens. The access
+      // JWT carries `sid` (= sessions.id) and `jti` (= sessions.access_jti).
+      // Auth resolution rejects any JWT whose `sid` row is revoked, or
+      // whose `jti` does not match the session's current access_jti — so
+      // a stolen-then-rotated token cannot ride alongside the new one.
+      //
+      // Refresh tokens are hashed (sha256) at rest. Rotation replaces
+      // both `refresh_hash` and `access_jti`; the previous `refresh_hash`
+      // is moved into `previous_refresh_hash` exactly once so that a
+      // replay of the old refresh token can be detected and invalidate
+      // the entire session (suspected token theft).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          access_jti TEXT NOT NULL,
+          refresh_hash TEXT,
+          previous_refresh_hash TEXT,
+          mfa TEXT,
+          ip TEXT,
+          user_agent TEXT,
+          created_at TEXT NOT NULL,
+          last_used_at TEXT,
+          rotated_at TEXT,
+          expires_at TEXT,
+          refresh_expires_at TEXT,
+          revoked_at TEXT,
+          revoked_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, revoked_at);
+        CREATE INDEX IF NOT EXISTS idx_sessions_jti ON sessions(access_jti);
+        CREATE INDEX IF NOT EXISTS idx_sessions_refresh ON sessions(refresh_hash);
+      `);
+      setVersion(8);
+    }
+
+    if (getVersion() < 9) {
+      // Webhook delivery payloads. Earlier versions parked the body on
+      // an `audit_log` row and re-read it via `json_extract` at delivery
+      // time — that bloated the immutable hash chain forever and would
+      // silently break if an audit-retention sweep ever pruned the
+      // referenced row. The body now lives in its own table, indexed by
+      // `delivery_id` so the dispatcher can fetch it with a primary-key
+      // lookup. Rows are deleted once a delivery reaches a terminal
+      // state (`delivered`, `failed`, `cancelled`).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS webhook_delivery_payloads (
+          delivery_id TEXT PRIMARY KEY REFERENCES webhook_deliveries(id) ON DELETE CASCADE,
+          body TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `);
+      setVersion(9);
+    }
+
+    if (getVersion() < 10) {
+      // Idempotency-key cache for write APIs.
+      //
+      // Keyed by (user, key) so two tenants can independently use the
+      // same key without collision; the request fingerprint is hashed
+      // so a replay with a *different* body on the same key is rejected
+      // with 409 (per RFC draft-ietf-httpapi-idempotency-key §2.4).
+      //
+      // The cache also tracks an `in_flight` state so concurrent
+      // duplicate requests don't both reach the underlying handler.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS idempotency_keys (
+          user_id TEXT NOT NULL,
+          key TEXT NOT NULL,
+          method TEXT NOT NULL,
+          path TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          status INTEGER,
+          response_body TEXT,
+          response_headers TEXT,
+          state TEXT NOT NULL DEFAULT 'in_flight',
+          created_at TEXT NOT NULL,
+          completed_at TEXT,
+          expires_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_at);
+      `);
+      setVersion(10);
+    }
   })();
 }
 
@@ -848,8 +936,16 @@ migrate();
 // ---------- Helpers ----------
 export function now() { return new Date().toISOString(); }
 
+/**
+ * Generate a short, opaque, prefixed identifier suitable for primary keys.
+ *
+ * Backed by `crypto.randomUUID()` so output is unguessable and collision-
+ * resistant even for high-volume tables. Result is `prefix-XXXXXXXXXXXX`
+ * where the suffix is the first 12 hex chars of a random UUID, uppercased
+ * for parity with previous IDs already in seed data.
+ */
 export function uuid(prefix = "") {
-  const s = Math.random().toString(36).slice(2, 10).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
+  const s = randomUUID().replace(/-/g, "").slice(0, 12).toUpperCase();
   return prefix ? `${prefix}-${s}` : s;
 }
 

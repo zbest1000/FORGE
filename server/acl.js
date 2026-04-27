@@ -11,7 +11,7 @@
 //   - user.abac satisfies every constraint in acl.abac
 // and the user has the base role capability. Organization Owners bypass.
 
-import { can } from "./auth.js";
+import { can, tokenScopeAllows } from "./auth.js";
 
 export function parseAcl(raw) {
   if (!raw) return { roles: ["*"], users: [], abac: {} };
@@ -60,6 +60,10 @@ export function requireAccess(req, reply, row, capability = "view", aclField = "
   }
   if (!allows(req.user, row[aclField], capability)) {
     reply.code(403).send({ error: "forbidden by ACL", capability });
+    return false;
+  }
+  if (capability && !tokenScopeAllows(req, capability)) {
+    reply.code(403).send({ error: "forbidden", capability, reason: "token_scope" });
     return false;
   }
   return true;
