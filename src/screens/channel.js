@@ -275,7 +275,7 @@ function addDecision(composer) {
   composer.focus();
 }
 
-function addMention(composer) {
+async function addMention(composer) {
   const users = state.data.users || [];
   const sel = select(users.map(u => ({ value: u.initials, label: `${u.initials} — ${u.name} (${u.role})` })));
   modal({

@@ -21,9 +21,11 @@ export function renderHub() {
     el("section", { class: "hub" }, [
       el("div", { class: "hub-hero" }, [
         el("div", { class: "hub-hero-row" }, [
-          el("div", { class: "hub-logo" }, ["FORGE"]),
+          el("div", { class: "hub-logo", "aria-hidden": "true" }, ["FORGE"]),
           el("div", { class: "stack", style: { gap: "4px" } }, [
-            el("h1", { class: "hub-title" }, ["Welcome", me ? `, ${me.name}` : ""]),
+            // Use h2 here — the page-level h1 lives in the shell header
+            // (WCAG 2.4.6: avoid duplicate h1s on a single page).
+            el("h2", { class: "hub-title" }, ["Welcome", me ? `, ${me.name}` : ""]),
             el("div", { class: "hub-sub" }, [
               "Pick a workspace to open. Each portal launches in its own browser tab so you can work on several things at once.",
             ]),
@@ -40,13 +42,18 @@ export function renderHub() {
 
       el("div", { class: "hub-footer" }, [
         el("div", { class: "tiny muted" }, [
-          "Tip: hold ", el("kbd", {}, ["Cmd/Ctrl"]), " or use middle-click to open in a new tab. ",
-          "Click ", el("kbd", {}, ["⌘K"]), " anywhere to jump to anything.",
+          "Tip: tiles open in a new tab. Press ",
+          el("kbd", {}, [isMac() ? "⌘" : "Ctrl"]), " + ", el("kbd", {}, ["K"]),
+          " anywhere to jump to anything.",
         ]),
         el("button", { class: "btn sm", onClick: () => navigate("/admin") }, ["Manage groups & access →"]),
       ]),
     ]),
   ]);
+}
+
+function isMac() {
+  return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || "");
 }
 
 function portalTile(p) {
@@ -77,7 +84,6 @@ function portalTile(p) {
       el("div", { class: "hub-tile-routes" }, p.items.slice(0, 5).map(it =>
         el("span", { class: "hub-tile-chip" }, [it.label]))),
     ]),
-    el("div", { class: "hub-tile-cta" }, ["Open →"]),
+    el("div", { class: "hub-tile-cta", "aria-hidden": "true" }, ["Open →"]),
   ]);
-  return a;
 }

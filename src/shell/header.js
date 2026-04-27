@@ -1,6 +1,5 @@
-import { el, mount, select } from "../core/ui.js";
+import { el, mount, select, confirm } from "../core/ui.js";
 import { state, update, resetState } from "../core/store.js";
-import { ROLES } from "../core/permissions.js";
 import { openPalette } from "../core/palette.js";
 import { navigate } from "../core/router.js";
 import { mode as apiMode, login as apiLogin, logout as apiLogout } from "../core/api.js";
@@ -46,7 +45,9 @@ export function renderHeader() {
 
   const searchInput = el("input", {
     class: "search-input",
+    type: "search",
     placeholder: "Search or jump (⌘K)",
+    "aria-label": "Search",
     onKeydown: (e) => {
       if (e.key === "Enter" && e.target.value.trim()) {
         const q = encodeURIComponent(e.target.value.trim());
@@ -61,6 +62,8 @@ export function renderHeader() {
   } else {
     root.style.removeProperty("--portal-accent");
   }
+
+  syncDocumentTitle(meta, portal);
 
   mount(root, [
     el("div", { class: "header-title" }, [
@@ -83,9 +86,12 @@ export function renderHeader() {
       notifyBell(),
       contextToggleBtn(),
       viewerHasIT() ? serverBadge() : authOnlyBadge(),
-      el("button", { class: "btn sm", onClick: openPalette, title: "Command palette" }, ["⌘K"]),
+      el("button", { class: "btn sm", onClick: openPalette, title: "Command palette", "aria-label": "Open command palette" }, ["⌘K"]),
       viewMenu(),
-      roleSelect,
+      el("label", { class: "header-acting", title: "Acting as a user — drives group access and role" }, [
+        el("span", { class: "tiny muted", "aria-hidden": "true" }, ["Acting as"]),
+        actingAsSelect,
+      ]),
       el("button", {
         class: "btn sm ghost",
         title: "Reset demo data",
@@ -215,32 +221,54 @@ function viewMenu() {
   const wrap = el("span", { class: "view-menu" });
   let open = false;
   let pop = null;
+  let trigger = null;
 
   const close = () => {
     open = false;
     if (pop) { pop.remove(); pop = null; }
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+      try { trigger.focus(); } catch {}
+    }
     document.removeEventListener("mousedown", onDocClick, true);
+    document.removeEventListener("keydown", onDocKey, true);
   };
   const onDocClick = (e) => {
     if (pop && !pop.contains(e.target) && !wrap.contains(e.target)) close();
+  };
+  const onDocKey = (e) => {
+    if (e.key === "Escape" && open) { e.preventDefault(); close(); }
   };
 
   const toggle = (key) => {
     update(s => { s.ui[key] = !s.ui[key]; });
   };
-  const row = (key, label) => el("label", { class: "vm-row" }, [
-    el("span", {}, [label]),
-    el("input", { type: "checkbox", checked: !!state.ui[key], onChange: () => toggle(key) }),
-  ]);
+  const row = (key, label) => {
+    const cb = el("input", { type: "checkbox", checked: !!state.ui[key], onChange: () => toggle(key) });
+    cb.id = `vm-${key}`;
+    return el("label", { class: "vm-row", htmlFor: cb.id }, [
+      el("span", {}, [label]),
+      cb,
+    ]);
+  };
 
-  const button = el("button", {
+  trigger = el("button", {
     class: "btn sm",
     title: "View options — show/hide panels",
+    "aria-haspopup": "dialog",
+    "aria-expanded": "false",
+    "aria-controls": VIEW_MENU_ID,
     onClick: (e) => {
       e.stopPropagation();
       if (open) { close(); return; }
       open = true;
-      pop = el("div", { class: "view-menu-popover", role: "menu" }, [
+      trigger.setAttribute("aria-expanded", "true");
+      pop = el("div", {
+        class: "view-menu-popover",
+        id: VIEW_MENU_ID,
+        role: "dialog",
+        "aria-label": "View options",
+      }, [
         el("div", { class: "vm-title" }, ["Layout"]),
         row("showRail",         "Far-left rail"),
         row("showLeftPanel",    "Left navigator"),
@@ -272,7 +300,7 @@ function viewMenu() {
               s.ui.showRail = false; s.ui.showLeftPanel = false; s.ui.showContextPanel = false;
               s.ui.showHeader = false; s.ui.focusMode = true; s.ui.dockVisible = false;
             });
-            toast("Maximized — press the rail toggle in the corner to restore", "info");
+            toast("Maximized — press the restore button in the corner to bring chrome back", "info");
           },
         }, ["Maximize (full screen)"]),
         el("div", { class: "vm-divider" }),
@@ -288,11 +316,17 @@ function viewMenu() {
       wrap.append(pop);
       // Close after any item action.
       pop.querySelectorAll("button").forEach(b => b.addEventListener("click", () => setTimeout(close, 50)));
-      setTimeout(() => document.addEventListener("mousedown", onDocClick, true), 0);
+      setTimeout(() => {
+        document.addEventListener("mousedown", onDocClick, true);
+        document.addEventListener("keydown", onDocKey, true);
+        // Move focus into the popover so Escape and Tab are intuitive.
+        const first = pop.querySelector("input, button");
+        if (first) try { first.focus(); } catch {}
+      }, 0);
     },
   }, ["View ▾"]);
 
-  wrap.append(button);
+  wrap.append(trigger);
   return wrap;
 }
 
@@ -308,6 +342,33 @@ function authOnlyBadge() {
     ]);
   }
   return el("button", { class: "btn sm", onClick: () => signIn(), title: "Sign in" }, ["Sign in"]);
+}
+
+/**
+ * Neutral connectivity pill — visible to every user. Shows just whether
+ * we're online/offline and whether queued writes exist. Doesn't expose
+ * server identity, version, host, or anything IT-only.
+ */
+function connectivityPill() {
+  const online = navigator.onLine !== false;
+  const m = apiMode();
+  let label, variant, title;
+  if (!online) {
+    label = "Offline"; variant = "warn-text"; title = "No network — writes will be queued.";
+  } else if (m === "server") {
+    label = "Online"; variant = "success-text"; title = "Network connection ok.";
+  } else {
+    label = "Local"; variant = "muted"; title = "Running in local demo mode (no backend).";
+  }
+  return el("span", {
+    class: "connectivity-pill " + variant,
+    title,
+    role: "status",
+    "aria-label": `Connectivity: ${label}. ${title}`,
+  }, [
+    el("span", { class: "connectivity-dot " + variant, "aria-hidden": "true" }),
+    label,
+  ]);
 }
 
 function serverBadge() {
@@ -345,7 +406,7 @@ function signIn() {
           toast("Signed in as " + (user.name || user.email), "success");
           renderHeader();
         } catch (e) {
-          toast("Login failed: " + e.message, "danger");
+          toast("Sign-in failed: " + e.message, "danger");
         }
       } },
     ],
@@ -365,14 +426,52 @@ function resolveTitle(route) {
   if (TITLES[route]) return TITLES[route];
   const base = "/" + route.split("/")[1];
   if (TITLES[base]) return TITLES[base];
-  // Object routes
-  if (route.startsWith("/team-space/")) return { title: "Team Space", crumb: "Team Space" };
-  if (route.startsWith("/channel/"))    return { title: "Channel", crumb: "Channel" };
-  if (route.startsWith("/work-board/")) return { title: "Work Board", crumb: "Work Board" };
-  if (route.startsWith("/doc/"))        return { title: "Document", crumb: "Document" };
+
+  // Object routes — try to resolve the entity by id and use its name in
+  // both the page heading and the breadcrumb (and ultimately document.title).
+  const d = state.data || {};
+  const id = route.split("/")[2];
+  const findById = (coll) => (d[coll] || []).find(x => x.id === id);
+
+  if (route.startsWith("/team-space/")) {
+    const t = findById("teamSpaces");
+    return { title: t?.name || "Team Space", crumb: t?.name || "Team Space" };
+  }
+  if (route.startsWith("/channel/")) {
+    const c = findById("channels");
+    return { title: c ? `# ${c.name}` : "Channel", crumb: c ? `# ${c.name}` : "Channel" };
+  }
+  if (route.startsWith("/work-board/")) {
+    const p = findById("projects");
+    return { title: p?.name || "Work Board", crumb: p?.name || "Work Board" };
+  }
+  if (route.startsWith("/doc/")) {
+    const doc = findById("documents");
+    return { title: doc?.name || "Document", crumb: doc?.name || "Document" };
+  }
   if (route.startsWith("/compare/"))    return { title: "Revision Compare", crumb: "Compare" };
-  if (route.startsWith("/drawing/"))    return { title: "Drawing", crumb: "Drawing" };
-  if (route.startsWith("/asset/"))      return { title: "Asset", crumb: "Asset" };
-  if (route.startsWith("/incident/"))   return { title: "Incident War Room", crumb: "Incident" };
+  if (route.startsWith("/drawing/")) {
+    const dr = findById("drawings");
+    return { title: dr?.name || "Drawing", crumb: dr?.name || "Drawing" };
+  }
+  if (route.startsWith("/asset/")) {
+    const a = findById("assets");
+    return { title: a?.name || "Asset", crumb: a?.name || "Asset" };
+  }
+  if (route.startsWith("/incident/")) {
+    const inc = findById("incidents");
+    return { title: inc ? `${inc.id} · ${inc.title}` : "Incident War Room", crumb: inc?.title || "Incident" };
+  }
   return { title: "FORGE", crumb: "" };
+}
+
+/**
+ * Update `document.title` so each tab is identifiable in the browser
+ * tab strip, history, and bookmarks. Format: `<page> · <portal?> · FORGE`.
+ */
+function syncDocumentTitle(meta, portal) {
+  const parts = [meta.title || "FORGE"];
+  if (portal) parts.push(portal.label);
+  if (parts[parts.length - 1] !== "FORGE") parts.push("FORGE");
+  document.title = parts.join(" · ");
 }

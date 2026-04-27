@@ -232,6 +232,7 @@ async function boot() {
   setupRoutes();
   attachHotkeys();
   installHotkeys();
+  installRowKeyboardHandlers();
 
   subscribe(() => {
     applyTheme();
@@ -262,6 +263,15 @@ async function boot() {
 
     const route = (state.route || "").split("?")[0];
     if (!canAccessRoute(route)) {
+      // Record the denial in the audit ledger so a security reviewer can see
+      // who attempted to reach what. Includes the user's effective groups
+      // so the reviewer can act (grant access, revoke, etc.).
+      try {
+        audit("access.denied", route, {
+          userId: currentUserId(),
+          effectiveGroupIds: effectiveGroupIds(currentUserId()),
+        });
+      } catch { /* ledger may not be ready during boot */ }
       const root = document.getElementById("screenContainer");
       if (root) {
         const required = requiredGroupsForRoute(route) || [];

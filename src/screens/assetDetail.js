@@ -289,13 +289,23 @@ function editAssignment(a) {
     actions: [
       { label: "Cancel" },
       { label: "Save", variant: "primary", onClick: () => {
+        const userId = userSel.value || null;
+        const groupId = groupSel.value || null;
+        const userName = userId ? users.find(u => u.id === userId)?.name : null;
+        const groupName = groupId ? groups.find(g => g.id === groupId)?.name : null;
+        const prevUserId = a.assignedUserId || null;
+        const prevGroupId = a.assignedGroupId || null;
         update(s => {
           const x = s.data.assets.find(y => y.id === a.id);
           if (!x) return;
-          x.assignedUserId = userSel.value || null;
-          x.assignedGroupId = groupSel.value || null;
+          x.assignedUserId = userId;
+          x.assignedGroupId = groupId;
         });
-        audit("asset.assign", a.id, { userId: userSel.value || null, groupId: groupSel.value || null });
+        audit("asset.assign", a.id, {
+          asset: a.name,
+          userId, userName, groupId, groupName,
+          previousUserId: prevUserId, previousGroupId: prevGroupId,
+        });
         toast("Assignment saved", "success");
       }},
     ],

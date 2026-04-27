@@ -379,6 +379,15 @@ button.tree-item:focus-visible {
   flex: 1;
   padding: var(--space-4);
   overflow: auto;
+  /* Reserve room for the fixed operations dock so the bottom of every
+     screen stays reachable. Overridden when the dock is hidden — see body
+     class below. */
+  padding-bottom: 64px;
+}
+
+body.dock-hidden .screen-container,
+.operations-dock.hidden ~ * .screen-container {
+  padding-bottom: var(--space-4);
 }
 
 /* Right context panel */

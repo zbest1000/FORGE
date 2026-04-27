@@ -1,4 +1,4 @@
-import { el, mount } from "../core/ui.js";
+import { el, mount, clickable } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { openPalette } from "../core/palette.js";
@@ -49,11 +49,14 @@ export function renderLeftPanel() {
     type: "button",
     class: `tree-item ${isActive ? "active" : ""} ${m.unread ? "unread" : ""}`,
           onClick: () => navigate(m.route),
+          "aria-current": isActive ? "page" : null,
         }, [
           el("span", { class: "tree-dot" }),
           el("span", { class: "tree-label" }, [m.label]),
           m.badge ? el("span", { class: "tree-count" }, [m.badge]) : null,
         ]);
+        clickable(node, () => navigate(m.route), { label: `${m.label}${m.badge ? `, ${m.badge} unread` : ""}` });
+        return node;
       }),
     ]);
   }
