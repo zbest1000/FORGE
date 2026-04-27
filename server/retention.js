@@ -21,6 +21,7 @@
 import { db, now } from "./db.js";
 import { audit } from "./audit.js";
 import { isHeld } from "./compliance.js";
+import { sweepIdempotency } from "./idempotency.js";
 
 const SCOPE_HANDLERS = {
   messages: pruneMessages,
@@ -73,6 +74,14 @@ function pruneWebhookDeliveries(c, holdActive) {
 export function runRetentionOnce() {
   const policies = db.prepare("SELECT * FROM retention_policies").all();
   const out = [];
+  // Always sweep expired idempotency keys; not driven by retention_policies
+  // because the TTL is operator-tuned via env, not per-tenant policy.
+  try {
+    const r = sweepIdempotency();
+    out.push({ id: "system:idempotency", scope: "idempotency_keys", ...r });
+  } catch (err) {
+    out.push({ id: "system:idempotency", scope: "idempotency_keys", error: String(err?.message || err) });
+  }
   for (const p of policies) {
     const handler = SCOPE_HANDLERS[p.scope];
     if (!handler) {

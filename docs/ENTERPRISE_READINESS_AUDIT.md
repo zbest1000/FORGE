@@ -17,7 +17,8 @@ Tasks marked **DONE** in this branch (`cursor/enterprise-readiness-audit-603f`):
 
 | Task | Commit | Coverage |
 |---|---|---|
-| Graceful shutdown + SSE backlog cap (B.5 #1, #5) | (this commit) | `server/main.js`, `server/sse.js`, `server/webhooks.js` |
+| Idempotency-Key contract on writes (B.5 #7) | (this commit) | `server/idempotency.js` (new), `server/main.js`, `server/retention.js`, `server/db.js` schema v10 |
+| Graceful shutdown + SSE backlog cap (B.5 #1, #5) | `14acb09` | `server/main.js`, `server/sse.js`, `server/webhooks.js` |
 | Webhook payloads moved off the audit ledger (B.4 #11) | `688d96e` | `server/webhooks.js`, `server/db.js` schema v9 |
 | Refresh tokens + session revocation + sign-out-everywhere (B.1 #5) | `8624a4b` | `server/sessions.js` (new), `server/routes/auth.js`, `server/main.js`, `server/db.js` schema v8 |
 | E4 MFA (TOTP + recovery codes + two-step login) | `1a3a027` | `server/mfa.js` (new), `server/routes/auth.js` |

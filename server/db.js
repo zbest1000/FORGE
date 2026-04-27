@@ -20,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -896,6 +896,37 @@ function migrate() {
         );
       `);
       setVersion(9);
+    }
+
+    if (getVersion() < 10) {
+      // Idempotency-key cache for write APIs.
+      //
+      // Keyed by (user, key) so two tenants can independently use the
+      // same key without collision; the request fingerprint is hashed
+      // so a replay with a *different* body on the same key is rejected
+      // with 409 (per RFC draft-ietf-httpapi-idempotency-key §2.4).
+      //
+      // The cache also tracks an `in_flight` state so concurrent
+      // duplicate requests don't both reach the underlying handler.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS idempotency_keys (
+          user_id TEXT NOT NULL,
+          key TEXT NOT NULL,
+          method TEXT NOT NULL,
+          path TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          status INTEGER,
+          response_body TEXT,
+          response_headers TEXT,
+          state TEXT NOT NULL DEFAULT 'in_flight',
+          created_at TEXT NOT NULL,
+          completed_at TEXT,
+          expires_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_at);
+      `);
+      setVersion(10);
     }
   })();
 }

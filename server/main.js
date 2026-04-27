@@ -17,6 +17,7 @@ import { audit } from "./audit.js";
 import { userById } from "./auth.js";
 import { resolveToken } from "./tokens.js";
 import { authenticateAccess } from "./sessions.js";
+import { registerIdempotency } from "./idempotency.js";
 import { attachSSE } from "./sse.js";
 import { register_ as registerMetrics } from "./metrics.js";
 
@@ -251,6 +252,10 @@ async function registerWithFeature(plugin, feature) {
     await scope.register(plugin);
   });
 }
+
+// Idempotency-Key handling. Registered before the routes so its
+// preHandler can short-circuit replays before any handler-side work.
+await registerIdempotency(app);
 
 await app.register(authRoutes);
 await app.register(coreRoutes);
