@@ -6,6 +6,7 @@ import {
 } from "../compliance.js";
 import { db, now, uuid } from "../db.js";
 import { audit } from "../audit.js";
+import { applyEtag, requireIfMatch } from "../etag.js";
 
 function parseJson(row, fields) {
   const out = { ...row };
@@ -53,10 +54,13 @@ export default async function complianceRoutes(fastify) {
   fastify.patch("/api/compliance/legal-holds/:id", { preHandler: require_("admin.view") }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM legal_holds WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
+    if (!requireIfMatch(req, reply, row)) return;
     const status = req.body?.status || row.status;
     db.prepare("UPDATE legal_holds SET status = ? WHERE id = ?").run(status, row.id);
     audit({ actor: req.user.id, action: "compliance.legal_hold.update", subject: row.id, detail: { status } });
-    return db.prepare("SELECT * FROM legal_holds WHERE id = ?").get(row.id);
+    const updated = db.prepare("SELECT * FROM legal_holds WHERE id = ?").get(row.id);
+    applyEtag(reply, updated);
+    return updated;
   });
 
   fastify.get("/api/compliance/evidence", { preHandler: require_("admin.view") }, async () => listRows("compliance_evidence").map(r => parseJson(r, ["object_refs"])));
@@ -78,10 +82,13 @@ export default async function complianceRoutes(fastify) {
   fastify.patch("/api/compliance/subprocessors/:id", { preHandler: require_("admin.view") }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM subprocessors WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
+    if (!requireIfMatch(req, reply, row)) return;
     db.prepare("UPDATE subprocessors SET risk_rating = COALESCE(@risk, risk_rating), status = COALESCE(@status, status), updated_at = @ts WHERE id = @id")
       .run({ id: row.id, risk: req.body?.risk || null, status: req.body?.status || null, ts: now() });
     audit({ actor: req.user.id, action: "compliance.subprocessor.update", subject: row.id });
-    return db.prepare("SELECT * FROM subprocessors WHERE id = ?").get(row.id);
+    const updated = db.prepare("SELECT * FROM subprocessors WHERE id = ?").get(row.id);
+    applyEtag(reply, updated);
+    return updated;
   });
 
   fastify.get("/api/compliance/risks", { preHandler: require_("admin.view") }, async () => listRows("risk_register"));
@@ -94,10 +101,13 @@ export default async function complianceRoutes(fastify) {
   fastify.patch("/api/compliance/risks/:id", { preHandler: require_("admin.view") }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM risk_register WHERE id = ?").get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not found" });
+    if (!requireIfMatch(req, reply, row)) return;
     db.prepare("UPDATE risk_register SET status = COALESCE(@status, status), treatment = COALESCE(@mitigation, treatment), updated_at = @ts WHERE id = @id")
       .run({ id: row.id, status: req.body?.status || null, mitigation: req.body?.mitigation || null, ts: now() });
     audit({ actor: req.user.id, action: "compliance.risk.update", subject: row.id });
-    return db.prepare("SELECT * FROM risk_register WHERE id = ?").get(row.id);
+    const updated = db.prepare("SELECT * FROM risk_register WHERE id = ?").get(row.id);
+    applyEtag(reply, updated);
+    return updated;
   });
 
   fastify.get("/api/compliance/ai-systems", { preHandler: require_("admin.view") }, async () => listRows("ai_system_inventory").map(r => parseJson(r, ["data_categories"])));

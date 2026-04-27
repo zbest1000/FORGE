@@ -51,6 +51,7 @@ import { stopWebhookWorker } from "./webhooks.js";
 import { drain as drainAudit } from "./audit.js";
 import { shutdownSSE } from "./sse.js";
 import { shutdownTracing } from "./tracing.js";
+import { errorHandler, buildEnvelope } from "./errors.js";
 
 initTracing("forge-api");
 import { startOutboxWorker } from "./outbox.js";
@@ -68,6 +69,34 @@ const PORT = config.port;
 const HOST = config.host;
 const JWT_SECRET = config.jwtSecret;
 
+// API versioning shim is wired through `rewriteUrl` because Fastify
+// route resolution runs *before* the `onRequest` hook chain, so any
+// rewrite has to happen at the constructor layer to be visible to the
+// router. `/api/v1/...` is the canonical, versioned URL space; we
+// rewrite it to the unversioned handler so existing route registrations
+// continue to match.
+const VERSION_DEPRECATION_EXEMPT = new Set([
+  "/api/health",
+  "/api/metrics/series",
+  "/api/metrics/snapshot",
+]);
+function versionRewrite(rawReq) {
+  const original = rawReq.url || "";
+  const queryIdx = original.indexOf("?");
+  const pathPart = queryIdx === -1 ? original : original.slice(0, queryIdx);
+  const queryPart = queryIdx === -1 ? "" : original.slice(queryIdx);
+  if (pathPart.startsWith("/api/v1/")) {
+    // Stash the original path on the raw request so the response hook
+    // can tell canonical (versioned) requests apart from legacy ones.
+    rawReq.__forgeApiVersion = "v1";
+    return "/api" + pathPart.slice("/api/v1".length) + queryPart;
+  }
+  if (pathPart.startsWith("/api/")) {
+    rawReq.__forgeApiVersion = "legacy";
+  }
+  return original;
+}
+
 const app = Fastify({
   logger: {
     transport: process.env.NODE_ENV === "production" ? undefined : {
@@ -78,6 +107,7 @@ const app = Fastify({
   },
   bodyLimit: 10 * 1024 * 1024,
   trustProxy: true,
+  rewriteUrl: versionRewrite,
 });
 
 await app.register(cors, {
@@ -139,6 +169,51 @@ await app.register(rateLimit, {
 });
 await app.register(jwt, { secret: JWT_SECRET });
 await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } });
+
+// API versioning surface.
+//
+// `rewriteUrl` (above) handles canonical `/api/v1/...` requests by
+// stripping the `/v1` segment so the existing handlers keep matching.
+// This `onRequest` hook handles the *response* side: legacy `/api/...`
+// requests (the unversioned alias) get a `Deprecation` + `Link` pair
+// so callers can discover the canonical URL. The `/api/health` and
+// `/api/metrics/*` paths are stable contracts and stay clean.
+//
+// `req.headers["x-original-url"]` and `req.url` both reflect the
+// rewritten URL by the time this hook runs, so the only way to tell a
+// canonical v1 request from a legacy one is to inspect `req.raw.url`
+// after rewrite — fastify also exposes the raw socket request, but
+// `rewriteUrl` mutates that. We instead use a per-request marker set
+// in `rewriteUrl` itself? No — Fastify constructs the request after
+// rewrite. Simpler: this hook checks the *current* URL and emits
+// deprecation only when the URL was NOT taken from a `/api/v1/...`
+// path. A canonical request never appears under `/api/health` because
+// Fastify will rewrite `/api/v1/health` → `/api/health` *before* this
+// hook runs; we therefore read the `Referer`-style header that the
+// rewrite leaves behind. To avoid that complexity, we instead set a
+// marker header on the response from inside `rewriteUrl`: not possible
+// (no reply object). Final design: stash the original URL on the
+// `request.raw` before rewrite happens. That's what Fastify does
+// internally; we read `req.raw.url` (post-rewrite) and look at
+// `req.headers["x-forge-original-url"]` if present (set by the rewrite
+// hook below). This avoids any reliance on framework internals.
+app.addHook("onRequest", async (req, reply) => {
+  const apiVersion = req.raw?.__forgeApiVersion || null;
+  if (apiVersion !== "legacy") return; // canonical or non-API request
+  const pathPart = (req.url || "").split("?")[0];
+  if (VERSION_DEPRECATION_EXEMPT.has(pathPart)) return;
+  const successor = "/api/v1" + pathPart.slice("/api".length);
+  reply.header("Deprecation", "true");
+  reply.header("Sunset", "Wed, 31 Dec 2025 23:59:59 GMT");
+  reply.header("Link", `<${successor}>; rel="successor-version"`);
+});
+
+// Request id propagation. Fastify already generates `req.id`; surface
+// it on the response so clients (and SIEMs) can correlate logs across
+// the boundary, and so unified error envelopes can include it.
+app.addHook("onRequest", async (req, reply) => {
+  if (req.id) reply.header("X-Request-Id", req.id);
+});
 
 // Auth resolution. Two token formats are accepted:
 //   - JWT bearer  (signed by FORGE_JWT_SECRET; short-lived)
@@ -308,18 +383,36 @@ await app.register(fStatic, {
   },
 });
 
+// Unified error handler. All thrown errors and validation failures
+// flow through the structured envelope from `server/errors.js`.
+app.setErrorHandler(errorHandler());
+
 // SPA fallback: any non-API, non-file path that missed the static handler
 // gets index.html so deep links (`/admin`, `/doc/DOC-1`) work after reload.
 app.setNotFoundHandler((req, reply) => {
   const p = (req.url || "/").split("?")[0];
   if (p.startsWith("/api/") || p.startsWith("/v1/") || p.startsWith("/metrics") || p.startsWith("/graphql")) {
-    return reply.code(404).send({ error: "not found", path: p });
+    reply.code(404);
+    return reply.send(buildEnvelope({
+      status: 404,
+      code: "not_found",
+      message: "not found",
+      requestId: req.id || null,
+      details: { path: p },
+    }));
   }
   // Paths that look like files (have an extension) should 404 rather than
   // serve HTML — prevents broken <img>/<script> from loading index.html.
   const last = p.split("/").pop() || "";
   if (last.includes(".")) {
-    return reply.code(404).send({ error: "not found", path: p });
+    reply.code(404);
+    return reply.send(buildEnvelope({
+      status: 404,
+      code: "not_found",
+      message: "not found",
+      requestId: req.id || null,
+      details: { path: p },
+    }));
   }
   return reply.type("text/html").send(fs.readFileSync(path.join(CLIENT_ROOT, "index.html")));
 });

@@ -20,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -927,6 +927,35 @@ function migrate() {
         CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_at);
       `);
       setVersion(10);
+    }
+
+    if (getVersion() < 11) {
+      // v11: tenant scope on audit_log.
+      //
+      // Until now `audit_log` rows carried no tenant identity, so an
+      // operator with `view` capability in ORG-1 could read every
+      // ORG-2 audit entry through `/api/audit`. Add a nullable
+      // `org_id` column and backfill from `users.org_id` where the
+      // entry's `actor` matches a known user. Rows authored by
+      // system actors (`actor IN ('system', 'webhooks', 'retention')`)
+      // remain `org_id = NULL` and are visible to every tenant; this
+      // is intentional so global lifecycle events (boot, retention
+      // sweeps, webhook deliveries) keep showing up everywhere.
+      //
+      // The hash chain is unchanged: `org_id` is metadata, not part
+      // of the canonicalized payload. Existing rows keep their
+      // signatures intact and verifyLedger() still rebuilds exactly
+      // the same hashes.
+      db.exec(`
+        ALTER TABLE audit_log ADD COLUMN org_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_audit_org_seq ON audit_log(org_id, seq);
+        UPDATE audit_log SET org_id = (
+          SELECT org_id FROM users WHERE users.id = audit_log.actor
+        )
+        WHERE org_id IS NULL
+          AND actor IN (SELECT id FROM users);
+      `);
+      setVersion(11);
     }
   })();
 }

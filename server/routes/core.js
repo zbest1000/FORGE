@@ -9,6 +9,7 @@ import { canTransitionRevision, cascadeOnApprove } from "../../src/core/fsm/revi
 import { canTransitionApproval } from "../../src/core/fsm/approval.js";
 import { allows, filterAllowed, requireAccess, requireAuth } from "../acl.js";
 import { tenantOrgId, tenantWhere, requireTenant, orgForRow } from "../tenant.js";
+import { applyEtag, requireIfMatch } from "../etag.js";
 
 function mapRowJson(row, fields) {
   const out = { ...row };
@@ -236,10 +237,19 @@ export default async function coreRoutes(fastify) {
     return { id };
   });
 
+  fastify.get("/api/work-items/:id", { preHandler: require_("view") }, async (req, reply) => {
+    const row = db.prepare("SELECT * FROM work_items WHERE id = ?").get(req.params.id);
+    if (!requireTenant(req, reply, row, "work_items")) return;
+    if (!requireAccess(req, reply, row, "view")) return;
+    applyEtag(reply, row);
+    return mapRowJson(row, ["acl", "labels", "blockers"]);
+  });
+
   fastify.patch("/api/work-items/:id", { preHandler: require_("edit") }, async (req, reply) => {
     const row = db.prepare("SELECT * FROM work_items WHERE id = ?").get(req.params.id);
     if (!requireTenant(req, reply, row, "work_items")) return;
     if (!requireAccess(req, reply, row, "edit")) return;
+    if (!requireIfMatch(req, reply, row)) return;
     const patch = req.body || {};
     const allowed = ["title", "description", "assignee_id", "status", "severity", "due"];
     const sets = [];
@@ -252,12 +262,17 @@ export default async function coreRoutes(fastify) {
     }
     if ("blockers" in patch) { sets.push("blockers = @blockers"); params.blockers = JSON.stringify(patch.blockers); }
     if ("labels" in patch) { sets.push("labels = @labels"); params.labels = JSON.stringify(patch.labels); }
-    if (!sets.length) return row;
+    if (!sets.length) {
+      applyEtag(reply, row);
+      return row;
+    }
     sets.push("updated_at = @now");
     db.prepare(`UPDATE work_items SET ${sets.join(", ")} WHERE id = @id`).run(params);
     audit({ actor: req.user.id, action: "workitem.update", subject: row.id, detail: { changes: patch } });
     broadcast("work-items", { id: row.id });
-    return db.prepare("SELECT * FROM work_items WHERE id = ?").get(row.id);
+    const updated = db.prepare("SELECT * FROM work_items WHERE id = ?").get(row.id);
+    applyEtag(reply, updated);
+    return updated;
   });
 
   // ---------- incidents ----------
@@ -340,10 +355,15 @@ export default async function coreRoutes(fastify) {
   });
 
   // ---------- audit ----------
+  // Tenant-scoped: a request from ORG-1 only sees ORG-1's entries plus
+  // global system events (`org_id IS NULL`). Cross-tenant audit access
+  // is reserved for the global ops backplane (out-of-band CLI), not the
+  // REST surface.
   fastify.get("/api/audit", { preHandler: require_("view") }, async (req) => {
+    const orgId = tenantOrgId(req);
     const limit = Math.min(500, Number(req.query.limit || 100));
     const { recent } = await import("../audit.js");
-    return recent(limit);
+    return recent(limit, { orgId });
   });
 
   fastify.get("/api/audit/verify", { preHandler: require_("view") }, async () => {
@@ -352,8 +372,9 @@ export default async function coreRoutes(fastify) {
   });
 
   fastify.get("/api/audit/export", { preHandler: require_("view") }, async (req, reply) => {
+    const orgId = tenantOrgId(req);
     const { exportAuditPack } = await import("../audit.js");
-    const pack = await exportAuditPack({ since: req.query.since || null, until: req.query.until || null });
+    const pack = await exportAuditPack({ since: req.query.since || null, until: req.query.until || null, orgId });
     reply.header("Content-Type", "application/json");
     reply.header("Content-Disposition", `attachment; filename=forge-audit-${new Date().toISOString().replace(/[:.]/g,"-")}.json`);
     return pack;

@@ -8,9 +8,10 @@ const GENESIS = "0".repeat(64);
 
 const stmtLast = db.prepare("SELECT hash, seq FROM audit_log ORDER BY seq DESC LIMIT 1");
 const stmtInsert = db.prepare(`
-  INSERT INTO audit_log (id, ts, actor, action, subject, detail, trace_id, prev_hash, hash, seq)
-  VALUES (@id, @ts, @actor, @action, @subject, @detail, @trace_id, @prev_hash, @hash, @seq)
+  INSERT INTO audit_log (id, ts, actor, action, subject, detail, trace_id, prev_hash, hash, seq, org_id)
+  VALUES (@id, @ts, @actor, @action, @subject, @detail, @trace_id, @prev_hash, @hash, @seq, @org_id)
 `);
+const stmtUserOrg = db.prepare("SELECT org_id FROM users WHERE id = ?");
 
 let _tail = null;
 let _seq = 0;
@@ -26,18 +27,31 @@ function initState() {
 /**
  * Append an audit entry. Returns the entry synchronously (with placeholder
  * hash) and finalizes hashing on the queue. `verifyLedger` awaits the queue.
+ *
+ * `orgId` tags the entry with its tenant for `/api/audit` filtering. When
+ * not supplied, the writer's org is looked up from `users` if the actor
+ * is a known user id; otherwise the entry stays `org_id = NULL` and is
+ * visible to every tenant (used for system events: boot, shutdown,
+ * retention, webhook delivery, license rotation, etc.).
  */
-export function audit({ actor, action, subject, detail = {}, traceId = null }) {
+export function audit({ actor, action, subject, detail = {}, traceId = null, orgId = null }) {
   initState();
   _seq += 1;
+  const actorStr = String(actor || "system");
+  let resolvedOrg = orgId || null;
+  if (!resolvedOrg) {
+    try { resolvedOrg = stmtUserOrg.get(actorStr)?.org_id || null; }
+    catch { /* ignore — meta query failure should not break audit append */ }
+  }
   const entry = {
     id: "AUD-" + String(_seq).padStart(8, "0"),
     ts: new Date().toISOString(),
-    actor: String(actor || "system"),
+    actor: actorStr,
     action: String(action),
     subject: String(subject || ""),
     detail,
     trace_id: traceId,
+    org_id: resolvedOrg,
     prev_hash: null,
     hash: null,
     seq: _seq,
@@ -45,6 +59,9 @@ export function audit({ actor, action, subject, detail = {}, traceId = null }) {
 
   _pending = _pending.then(async () => {
     entry.prev_hash = _tail;
+    // The canonical payload deliberately excludes `org_id` so historic
+    // entries (which never carried one) keep verifying after the v11
+    // schema bump. `org_id` is metadata, not part of the chain.
     const payload = {
       id: entry.id, ts: entry.ts, actor: entry.actor, action: entry.action,
       subject: entry.subject, detail: entry.detail, trace_id: entry.trace_id,
@@ -57,7 +74,7 @@ export function audit({ actor, action, subject, detail = {}, traceId = null }) {
         id: entry.id, ts: entry.ts, actor: entry.actor, action: entry.action,
         subject: entry.subject, detail: JSON.stringify(entry.detail || {}),
         trace_id: entry.trace_id, prev_hash: entry.prev_hash,
-        hash: entry.hash, seq: entry.seq,
+        hash: entry.hash, seq: entry.seq, org_id: entry.org_id,
       });
     } catch (err) {
       console.error("audit insert failed", err, entry);
@@ -100,14 +117,19 @@ export async function verifyLedger() {
 
 /**
  * Produce an exportable audit pack signed with HMAC-SHA256.
+ *
+ * When `orgId` is supplied, only entries belonging to that tenant
+ * (plus `org_id = NULL` system events) are included. Caller can pass
+ * `orgId = null` (default) for a global pack, used by ops tooling.
  */
-export async function exportAuditPack({ since = null, until = null } = {}) {
+export async function exportAuditPack({ since = null, until = null, orgId = null } = {}) {
   await drain();
   let sql = "SELECT * FROM audit_log";
   const params = {};
   const wheres = [];
   if (since) { wheres.push("ts >= @since"); params.since = since; }
   if (until) { wheres.push("ts <= @until"); params.until = until; }
+  if (orgId) { wheres.push("(org_id = @org_id OR org_id IS NULL)"); params.org_id = orgId; }
   if (wheres.length) sql += " WHERE " + wheres.join(" AND ");
   sql += " ORDER BY seq";
   const rows = db.prepare(sql).all(params).map(r => ({
@@ -129,8 +151,12 @@ export async function verifyAuditPack(pack) {
   return verifyHMAC(canonicalJSON(rest), signature.signature);
 }
 
-export function recent(limit = 100) {
-  return db.prepare("SELECT * FROM audit_log ORDER BY seq DESC LIMIT ?").all(limit).map(r => ({
+export function recent(limit = 100, { orgId = null } = {}) {
+  const sql = orgId
+    ? "SELECT * FROM audit_log WHERE org_id = ? OR org_id IS NULL ORDER BY seq DESC LIMIT ?"
+    : "SELECT * FROM audit_log ORDER BY seq DESC LIMIT ?";
+  const params = orgId ? [orgId, limit] : [limit];
+  return db.prepare(sql).all(...params).map(r => ({
     ...r,
     detail: JSON.parse(r.detail || "{}"),
   }));
