@@ -6,6 +6,7 @@ import { mode as apiMode, login as apiLogin, logout as apiLogout } from "../core
 import { modal, formRow, input, toast } from "../core/ui.js";
 import { portalById, effectiveGroupIds, currentUserId, isOrgOwner } from "../core/groups.js";
 import { license as currentLicense, licenseBanner } from "../core/license.js";
+import { ROLES } from "../core/permissions.js";
 
 function viewerHasIT() {
   if (isOrgOwner()) return true;
@@ -39,8 +40,9 @@ export function renderHeader() {
   const route = state.route || "/home";
   const meta = resolveTitle(route);
 
-  const roleSelect = select(ROLES, {
+  const actingAsSelect = select(ROLES, {
     value: state.ui.role,
+    "aria-label": "Acting as role",
     onChange: (e) => update(s => { s.ui.role = e.target.value; s.ui.roleOverridden = true; }),
   });
 
@@ -217,6 +219,8 @@ function notifyBell() {
   wrap.append(btn);
   return wrap;
 }
+
+const VIEW_MENU_ID = "view-menu-popover";
 
 function viewMenu() {
   const wrap = el("span", { class: "view-menu" });

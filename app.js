@@ -7,13 +7,13 @@ import { openPalette } from "./src/core/palette.js";
 import { initI3X } from "./src/core/i3x/client.js";
 import { normalizeSeed } from "./src/core/normalize.js";
 import * as auditMod from "./src/core/audit.js";
-import { initAuditLedger } from "./src/core/audit.js";
+import { initAuditLedger, audit } from "./src/core/audit.js";
 import { buildIndex, scheduleRebuild } from "./src/core/search.js";
 import { installHotkeys } from "./src/core/hotkeys.js";
 import { probe, mode, getToken, login, logout, api } from "./src/core/api.js";
 import { canAccessRoute, requiredGroupsForRoute, effectiveGroupIds, currentUserId, currentUser } from "./src/core/groups.js";
 import { loadLicense, onLicenseChange } from "./src/core/license.js";
-import { el, mount, toast } from "./src/core/ui.js";
+import { el, mount, toast, installRowKeyboardHandlers } from "./src/core/ui.js";
 
 import { renderRail } from "./src/shell/rail.js";
 import { renderLeftPanel } from "./src/shell/leftPanel.js";
