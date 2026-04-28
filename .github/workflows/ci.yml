@@ -57,6 +57,9 @@ jobs:
             node --check "$f"
           done
 
+      - name: Type-check JS (catches undefined identifiers, missing imports)
+        run: npm run typecheck
+
   # ---------------------------------------------------------------------------
   # 2. Build + tests across supported Node versions.
   # ---------------------------------------------------------------------------

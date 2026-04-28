@@ -30,11 +30,13 @@ import { renderSearch } from "./src/screens/search.js";
 import { renderTeamSpacesIndex, renderTeamSpace } from "./src/screens/teamSpaces.js";
 import { renderChannel } from "./src/screens/channel.js";
 import { renderProjectsIndex, renderWorkBoard } from "./src/screens/workBoard.js";
-import { renderDocsIndex, renderDocViewer } from "./src/screens/docViewer.js";
+// docViewer is lazy — it pulls in PDF.js, marked, dompurify, and the
+// revision compare diff. Most landing routes don't need any of that.
 import { renderApprovals } from "./src/screens/approvals.js";
-import { renderIntegrations } from "./src/screens/integrations.js";
-import { renderOperationsData } from "./src/screens/operations.js";
-import { renderAdmin } from "./src/screens/admin.js";
+// admin, integrations, operations, and the doc viewer pair are lazy-loaded
+// so they don't bloat the eager bundle. They're heavy screens (admin alone
+// is ~100 KB minified), and most users hit /home or /hub first without ever
+// going to admin.
 
 // Heavy / specialist screens are lazy-loaded the first time the user
 // navigates to them. This keeps the initial bundle small — the WebGL,
@@ -86,8 +88,10 @@ function setupRoutes() {
   defineRoute("/projects", renderProjectsIndex);
   defineRoute("/work-board/:id", renderWorkBoard);
 
-  defineRoute("/docs", renderDocsIndex);
-  defineRoute("/doc/:id", renderDocViewer);
+  defineRoute("/docs",
+    lazy(() => import("./src/screens/docViewer.js"), "renderDocsIndex", "Documents"));
+  defineRoute("/doc/:id",
+    lazy(() => import("./src/screens/docViewer.js"), "renderDocViewer", "Document"));
   defineRoute("/compare/:left/:right",
     lazy(() => import("./src/screens/revisionCompare.js"), "renderRevisionCompare", "Revision Compare"));
 
@@ -108,11 +112,13 @@ function setupRoutes() {
     lazy(() => import("./src/screens/incident.js"), "renderIncident", "Incident"));
 
   defineRoute("/approvals", renderApprovals);
-  defineRoute("/operations", renderOperationsData);
+  defineRoute("/operations",
+    lazy(() => import("./src/screens/operations.js"), "renderOperationsData", "Operations Data"));
   defineRoute("/ai",
     lazy(() => import("./src/screens/ai.js"), "renderAI", "AI Workspace"));
 
-  defineRoute("/integrations", renderIntegrations);
+  defineRoute("/integrations",
+    lazy(() => import("./src/screens/integrations.js"), "renderIntegrations", "Integrations"));
   defineRoute("/integrations/mqtt",
     lazy(() => import("./src/screens/mqtt.js"), "renderMQTT", "MQTT"));
   defineRoute("/integrations/opcua",
@@ -122,8 +128,10 @@ function setupRoutes() {
 
   defineRoute("/dashboards",
     lazy(() => import("./src/screens/dashboards.js"), "renderDashboards", "Dashboards"));
-  defineRoute("/admin", renderAdmin);
-  defineRoute("/admin/:section", renderAdmin);
+  defineRoute("/admin",
+    lazy(() => import("./src/screens/admin.js"), "renderAdmin", "Admin"));
+  defineRoute("/admin/:section",
+    lazy(() => import("./src/screens/admin.js"), "renderAdmin", "Admin"));
   defineRoute("/spec",
     lazy(() => import("./src/screens/spec.js"), "renderSpec", "Spec Reference"));
 
@@ -224,7 +232,9 @@ async function boot() {
   // Kick off license fetch (server mode only). We don't await it here so
   // first paint is unblocked; screens that depend on entitlements wait
   // on `loadLicense()` themselves. License changes re-render the shell.
-  await healthP;
+  // Health probe also stays unawaited — the shell can render in offline /
+  // demo mode and the connection state will fall in once /api/health
+  // resolves a few hundred ms later.
   loadLicense();
   onLicenseChange(() => { renderShell(); rerenderCurrent(); });
   // Kick off index build; MiniSearch loads async, hand-rolled fallback is
@@ -236,11 +246,23 @@ async function boot() {
   installHotkeys();
   installRowKeyboardHandlers();
 
+  // Coalesce re-renders to one per animation frame. A burst of updates (e.g.
+  // typing in an input that mutates state on each keystroke, or a server
+  // response that updates several collections at once) used to fire
+  // renderShell + rerenderCurrent + scheduleRebuild N times. Now they run
+  // at most once per frame. scheduleRebuild() itself debounces 250 ms, so
+  // calling it on every UI-only change is wasted work but not harmful.
+  let _renderScheduled = false;
   subscribe(() => {
-    applyTheme();
-    renderShell();
-    rerenderCurrent();
-    scheduleRebuild();
+    if (_renderScheduled) return;
+    _renderScheduled = true;
+    requestAnimationFrame(() => {
+      _renderScheduled = false;
+      applyTheme();
+      renderShell();
+      rerenderCurrent();
+      scheduleRebuild();
+    });
   });
 
   // Re-render the UNS browser at a slow cadence so VQT values refresh live.

@@ -25,7 +25,7 @@ export default async function automationRoutes(fastify) {
   });
 
   fastify.post("/api/automations/n8n/workflows/:id/activate", {
-    preHandler: require_("admin.view"),
+    preHandler: require_("admin.edit"),
     schema: { params: IdParam },
   }, async (req, reply) => {
     if (!isConfigured()) return reply.code(503).send({ error: "n8n not configured" });
@@ -34,7 +34,7 @@ export default async function automationRoutes(fastify) {
   });
 
   fastify.post("/api/automations/n8n/workflows/:id/deactivate", {
-    preHandler: require_("admin.view"),
+    preHandler: require_("admin.edit"),
     schema: { params: IdParam },
   }, async (req, reply) => {
     if (!isConfigured()) return reply.code(503).send({ error: "n8n not configured" });
