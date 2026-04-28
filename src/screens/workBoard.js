@@ -59,7 +59,6 @@ export function renderWorkBoard({ id }) {
     view === "calendar" ? calendarView(visibleItems, id) :
     view === "deps"     ? dependencyView(visibleItems) :
     kanbanView(visibleItems, batch, batchKey),
-    automationCard(project, id),
   ]);
 }
 
@@ -283,6 +282,11 @@ function header(project, view, filter, count, batch, viewKey, filterKey, batchKe
           onClick: () => { sessionStorage.setItem(viewKey, v); renderWorkBoard({ id }); },
         }, [label(v)]))
       ),
+      el("button", {
+        class: "btn sm ghost",
+        title: "View all automation rules that run on this project (event routing, MQTT/OPC UA/Modbus ingestion, retention, lifecycle automations)",
+        onClick: () => showAutomationRulesModal(),
+      }, ["⚙ Rules"]),
       el("button", { class: "btn sm primary", disabled: !can("create"), onClick: () => openNewItem(id) }, ["+ New item"]),
     ]),
   ]);
@@ -664,19 +668,78 @@ function dependencyViewSvg(items) {
 }
 
 // ---------- automation rules ----------
-function automationCard(project, projectId) {
-  const rules = [
-    "Any ERP event → Task",
-    "Alarm SEV-1/SEV-2 → Incident",
-    "OPC UA state_change → Asset activity",
-    "Approved revision → auto-supersede prior IFC",
-  ];
-  return card("Automation rules (§6.2 / §9.3)", el("div", { class: "stack" }, [
-    ...rules.map(r => el("div", { class: "activity-row" }, [
-      badge("rule", "info"), el("span", { class: "small" }, [r]),
+//
+// Comprehensive listing of every automated behavior the system runs on
+// behalf of a project, organized by category. Rendered on demand via the
+// header "Rules" button, not as a constantly-visible card on the work
+// board (it's reference material, not daily-driver UI).
+
+const AUTOMATION_RULES = [
+  {
+    section: "Event routing (src/core/events.js · §9.3)",
+    rules: [
+      { trigger: "alarm event with severity SEV-1/SEV-2/critical/high", outcome: "Auto-create Incident with timeline anchor + asset link" },
+      { trigger: "any alarm event", outcome: "Post a system message to the incident-kind channel" },
+      { trigger: "po.created event OR source_type === \"erp\"", outcome: "Auto-create a Task work item bound to the asset/project" },
+      { trigger: "opcua.state_change event", outcome: "Append entry to asset timeline (provenance: source, actor, ts)" },
+      { trigger: "any event with asset_ref", outcome: "Fan out to subscribed followers of that asset" },
+    ],
+  },
+  {
+    section: "Protocol ingestion (server/connectors)",
+    rules: [
+      { trigger: "MQTT broker message on FORGE_MQTT_TOPICS (default forge/#)", outcome: "Normalise to canonical event envelope and pipe through routing rules" },
+      { trigger: "OPC UA monitored-node value change (security mode + cert)", outcome: "Emit state_change event with old/new value, severity inferred" },
+      { trigger: "Modbus TCP register write (FORGE_MODBUS_WRITE_MODE=live)", outcome: "Direct write to PLC + audit; default mode is simulated for safety" },
+      { trigger: "Modbus TCP register polling (per-register polling_ms)", outcome: "Sample is recorded to historian_samples (and/or pluggable historian backend)" },
+      { trigger: "Inbound POST /api/events from external systems (ERP, n8n, custom)", outcome: "Same canonical envelope + dedupe by dedupe_key" },
+    ],
+  },
+  {
+    section: "Background workers (server)",
+    rules: [
+      { trigger: "Saved-search subscription tick (default 60s)", outcome: "Match query against latest data; fire notification if results changed" },
+      { trigger: "Retention worker tick (default 24h)", outcome: "Soft- or hard-delete rows matching policy.scope older than policy.days; respects active legal_holds" },
+      { trigger: "Audit-tamper worker tick (default 1h)", outcome: "Re-hash audit_log and verify chain integrity end-to-end" },
+      { trigger: "Outbox worker tick (5s)", outcome: "Publish queued events; DLQ after MAX_ATTEMPTS with structured error" },
+      { trigger: "Webhook delivery (per outbox event with subscribed webhook)", outcome: "POST signed body to subscriber URL with retry + signature" },
+      { trigger: "Metrics rollup tick (5m)", outcome: "Compute 9 KPI metrics from current state, write daily snapshot" },
+    ],
+  },
+  {
+    section: "Lifecycle automations",
+    rules: [
+      { trigger: "Revision transitions to IFC", outcome: "Auto-supersede the document's prior IFC revision; update document.current_revision_id" },
+      { trigger: "Approval signing/decision", outcome: "Append HMAC-signed entry to approval.chain; audit ledger entry; update subject row" },
+      { trigger: "Recipe version activate", outcome: "Mark previous active version as superseded; archive event to MSSQL recipe-history adapter (if configured)" },
+      { trigger: "Login + MFA (if enabled)", outcome: "Mint refresh + access JWT pair; lockout after FORGE_LOGIN_LOCKOUT_THRESHOLD failures per account+IP" },
+      { trigger: "Workspace switch", outcome: "Re-evaluate group access for current route; redirect to /home if access lost" },
+    ],
+  },
+];
+
+function showAutomationRulesModal() {
+  const sections = AUTOMATION_RULES.map(group => el("div", { class: "stack", style: { gap: "6px" } }, [
+    el("div", { class: "tiny strong", style: { textTransform: "uppercase", letterSpacing: "0.05em", marginTop: "8px" } }, [group.section]),
+    ...group.rules.map(r => el("div", { class: "activity-row", style: { gap: "10px", alignItems: "flex-start" } }, [
+      badge("rule", "info"),
+      el("div", { class: "stack", style: { gap: "2px", flex: "1", minWidth: "0" } }, [
+        el("div", { class: "small" }, [r.trigger]),
+        el("div", { class: "tiny muted" }, ["→ ", r.outcome]),
+      ]),
     ])),
-    el("div", { class: "tiny muted" }, ["Rules run in the event engine. See /integrations for live event feed."]),
   ]));
+
+  modal({
+    title: "Automation rules",
+    body: el("div", { class: "stack", style: { gap: "8px", maxHeight: "70vh", overflow: "auto" } }, [
+      el("div", { class: "tiny muted" }, [
+        "Every automated behavior the system runs. Source-of-truth lives in code (src/core/events.js, server/connectors/*, server/*.js workers); this view is read-only reference material. Spec §6.2 / §9.3.",
+      ]),
+      ...sections,
+    ]),
+    actions: [{ label: "Close" }],
+  });
 }
 
 // ---------- actions ----------
