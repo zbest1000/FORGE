@@ -421,3 +421,74 @@ export function select(options, props = {}) {
 export function textarea(props = {}) {
   return el("textarea", { class: "textarea", ...props });
 }
+
+// Tabs primitive — single source of truth for tab strips. Persists the
+// active tab in sessionStorage when `sessionKey` is provided.
+//
+// Usage:
+//   tabs({
+//     tabs: [{ id: "summary", label: "Summary", content: () => node },
+//            { id: "data", label: "Data 5", content: () => node }],
+//     sessionKey: "asset.context.AS-1",
+//     ariaLabel: "Asset context",
+//     onChange: (id) => {},
+//   })
+export function tabs({ tabs: list = [], sessionKey, ariaLabel, defaultId, onChange } = {}) {
+  const stored = sessionKey ? sessionStorage.getItem(sessionKey) : null;
+  const active = list.find(t => t.id === stored)
+    || list.find(t => t.id === defaultId)
+    || list[0];
+  const tablist = el("div", { class: "context-tabs", role: "tablist", "aria-label": ariaLabel || "Tabs" });
+  const panel = el("div", { class: "context-tab-panel", role: "tabpanel" });
+
+  function pick(t) {
+    if (sessionKey) sessionStorage.setItem(sessionKey, t.id);
+    if (onChange) onChange(t.id);
+    render();
+  }
+
+  function render() {
+    const cur = list.find(t => t.id === (sessionKey ? sessionStorage.getItem(sessionKey) : null))
+      || active || list[0];
+    tablist.innerHTML = "";
+    list.forEach((t, i) => {
+      const isActive = t.id === cur.id;
+      const btn = el("button", {
+        class: `context-tab ${isActive ? "active" : ""}`,
+        role: "tab",
+        type: "button",
+        "aria-selected": String(isActive),
+        tabindex: isActive ? "0" : "-1",
+        id: `tab-${t.id}`,
+        "aria-controls": `tabpanel-${t.id}`,
+        onClick: () => pick(t),
+        onKeydown: (e) => {
+          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+            e.preventDefault();
+            const dir = e.key === "ArrowRight" ? 1 : -1;
+            const next = list[(i + dir + list.length) % list.length];
+            pick(next);
+            const nb = tablist.querySelector(`#tab-${next.id}`);
+            if (nb) nb.focus();
+          } else if (e.key === "Home") {
+            e.preventDefault(); pick(list[0]);
+            tablist.querySelector(`#tab-${list[0].id}`)?.focus();
+          } else if (e.key === "End") {
+            e.preventDefault(); pick(list[list.length - 1]);
+            tablist.querySelector(`#tab-${list[list.length - 1].id}`)?.focus();
+          }
+        },
+      }, [t.label]);
+      tablist.append(btn);
+    });
+    panel.innerHTML = "";
+    panel.id = `tabpanel-${cur.id}`;
+    panel.setAttribute("aria-labelledby", `tab-${cur.id}`);
+    const c = typeof cur.content === "function" ? cur.content() : cur.content;
+    if (c instanceof Node) panel.append(c);
+    else if (Array.isArray(c)) c.forEach(x => x && panel.append(x));
+    else if (c != null) panel.append(document.createTextNode(String(c)));
+  }
+  render();
+  return el("section", { class: "tabs-wrap" }, [tablist, panel]);
+}
