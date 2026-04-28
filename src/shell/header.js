@@ -28,6 +28,8 @@ const TITLES = {
   "/admin":       { title: "Admin Governance", crumb: "Admin" },
   "/incidents":   { title: "Incidents",        crumb: "Incidents" },
   "/approvals":   { title: "Approval Queue",   crumb: "Approvals" },
+  "/operations":  { title: "Operations Data",  crumb: "Ops Data" },
+  "/audit":       { title: "Audit ledger",     crumb: "Audit" },
   "/spec":        { title: "Product Spec Reference", crumb: "Spec" },
   "/uns":         { title: "Unified Namespace", crumb: "UNS" },
   "/i3x":         { title: "i3X API Workbench", crumb: "i3X" },
