@@ -437,6 +437,7 @@ const COLUMN_DEFS = [
   { id: "severity",  header: "Severity",  sort: (a, b) => sevRank(a.severity) - sevRank(b.severity), filter: (w, q) => (w.severity || "").toLowerCase().includes(q), render: (w) => badge(w.severity || "—", w.severity === "high" || w.severity === "critical" ? "danger" : w.severity === "medium" ? "warn" : "info") },
   { id: "status",    header: "Status",    sort: (a, b) => String(a.status || "").localeCompare(String(b.status || "")), filter: (w, q) => (w.status || "").toLowerCase().includes(q), render: (w) => badge(w.status || "—", "") },
   { id: "assignee",  header: "Assignee",  sort: (a, b) => String(a.assigneeId || "").localeCompare(String(b.assigneeId || "")), filter: (w, q) => (w.assigneeId || "").toLowerCase().includes(q), render: (w) => el("span", { class: "tiny muted" }, [w.assigneeId || "—"]) },
+  { id: "assigned",  header: "Assigned",  sort: (a, b) => (Date.parse(a.assignedAt) || Infinity) - (Date.parse(b.assignedAt) || Infinity), filter: (w, q) => (w.assignedAt || "").toLowerCase().includes(q), render: (w) => el("span", { class: "tiny muted" }, [w.assignedAt ? new Date(w.assignedAt).toLocaleDateString() : "—"]) },
   { id: "due",       header: "Due",       sort: (a, b) => (Date.parse(a.due) || Infinity) - (Date.parse(b.due) || Infinity), filter: (w, q) => (w.due || "").toLowerCase().includes(q), render: (w) => el("span", { class: "tiny muted" }, [w.due ? new Date(w.due).toLocaleDateString() : "—"]) },
   { id: "blockers",  header: "Blocked by", sort: (a, b) => (a.blockers?.length || 0) - (b.blockers?.length || 0), filter: (w, q) => (w.blockers || []).join(",").toLowerCase().includes(q), render: (w) => renderBlockers(w) },
   { id: "labels",    header: "Labels",    sort: (a, b) => (a.labels?.length || 0) - (b.labels?.length || 0), filter: (w, q) => (w.labels || []).join(",").toLowerCase().includes(q), render: (w) => el("div", { class: "row wrap", style: { gap: "4px" } }, (w.labels || []).map(l => badge(l, "")) || []) },
@@ -444,7 +445,7 @@ const COLUMN_DEFS = [
 
 // Default visible columns (ordered). Other columns are hidden until the
 // user enables them via the column-visibility menu.
-const DEFAULT_VISIBLE = ["id", "title", "type", "severity", "status", "assignee", "due", "blockers"];
+const DEFAULT_VISIBLE = ["id", "title", "type", "severity", "status", "assignee", "assigned", "due", "blockers"];
 
 function sevRank(s) {
   return ({ critical: 0, high: 1, medium: 2, low: 3 })[s] ?? 4;
@@ -957,6 +958,13 @@ function openItem(itemId) {
   const titleInput = input({ value: w.title });
   const descTextarea = textarea({ value: w.description || "" });
   const blockersInput = input({ value: (w.blockers || []).join(", ") });
+  const userOptions = (state.data?.users || []).map(u => ({ value: u.id, label: `${u.id} · ${u.name || u.email || u.id}` }));
+  const assigneeSelect = select([{ value: "", label: "Unassigned" }, ...userOptions], { value: w.assigneeId || "" });
+  // Bind dates as <input type="date"> with yyyy-mm-dd shape so the
+  // native date picker renders. Leaving the value blank clears it.
+  const toDate = (iso) => iso ? new Date(iso).toISOString().slice(0, 10) : "";
+  const assignedInput = input({ type: "date", value: toDate(w.assignedAt) });
+  const dueInput = input({ type: "date", value: toDate(w.due) });
 
   drawer({
     title: `${w.id} — ${w.type}`,
@@ -969,9 +977,11 @@ function openItem(itemId) {
       formRow("Title", titleInput),
       formRow("Status", statusSelect),
       formRow("Severity", severitySelect),
+      formRow("Assignee", assigneeSelect),
+      formRow("Assigned date", assignedInput),
+      formRow("Due date", dueInput),
       formRow("Description", descTextarea),
       formRow("Blocked by (comma-separated IDs)", blockersInput),
-      el("div", { class: "tiny muted" }, [`Assignee: ${w.assigneeId} · Due: ${w.due ? new Date(w.due).toLocaleDateString() : "—"}`]),
       historyDrawer(w),
     ]),
     actions: [
@@ -987,6 +997,21 @@ function openItem(itemId) {
           i.severity = severitySelect.value;
           i.description = descTextarea.value;
           i.blockers = blockersInput.value.split(",").map(x => x.trim()).filter(Boolean);
+          // Assignee change: stamp assignedAt to now if the user is
+          // changing the assignee and didn't override the date input.
+          // If they explicitly cleared assignedInput, leave it null.
+          const newAssignee = assigneeSelect.value || null;
+          if (newAssignee !== from.assigneeId) {
+            i.assigneeId = newAssignee;
+            if (assignedInput.value === toDate(from.assignedAt)) {
+              i.assignedAt = newAssignee ? new Date().toISOString() : null;
+            } else {
+              i.assignedAt = assignedInput.value ? new Date(assignedInput.value).toISOString() : null;
+            }
+          } else {
+            i.assignedAt = assignedInput.value ? new Date(assignedInput.value).toISOString() : null;
+          }
+          i.due = dueInput.value ? new Date(dueInput.value).toISOString() : null;
           audit("workitem.update", itemId, { changes: diff(from, i) });
         });
         toast("Saved", "success");
