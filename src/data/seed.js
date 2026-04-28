@@ -218,14 +218,14 @@ export function buildSeed() {
   ];
 
   const workItems = [
-    { id: "WI-101", projectId: "PRJ-1", assetIds: ["AS-2"], type: "Task", title: "Verify terminal wiring A01-W", assigneeId: "U-1", status: "In Progress", severity: "medium", due: iso(60*24*3), blockers: [] },
-    { id: "WI-102", projectId: "PRJ-1", assetIds: ["AS-2"], type: "Issue", title: "Missing terminal strip at TB-3", assigneeId: "U-2", status: "In Review", severity: "high", due: iso(60*24*2), blockers: [] },
-    { id: "WI-103", projectId: "PRJ-1", assetIds: ["AS-1","AS-2"], type: "RFI", title: "Confirm valve tag schema", assigneeId: "U-2", status: "Open", severity: "low", due: iso(60*24*5), blockers: [] },
-    { id: "WI-104", projectId: "PRJ-2", assetIds: ["AS-3"], type: "Change", title: "Add emergency vent interlock", assigneeId: "U-6", status: "Approved", severity: "high", due: iso(60*24*10), blockers: [] },
-    { id: "WI-105", projectId: "PRJ-2", assetIds: ["AS-3"], type: "Punch", title: "Tag PSV-14 mismatch", assigneeId: "U-2", status: "Open", severity: "medium", due: iso(60*24*7), blockers: [] },
-    { id: "WI-106", projectId: "PRJ-3", assetIds: ["AS-4"], type: "CAPA", title: "Root-cause Boiler-B201 trip", assigneeId: "U-3", status: "In Progress", severity: "high", due: iso(60*24*5), blockers: ["WI-104"] },
-    { id: "WI-107", projectId: "PRJ-1", assetIds: ["AS-1","AS-2"], type: "Task", title: "HMI refresh rate tuning", assigneeId: "U-1", status: "Backlog", severity: "low", due: iso(60*24*14), blockers: [] },
-    { id: "WI-108", projectId: "PRJ-1", assetIds: ["AS-2"], type: "Defect", title: "Scan cycle >500ms on PLC-A2", assigneeId: "U-1", status: "Done", severity: "medium", due: iso(-60*24*2), blockers: [] },
+    { id: "WI-101", projectId: "PRJ-1", assetIds: ["AS-2"], type: "Task", title: "Verify terminal wiring A01-W", assigneeId: "U-1", assignedAt: iso(-60*24*5), status: "In Progress", severity: "medium", due: iso(60*24*3), blockers: [] },
+    { id: "WI-102", projectId: "PRJ-1", assetIds: ["AS-2"], type: "Issue", title: "Missing terminal strip at TB-3", assigneeId: "U-2", assignedAt: iso(-60*24*4), status: "In Review", severity: "high", due: iso(60*24*2), blockers: [] },
+    { id: "WI-103", projectId: "PRJ-1", assetIds: ["AS-1","AS-2"], type: "RFI", title: "Confirm valve tag schema", assigneeId: "U-2", assignedAt: iso(-60*24*3), status: "Open", severity: "low", due: iso(60*24*5), blockers: [] },
+    { id: "WI-104", projectId: "PRJ-2", assetIds: ["AS-3"], type: "Change", title: "Add emergency vent interlock", assigneeId: "U-6", assignedAt: iso(-60*24*8), status: "Approved", severity: "high", due: iso(60*24*10), blockers: [] },
+    { id: "WI-105", projectId: "PRJ-2", assetIds: ["AS-3"], type: "Punch", title: "Tag PSV-14 mismatch", assigneeId: "U-2", assignedAt: iso(-60*24*2), status: "Open", severity: "medium", due: iso(60*24*7), blockers: [] },
+    { id: "WI-106", projectId: "PRJ-3", assetIds: ["AS-4"], type: "CAPA", title: "Root-cause Boiler-B201 trip", assigneeId: "U-3", assignedAt: iso(-60*24*6), status: "In Progress", severity: "high", due: iso(60*24*5), blockers: ["WI-104"] },
+    { id: "WI-107", projectId: "PRJ-1", assetIds: ["AS-1","AS-2"], type: "Task", title: "HMI refresh rate tuning", assigneeId: "U-1", assignedAt: iso(-60*24*1), status: "Backlog", severity: "low", due: iso(60*24*14), blockers: [] },
+    { id: "WI-108", projectId: "PRJ-1", assetIds: ["AS-2"], type: "Defect", title: "Scan cycle >500ms on PLC-A2", assigneeId: "U-1", assignedAt: iso(-60*24*10), status: "Done", severity: "medium", due: iso(-60*24*2), blockers: [] },
   ];
 
   const maintenanceItems = [
