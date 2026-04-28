@@ -21,6 +21,7 @@
     "backup": "node --env-file-if-exists=.env server/backup.js backup",
     "restore": "node --env-file-if-exists=.env server/backup.js restore",
     "test": "node --test --test-concurrency=1 test/*.test.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "sbom": "cyclonedx-npm --output-file bom.json",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "license:keygen": "node scripts/license/keygen.js",
@@ -76,6 +77,7 @@
   "devDependencies": {
     "@cyclonedx/cyclonedx-npm": "^4.2.1",
     "cross-env": "^7.0.3",
+    "typescript": "^5.7.2",
     "vite": "^8.0.10"
   }
 }

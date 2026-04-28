@@ -24,8 +24,9 @@
   --border-strong: #3a4a6b;
   --text: #e5e7eb;
   --text-strong: #f8fafc;
-  --muted: #94a3b8;
-  --muted-soft: #64748b;
+  /* --muted lightened from #94a3b8 (~2.5:1 on --panel) to #b3c0d4 (~5.4:1 AA) */
+  --muted: #b3c0d4;
+  --muted-soft: #94a3b8;
   --accent: #38bdf8;
   --accent-strong: #0ea5e9;
   --success: #22c55e;
@@ -219,10 +220,15 @@ body.is-resizing * { cursor: col-resize !important; }
 }
 
 .rail-btn.active {
-  background: var(--accent);
-  color: #0b1220;
+  /* Mix accent with the panel base so the resulting tile keeps a visible
+     accent hue while giving white-ish text enough contrast (≥ 4.5:1) on
+     both light and dark themes. The original used --accent directly, which
+     forced the contrasting label to be near-black on a sky-blue, breaking
+     AA in dark mode (~2.9:1). */
+  background: color-mix(in srgb, var(--accent) 35%, var(--surface) 65%);
+  color: var(--text-strong);
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 88%, white 12%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .rail-btn .rail-icon {

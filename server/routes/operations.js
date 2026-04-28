@@ -135,7 +135,8 @@ export default async function operationsRoutes(fastify) {
                   VALUES (?, ?, 1, 'draft', ?, ?, ?, ?)`).run(versionId, id, JSON.stringify(parameters || {}), notes, req.user.id, ts);
     })();
     audit({ actor: req.user.id, action: "recipe.create", subject: id, detail: { assetId, name } });
-    await archiveRecipeEvent("recipe.create", db.prepare("SELECT * FROM recipes WHERE id = ?").get(id)).catch(() => null);
+    await archiveRecipeEvent("recipe.create", db.prepare("SELECT * FROM recipes WHERE id = ?").get(id))
+      .catch((err) => fastify.log.warn({ err: String(err?.message || err), recipeId: id }, "recipe.create archive failed"));
     broadcast("recipes", { id, assetId });
     return recipeRow(db.prepare("SELECT * FROM recipes WHERE id = ?").get(id));
   });
@@ -150,7 +151,8 @@ export default async function operationsRoutes(fastify) {
                 VALUES (?, ?, ?, 'draft', ?, ?, ?, ?)`).run(id, recipe.id, next, JSON.stringify(parameters || {}), notes, req.user.id, now());
     db.prepare("UPDATE recipes SET current_version_id = ?, status = 'draft', updated_at = ? WHERE id = ?").run(id, now(), recipe.id);
     audit({ actor: req.user.id, action: "recipe.version.create", subject: recipe.id, detail: { version: next } });
-    await archiveRecipeEvent("recipe.version.create", db.prepare("SELECT * FROM recipes WHERE id = ?").get(recipe.id), db.prepare("SELECT * FROM recipe_versions WHERE id = ?").get(id)).catch(() => null);
+    await archiveRecipeEvent("recipe.version.create", db.prepare("SELECT * FROM recipes WHERE id = ?").get(recipe.id), db.prepare("SELECT * FROM recipe_versions WHERE id = ?").get(id))
+      .catch((err) => fastify.log.warn({ err: String(err?.message || err), recipeId: recipe.id, version: next }, "recipe.version.create archive failed"));
     broadcast("recipes", { id: recipe.id, version: next });
     return recipeRow(db.prepare("SELECT * FROM recipes WHERE id = ?").get(recipe.id));
   });
@@ -168,7 +170,8 @@ export default async function operationsRoutes(fastify) {
       db.prepare("UPDATE recipes SET status = 'active', current_version_id = ?, updated_at = ? WHERE id = ?").run(version.id, ts, recipe.id);
     })();
     audit({ actor: req.user.id, action: "recipe.activate", subject: recipe.id, detail: { version: version.version } });
-    await archiveRecipeEvent("recipe.activate", db.prepare("SELECT * FROM recipes WHERE id = ?").get(recipe.id), version).catch(() => null);
+    await archiveRecipeEvent("recipe.activate", db.prepare("SELECT * FROM recipes WHERE id = ?").get(recipe.id), version)
+      .catch((err) => fastify.log.warn({ err: String(err?.message || err), recipeId: recipe.id, versionId: version.id }, "recipe.activate archive failed"));
     broadcast("recipes", { id: recipe.id, activeVersionId: version.id });
     return recipeRow(db.prepare("SELECT * FROM recipes WHERE id = ?").get(recipe.id));
   });
