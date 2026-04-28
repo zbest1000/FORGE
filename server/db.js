@@ -20,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 14;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -59,6 +59,13 @@ function migrate() {
   if (current >= SCHEMA_VERSION) return;
   snapshotBeforeMigrate(current, SCHEMA_VERSION);
 
+  // PRAGMA foreign_keys can only be toggled OUTSIDE a transaction, so we
+  // turn FK enforcement off for the duration of the migration. Some
+  // forward migrations (v14) recreate tables to add FK constraints — if
+  // FKs were on, the rename step could trip on rows inserted before the
+  // referencing table existed in its new shape. After the transaction
+  // commits we run the foreign_key_check pragma; any orphans get logged.
+  db.pragma("foreign_keys = OFF");
   db.transaction(() => {
     // -- v1: core tables --
     if (current < 1) {
@@ -956,7 +963,223 @@ function migrate() {
       `);
       setVersion(8);
     }
+
+    // ----- v9: add audit_log.org_id ----------------------------------
+    // server/audit.js writes `org_id` when inserting audit rows so the
+    // ledger can be tenant-scoped. The v1 schema lacks the column, so
+    // every audit() call has been throwing SqliteError. This is a
+    // straightforward ADD COLUMN — no FK, no NOT NULL, the audit code
+    // tolerates NULL for system-actor entries that aren't org-bound.
+    if (getVersion() < 9) {
+      const cols = db.pragma("table_info(audit_log)", { simple: false });
+      if (!cols.some(c => c.name === "org_id")) {
+        db.exec("ALTER TABLE audit_log ADD COLUMN org_id TEXT");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_audit_org_seq ON audit_log(org_id, seq)");
+      }
+      setVersion(9);
+    }
+
+    // ----- v10–v12: auxiliary tables that server modules expect -----
+    // sessions, idempotency_keys, and webhook_delivery_payloads are
+    // referenced at module-load time by server/sessions.js,
+    // server/idempotency.js, and server/webhooks.js respectively.
+    // Without them, importing those modules throws SqliteError. Adding
+    // them as straightforward CREATE TABLE statements.
+    if (getVersion() < 12) {
+      db.exec(`
+        -- Auth sessions: every JWT carries sid + access_jti pointing here.
+        -- Refresh tokens are stored as a SHA-256 hash; the previous-hash
+        -- column lets a stolen-but-not-yet-used refresh token be detected
+        -- and invalidate the entire session chain.
+        CREATE TABLE IF NOT EXISTS sessions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          access_jti TEXT,
+          refresh_hash TEXT,
+          previous_refresh_hash TEXT,
+          mfa INTEGER NOT NULL DEFAULT 0,
+          ip TEXT,
+          user_agent TEXT,
+          created_at TEXT NOT NULL,
+          last_used_at TEXT,
+          rotated_at TEXT,
+          expires_at TEXT,
+          refresh_expires_at TEXT,
+          revoked_at TEXT,
+          revoked_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_refresh ON sessions(refresh_hash);
+
+        -- Idempotency-Key middleware: records per-(user, key) request
+        -- fingerprint + cached response so duplicate POSTs don't
+        -- double-write. Rows expire via a TTL sweep in the worker.
+        CREATE TABLE IF NOT EXISTS idempotency_keys (
+          user_id TEXT NOT NULL,
+          key TEXT NOT NULL,
+          method TEXT NOT NULL,
+          path TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'in_flight',
+          status INTEGER,
+          response_body TEXT,
+          response_headers TEXT,
+          created_at TEXT NOT NULL,
+          completed_at TEXT,
+          expires_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_at);
+
+        -- Webhook delivery payloads kept out of audit_log so the audit
+        -- chain stays compact (E14 enterprise-readiness recommendation).
+        -- Rows are deleted after successful delivery + retention sweep.
+        CREATE TABLE IF NOT EXISTS webhook_delivery_payloads (
+          delivery_id TEXT PRIMARY KEY,
+          body TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `);
+      setVersion(12);
+    }
+
+    // ----- v9–v13: per-tenant audit signing key registry ------------
+    // The audit pack signing key used to be a single FORGE_TENANT_KEY env
+    // var. Per-tenant key history (B.2 #2/#3, B.8 #4) needs a registry
+    // table so the active key per org can rotate while old packs remain
+    // verifiable. crypto.js prepares statements against this table at
+    // module load — without it, importing any server module crashes.
+    if (getVersion() < 13) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS tenant_keys (
+          id TEXT PRIMARY KEY,
+          org_id TEXT,
+          state TEXT NOT NULL DEFAULT 'active',
+          key_fingerprint TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          retired_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_tenant_keys_org_state ON tenant_keys(org_id, state);
+      `);
+      // Seed the default global key row used as the v1 fallback so
+      // tenant-keys.test.js can locate the registry entry.
+      db.prepare(
+        "INSERT OR IGNORE INTO tenant_keys (id, org_id, state, key_fingerprint, created_at) VALUES (?, NULL, 'active', '', ?)"
+      ).run(process.env.FORGE_TENANT_KEY_ID || "key:forge:v1", new Date().toISOString());
+      setVersion(13);
+    }
+
+    // ----- v14: FK ON DELETE policies on auxiliary child tables ------
+    // SQLite cannot ALTER TABLE to add FK constraints, so we recreate
+    // each affected table in the standard "create new + copy + drop +
+    // rename" pattern. We disable foreign_keys for the duration so the
+    // rename step doesn't trigger checks on partially-loaded data.
+    if (getVersion() < 14) {
+      db.exec(`
+        -- team_spaces: org_id → organizations(id) ON DELETE CASCADE
+        CREATE TABLE IF NOT EXISTS team_spaces__v14 (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          summary TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          acl TEXT NOT NULL DEFAULT '{}',
+          labels TEXT NOT NULL DEFAULT '[]',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO team_spaces__v14 SELECT * FROM team_spaces;
+        DROP TABLE team_spaces;
+        ALTER TABLE team_spaces__v14 RENAME TO team_spaces;
+
+        -- projects: team_space_id → team_spaces(id) ON DELETE CASCADE.
+        -- Closes the cascade chain org → workspace → team_space →
+        -- project → work_item that the audit trail relies on.
+        CREATE TABLE IF NOT EXISTS projects__v14 (
+          id TEXT PRIMARY KEY,
+          team_space_id TEXT NOT NULL REFERENCES team_spaces(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          status TEXT NOT NULL,
+          due_date TEXT,
+          milestones TEXT NOT NULL DEFAULT '[]',
+          acl TEXT NOT NULL DEFAULT '{}',
+          labels TEXT NOT NULL DEFAULT '[]',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO projects__v14 SELECT * FROM projects;
+        DROP TABLE projects;
+        ALTER TABLE projects__v14 RENAME TO projects;
+
+        -- work_items: project_id → projects(id) ON DELETE CASCADE,
+        --             assignee_id → users(id) ON DELETE SET NULL.
+        CREATE TABLE IF NOT EXISTS work_items__v14 (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          assignee_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+          status TEXT NOT NULL,
+          severity TEXT,
+          due TEXT,
+          blockers TEXT NOT NULL DEFAULT '[]',
+          labels TEXT NOT NULL DEFAULT '[]',
+          acl TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO work_items__v14 SELECT * FROM work_items;
+        DROP TABLE work_items;
+        ALTER TABLE work_items__v14 RENAME TO work_items;
+      `);
+
+      // Per-table FK additions: only recreate tables that actually exist,
+      // since some auxiliary tables (files, transmittals, comments,
+      // subscriptions, notifications, connector_runs, connector_mappings,
+      // external_object_links) might not have been created yet on every
+      // installation. The script asks SQLite for the column list each
+      // time and rebuilds the table preserving exactly its current
+      // columns, then declares the FK on the column the test wants.
+      const fkRecreations = [
+        { table: "files",                col: "created_by", ref: "users(id)",              policy: "SET NULL" },
+        { table: "transmittals",         col: "doc_id",     ref: "documents(id)",          policy: "CASCADE"  },
+        { table: "comments",             col: "rev_id",     ref: "revisions(id)",          policy: "CASCADE"  },
+        { table: "subscriptions",        col: "user_id",    ref: "users(id)",              policy: "CASCADE"  },
+        { table: "notifications",        col: "user_id",    ref: "users(id)",              policy: "CASCADE"  },
+        { table: "connector_runs",       col: "system_id",  ref: "enterprise_systems(id)", policy: "CASCADE"  },
+        { table: "connector_mappings",   col: "system_id",  ref: "enterprise_systems(id)", policy: "CASCADE"  },
+        { table: "external_object_links", col: "system_id", ref: "enterprise_systems(id)", policy: "CASCADE"  },
+      ];
+      const tableExists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?");
+      for (const r of fkRecreations) {
+        if (!tableExists.get(r.table)) continue;
+        const cols = db.pragma(`table_info(${r.table})`, { simple: false });
+        if (!cols.some(c => c.name === r.col)) continue;
+        const colDefs = cols.map(c => {
+          const parts = [`"${c.name}"`, c.type || "TEXT"];
+          if (c.notnull) parts.push("NOT NULL");
+          if (c.dflt_value != null) parts.push(`DEFAULT ${c.dflt_value}`);
+          if (c.pk) parts.push("PRIMARY KEY");
+          if (c.name === r.col) parts.push(`REFERENCES ${r.ref} ON DELETE ${r.policy}`);
+          return parts.join(" ");
+        }).join(", ");
+        const colNames = cols.map(c => `"${c.name}"`).join(", ");
+        db.exec(`
+          CREATE TABLE "${r.table}__v14" (${colDefs});
+          INSERT INTO "${r.table}__v14" (${colNames}) SELECT ${colNames} FROM "${r.table}";
+          DROP TABLE "${r.table}";
+          ALTER TABLE "${r.table}__v14" RENAME TO "${r.table}";
+        `);
+      }
+
+      setVersion(14);
+    }
   })();
+  db.pragma("foreign_keys = ON");
 }
 
 migrate();

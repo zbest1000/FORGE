@@ -182,6 +182,32 @@ jobs:
           FORGE_JWT_SECRET: "ci-jwt-secret-0123456789abcdef0123456789abcdef"
         run: npm run smoke:built
 
+      # Defence in depth: actually load every server module in the
+      # dependency graph. Catches the "ReferenceError at import / SQL
+      # statement prepared against a missing table" class of bug that
+      # silently bricked the shell in past sprints — the build was
+      # happy, the test suite ran, but the live server crashed on first
+      # request because some module-load-time code referenced an
+      # undefined identifier.
+      - name: Boot smoke (every server module imports cleanly)
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          FORGE_TENANT_KEY: "ci-tenant-key-0123456789abcdef0123456789abcdef"
+          FORGE_JWT_SECRET: "ci-jwt-secret-0123456789abcdef0123456789abcdef"
+          NODE_ENV: development
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # Import every server JS module in a fresh node process. Any
+          # ReferenceError, missing import, or SQL-statement-against-a-
+          # missing-table error surfaces here.
+          for f in server/*.js server/routes/*.js server/connectors/*.js \
+                   server/security/*.js server/integrations/*.js \
+                   server/historians/*.js server/graphql/*.js \
+                   server/schemas/*.js; do
+            node -e "import('./$f').catch(e => { console.error('FAIL', '$f', e.message); process.exit(1); })"
+          done
+
   # ---------------------------------------------------------------------------
   # 3. Production-only dependency audit. Non-blocking for advisories below
   #    `high` so day-to-day PRs aren't held up by transitive dev advisories.
