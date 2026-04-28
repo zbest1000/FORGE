@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "allowJs": true,
+    "noEmit": true,
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "node",
+    "strict": false,
+    "noImplicitAny": false,
+    "noImplicitThis": true,
+    "strictNullChecks": false,
+    "alwaysStrict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "lib": ["es2022", "dom", "dom.iterable"]
+  },
+  "include": [
+    "app.js",
+    "src/**/*.js",
+    "server/**/*.js",
+    "scripts/**/*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test"
+  ]
+}

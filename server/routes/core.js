@@ -159,7 +159,7 @@ export default async function coreRoutes(fastify) {
                 VALUES (@id, @channel_id, @author_id, @ts, @type, @text, @att, '[]', 0)`)
       .run({ id, channel_id: req.params.id, author_id: req.user.id, ts, type, text: text.trim(), att: JSON.stringify(attachments) });
     audit({ actor: req.user.id, action: "message.post", subject: req.params.id, detail: { messageId: id } });
-    broadcast("messages", { channelId: req.params.id, id });
+    broadcast("messages", { channelId: req.params.id, id }, req.user?.org_id);
     return { id, ts };
   });
 
@@ -212,7 +212,7 @@ export default async function coreRoutes(fastify) {
     })();
 
     audit({ actor: req.user.id, action: "revision.transition", subject: rev.id, detail: { from: rev.status, to, notes } });
-    broadcast("revisions", { id: rev.id, from: rev.status, to });
+    broadcast("revisions", { id: rev.id, from: rev.status, to }, req.user?.org_id);
     return { id: rev.id, status: to };
   });
 
@@ -249,7 +249,7 @@ export default async function coreRoutes(fastify) {
                 VALUES (@id, @pid, @type, @title, '', @assignee_id, 'Open', @severity, @due, '[]', '[]', '{}', @now, @now)`)
       .run({ id, pid: projectId, type, title, assignee_id: assigneeId, severity, due, now: now() });
     audit({ actor: req.user.id, action: "workitem.create", subject: id, detail: { type, title } });
-    broadcast("work-items", { id, projectId });
+    broadcast("work-items", { id, projectId }, req.user?.org_id);
     return { id };
   });
 
@@ -288,7 +288,7 @@ export default async function coreRoutes(fastify) {
     sets.push("updated_at = @now");
     db.prepare(`UPDATE work_items SET ${sets.join(", ")} WHERE id = @id`).run(params);
     audit({ actor: req.user.id, action: "workitem.update", subject: row.id, detail: { changes: patch } });
-    broadcast("work-items", { id: row.id });
+    broadcast("work-items", { id: row.id }, req.user?.org_id);
     const updated = db.prepare("SELECT * FROM work_items WHERE id = ?").get(row.id);
     applyEtag(reply, updated);
     return updated;
@@ -311,7 +311,7 @@ export default async function coreRoutes(fastify) {
     tl.push({ ts: now(), actor: req.user.id, text: req.body?.text || "" });
     db.prepare("UPDATE incidents SET timeline = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(tl), now(), row.id);
     audit({ actor: req.user.id, action: "incident.entry", subject: row.id });
-    broadcast("incidents", { id: row.id, entry: true });
+    broadcast("incidents", { id: row.id, entry: true }, req.user?.org_id);
     return { ok: true };
   });
 
@@ -374,7 +374,7 @@ export default async function coreRoutes(fastify) {
         }
       }
     }
-    broadcast("approvals", { id: row.id, outcome });
+    broadcast("approvals", { id: row.id, outcome }, req.user?.org_id);
     return { id: row.id, outcome, signature: sig };
   });
 

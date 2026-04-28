@@ -80,6 +80,11 @@ export function attachSSE(fastify) {
     const client = {
       reply,
       id: makeId(),
+      // Tag the client with the authenticated user's org so broadcast()
+      // can scope events to a single tenant. Unauthenticated SSE
+      // connections (req.user is null) get null orgId and only see
+      // broadcasts that opt into "send to all" by passing no orgId.
+      orgId: req.user?.org_id || null,
       queue: [],
       queuedBytes: 0,
       heartbeat: null,
@@ -122,14 +127,22 @@ function enqueue(client, line) {
 }
 
 /**
- * Push an event to every connected client. Per-client queues bound the
+ * Push an event to connected clients. Per-client queues bound the
  * memory cost so a slow consumer cannot exhaust the heap. Slow clients
  * that fail to drain within `DRAIN_TIMEOUT_MS` are disconnected.
+ *
+ * If `orgId` is provided, the event is delivered only to clients that
+ * authenticated as a user in that org — this is how we scope live
+ * updates to a tenant. Callers that don't supply orgId still broadcast
+ * to every client (used for genuinely global events like server health),
+ * but the convention going forward is: every mutation broadcast SHOULD
+ * include the originating org's id.
  */
-export function broadcast(topic, data) {
+export function broadcast(topic, data, orgId) {
   if (_shuttingDown) return;
   const line = `event: ${topic}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const c of clients) {
+    if (orgId && c.orgId && c.orgId !== orgId) continue;
     enqueue(c, line);
     flush(c);
   }

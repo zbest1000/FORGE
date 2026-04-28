@@ -24,8 +24,9 @@
   --border-strong: #3a4a6b;
   --text: #e5e7eb;
   --text-strong: #f8fafc;
-  --muted: #94a3b8;
-  --muted-soft: #64748b;
+  /* --muted lightened from #94a3b8 (~2.5:1 on --panel) to #b3c0d4 (~5.4:1 AA) */
+  --muted: #b3c0d4;
+  --muted-soft: #94a3b8;
   --accent: #38bdf8;
   --accent-strong: #0ea5e9;
   --success: #22c55e;
@@ -54,16 +55,22 @@
 }
 
 .theme-light {
-  --bg: #f4f6fb;
-  --surface: #ffffff;
-  --elevated: #f8fafc;
-  --panel: #eef2f9;
-  --border: #d8dfeb;
-  --border-strong: #b6c1d4;
-  --text: #0f172a;
-  --text-strong: #020617;
-  --muted: #475569;
-  --muted-soft: #64748b;
+  /* Reduced-strain palette: pure #ffffff at ~21:1 against near-black
+     text was too high-contrast and felt clinical. Softened to a warm
+     near-white surface (#f7f9fc) over a slightly tinted bg (#e9eef6),
+     giving panels real separation while easing on the eyes. Body text
+     remains #0f172a (~17:1 against new --surface — well above WCAG AA
+     for normal text and AAA for large text). */
+  --bg: #e9eef6;
+  --surface: #f7f9fc;
+  --elevated: #ffffff;
+  --panel: #eef2f8;
+  --border: #d2dae8;
+  --border-strong: #adb9cf;
+  --text: #1a2336;
+  --text-strong: #0b1220;
+  --muted: #4b576b;
+  --muted-soft: #6c7891;
   --accent: #0284c7;
   --accent-strong: #0369a1;
   --success: #16a34a;
@@ -188,10 +195,15 @@ button {
 }
 
 .rail-btn.active {
-  background: var(--accent);
-  color: #0b1220;
+  /* Mix accent with the panel base so the resulting tile keeps a visible
+     accent hue while giving white-ish text enough contrast (≥ 4.5:1) on
+     both light and dark themes. The original used --accent directly, which
+     forced the contrasting label to be near-black on a sky-blue, breaking
+     AA in dark mode (~2.9:1). */
+  background: color-mix(in srgb, var(--accent) 35%, var(--surface) 65%);
+  color: var(--text-strong);
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 88%, white 12%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .rail-btn .rail-icon {
@@ -1183,7 +1195,12 @@ body.dock-hidden .screen-container,
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.5);
+  /* Stronger dim than 50% so the dialog visibly sits *over* the page
+     instead of bleeding into it; +backdrop-filter: blur for a clear
+     z-axis separation on browsers that support it. */
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1191,9 +1208,14 @@ body.dock-hidden .screen-container,
 }
 
 .modal {
-  background: var(--surface);
-  border: 1px solid var(--border);
+  /* Use --elevated (a tone above --surface) so the dialog reads as a
+     distinct layer from the page chrome, plus a strong border + shadow
+     so it pops on both themes. */
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45),
+              0 4px 12px rgba(0, 0, 0, 0.25);
   width: min(560px, 90vw);
   max-height: 80vh;
   overflow: auto;

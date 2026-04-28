@@ -28,6 +28,8 @@ const TITLES = {
   "/admin":       { title: "Admin Governance", crumb: "Admin" },
   "/incidents":   { title: "Incidents",        crumb: "Incidents" },
   "/approvals":   { title: "Approval Queue",   crumb: "Approvals" },
+  "/operations":  { title: "Operations Data",  crumb: "Ops Data" },
+  "/audit":       { title: "Audit ledger",     crumb: "Audit" },
   "/spec":        { title: "Product Spec Reference", crumb: "Spec" },
   "/uns":         { title: "Unified Namespace", crumb: "UNS" },
   "/i3x":         { title: "i3X API Workbench", crumb: "i3X" },
@@ -304,12 +306,14 @@ function signIn() {
       { label: "Sign in", variant: "primary", onClick: async () => {
         try {
           const user = await apiLogin(emailInput.value.trim(), pwInput.value);
-          state.server = { ...(state.server || {}), user };
-          if (user?.role) {
-            update(s => { s.ui.role = user.role; s.ui.roleOverridden = false; });
-          }
+          update(s => {
+            s.server = { ...(s.server || {}), user };
+            if (user?.role) {
+              s.ui.role = user.role;
+              s.ui.roleOverridden = false;
+            }
+          });
           toast("Signed in as " + (user.name || user.email), "success");
-          renderHeader();
         } catch (e) {
           toast("Sign-in failed: " + e.message, "danger");
         }
@@ -320,10 +324,11 @@ function signIn() {
 
 function signOut() {
   apiLogout();
-  state.server = { ...(state.server || {}), user: null };
-  state.ui.roleOverridden = false;
+  update(s => {
+    s.server = { ...(s.server || {}), user: null };
+    s.ui.roleOverridden = false;
+  });
   toast("Signed out", "info");
-  renderHeader();
 }
 
 function resolveTitle(route) {
