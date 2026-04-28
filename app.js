@@ -132,6 +132,8 @@ function setupRoutes() {
     lazy(() => import("./src/screens/admin.js"), "renderAdmin", "Admin"));
   defineRoute("/admin/:section",
     lazy(() => import("./src/screens/admin.js"), "renderAdmin", "Admin"));
+  defineRoute("/audit",
+    lazy(() => import("./src/screens/audit.js"), "renderAudit", "Audit"));
   defineRoute("/spec",
     lazy(() => import("./src/screens/spec.js"), "renderSpec", "Spec Reference"));
 
