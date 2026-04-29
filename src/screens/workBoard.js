@@ -5,7 +5,7 @@
 // severity, bulk labels. Dependencies create blocked-by links.
 // Automation: default rules and per-project trigger viewer.
 
-import { el, mount, card, badge, toast, modal, formRow, input, select, textarea, prompt } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, input, select, textarea, prompt, tabs, kpi, drawer, confirm } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -668,7 +668,7 @@ function timelineView(items) {
   // Today line
   const todayX = ((Date.now() - tMin) / span) * 1000;
   const today = document.createElementNS(NS, "line");
-  today.setAttribute("x1", todayX); today.setAttribute("y1", 0); today.setAttribute("x2", todayX); today.setAttribute("y2", H);
+  today.setAttribute("x1", String(todayX)); today.setAttribute("y1", "0"); today.setAttribute("x2", String(todayX)); today.setAttribute("y2", String(H));
   today.setAttribute("stroke", "var(--accent)"); today.setAttribute("stroke-dasharray", "4 3");
   svg.append(today);
 
@@ -677,7 +677,7 @@ function timelineView(items) {
   for (let t = Math.ceil(tMin / msWeek) * msWeek; t < tMax; t += msWeek) {
     const x = ((t - tMin) / span) * 1000;
     const ln = document.createElementNS(NS, "line");
-    ln.setAttribute("x1", x); ln.setAttribute("y1", 0); ln.setAttribute("x2", x); ln.setAttribute("y2", H);
+    ln.setAttribute("x1", String(x)); ln.setAttribute("y1", "0"); ln.setAttribute("x2", String(x)); ln.setAttribute("y2", String(H));
     ln.setAttribute("stroke", "var(--border)"); ln.setAttribute("stroke-width", "0.5");
     svg.append(ln);
   }
@@ -690,16 +690,16 @@ function timelineView(items) {
     const y = 10 + i * rowH;
 
     const rect = document.createElementNS(NS, "rect");
-    rect.setAttribute("x", Math.min(x1, x2)); rect.setAttribute("y", y);
-    rect.setAttribute("width", Math.max(8, Math.abs(x2 - x1))); rect.setAttribute("height", 16);
+    rect.setAttribute("x", String(Math.min(x1, x2))); rect.setAttribute("y", String(y));
+    rect.setAttribute("width", String(Math.max(8, Math.abs(x2 - x1)))); rect.setAttribute("height", "16");
     const color = w.severity === "high" || w.severity === "critical" ? "#ef4444" : w.severity === "medium" ? "#f59e0b" : "#38bdf8";
-    rect.setAttribute("fill", color); rect.setAttribute("rx", 3);
+    rect.setAttribute("fill", color); rect.setAttribute("rx", "3");
     rect.addEventListener("click", () => openItem(w.id));
     rect.style.cursor = "pointer";
     svg.append(rect);
 
     const txt = document.createElementNS(NS, "text");
-    txt.setAttribute("x", Math.min(x1, x2) + 4); txt.setAttribute("y", y + 12);
+    txt.setAttribute("x", String(Math.min(x1, x2) + 4)); txt.setAttribute("y", String(y + 12));
     txt.setAttribute("fill", "#fff"); txt.setAttribute("font-size", "11");
     txt.textContent = `${w.id}  ${w.title.slice(0, 28)}`;
     svg.append(txt);
@@ -844,12 +844,12 @@ function dependencyViewSvg(items) {
     g.style.cursor = "pointer";
     g.addEventListener("click", () => openItem(w.id));
     const circle = document.createElementNS(NS, "circle");
-    circle.setAttribute("cx", c.x); circle.setAttribute("cy", c.y); circle.setAttribute("r", 14);
+    circle.setAttribute("cx", String(c.x)); circle.setAttribute("cy", String(c.y)); circle.setAttribute("r", "14");
     const fill = w.severity === "high" || w.severity === "critical" ? "#ef4444" : w.severity === "medium" ? "#f59e0b" : "#38bdf8";
     circle.setAttribute("fill", fill);
     g.append(circle);
     const txt = document.createElementNS(NS, "text");
-    txt.setAttribute("x", c.x); txt.setAttribute("y", c.y - 20);
+    txt.setAttribute("x", String(c.x)); txt.setAttribute("y", String(c.y - 20));
     txt.setAttribute("text-anchor", "middle"); txt.setAttribute("font-size", "10"); txt.setAttribute("fill", "var(--text)");
     txt.textContent = w.id;
     g.append(txt);
@@ -859,7 +859,7 @@ function dependencyViewSvg(items) {
   // Column headers.
   cols.forEach((c, ci) => {
     const t = document.createElementNS(NS, "text");
-    t.setAttribute("x", colW * ci + colW / 2); t.setAttribute("y", 20);
+    t.setAttribute("x", String(colW * ci + colW / 2)); t.setAttribute("y", "20");
     t.setAttribute("text-anchor", "middle"); t.setAttribute("font-size", "12"); t.setAttribute("fill", "var(--muted)");
     t.textContent = c;
     svg.append(t);

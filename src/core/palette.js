@@ -135,7 +135,7 @@ function collectEntries() {
   const entries = [];
 
   for (const [label, route] of Object.entries(SCREEN_ROUTES)) {
-    entries.push({ label, kind: "Screen", route });
+    entries.push({ label, kind: "Screen", route, meta: "" });
   }
 
   (d.teamSpaces || []).forEach(t =>

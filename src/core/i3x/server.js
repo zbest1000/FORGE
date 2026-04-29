@@ -174,7 +174,7 @@ export function createI3XServer(forgeData) {
     }));
   }
 
-  function getHistoricalValues(elementId, { startTime, endTime, maxDepth = 1 } = {}) {
+  function getHistoricalValues(elementId, { startTime = "", endTime = "", maxDepth = 1 } = {}) {
     const o = resolveObject(elementId);
     if (!o) return err(404, `Object ${elementId} not found`);
     return ok(collectHistory(o, startTime, endTime, maxDepth));

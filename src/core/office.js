@@ -45,7 +45,7 @@ async function fetchAsArrayBuffer(source) {
  * so the SPA's eager bundle stays small. Falls back to a download link
  * if the library fails to load (offline / CSP / etc.).
  */
-export async function renderDocx(host, source, { name } = {}) {
+export async function renderDocx(host, source, { name = "" } = {}) {
   if (!host) return () => {};
   host.innerHTML = "";
   const status = statusLine(`Loading ${name || "document"}…`);
@@ -81,7 +81,7 @@ export async function renderDocx(host, source, { name } = {}) {
  * Render an .xlsx workbook into `host`. Each sheet becomes an HTML
  * table; a tab strip switches between sheets. Lazy-imports SheetJS.
  */
-export async function renderXlsx(host, source, { name } = {}) {
+export async function renderXlsx(host, source, { name = "" } = {}) {
   if (!host) return () => {};
   host.innerHTML = "";
   const status = statusLine(`Loading ${name || "spreadsheet"}…`);
@@ -139,7 +139,7 @@ export async function renderXlsx(host, source, { name } = {}) {
  * integration; for now we show a friendly message + download link.
  * Returning a teardown so the host can swap renderers cleanly.
  */
-export async function renderPptx(host, source, { name } = {}) {
+export async function renderPptx(host, source, { name = "" } = {}) {
   if (!host) return () => {};
   host.innerHTML = "";
   const wrap = document.createElement("div");

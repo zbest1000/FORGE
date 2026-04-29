@@ -63,6 +63,14 @@ export default defineConfig({
           // doesn't pull in the other.
           if (id.includes("docx-preview"))      return "vendor-docx";
           if (id.includes("xlsx") || id.includes("/sheetjs/")) return "vendor-xlsx";
+          // Univer editor — only loaded when /edit/:docId is hit.
+          // ~2 MB gz; kept on its own chunk so the doc viewer never
+          // pulls it in.
+          if (id.includes("@univerjs/"))        return "vendor-univer";
+          // mlightcad browser-side DWG — multi-MB WASM blob; only
+          // loaded when a user opens a .dwg file and the browser
+          // path is preferred over server-convert.
+          if (id.includes("@mlightcad/"))       return "vendor-mlightcad";
           if (id.includes("/mqtt/"))            return "vendor-mqtt";
           if (id.includes("/katex/"))           return "vendor-katex";
 

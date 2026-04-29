@@ -26,7 +26,7 @@ import { mode as apiMode, api, getToken } from "./api.js";
  * `/api/cad/convert/:fileId`. For raw external URLs we ask for a
  * converted blob via `?url=` if the server is reachable.
  */
-export async function renderCad(host, { url, mime, name, fileId } = {}) {
+export async function renderCad(host, { url = "", mime = "", name = "", fileId = "" } = {}) {
   if (!host) return () => {};
   host.innerHTML = "";
 
@@ -41,7 +41,12 @@ export async function renderCad(host, { url, mime, name, fileId } = {}) {
 
   try {
     if (detected.viewer === "dxf" && detected.needsServerConvert === "dxf") {
-      // DWG path — convert to DXF on the server first.
+      // DWG path — try the browser-side mlightcad/cad-simple-viewer
+      // (libredwg-web WASM) first. If it doesn't load or the file
+      // can't be parsed, fall back to the server-side LibreDWG
+      // converter which produces a DXF the dxf-viewer can render.
+      const browserSide = await tryRenderDwgBrowserSide(host, url, status);
+      if (browserSide) return browserSide;
       const convertedUrl = await convertDwgToDxf({ url, fileId });
       return await renderDxf(host, convertedUrl, status);
     }
@@ -126,6 +131,48 @@ async function renderO3D(host, url, name, statusEl) {
   viewer.LoadModelFromUrlList([url]);
 
   return () => { try { viewer.Destroy?.(); } catch {} host.innerHTML = ""; };
+}
+
+// ---------- Browser-side DWG (mlightcad/cad-simple-viewer + libredwg-web WASM) ----------
+//
+// Attempts to render a DWG fully in the browser. Returns the teardown
+// function on success, or null on any failure (so the caller falls
+// through to the server-side LibreDWG converter). Lazy-loaded — the
+// WASM blob is multi-MB and only paid for when a user actually opens
+// a DWG file.
+async function tryRenderDwgBrowserSide(host, url, statusEl) {
+  let mod;
+  try { mod = await vendor.mlightcadSimple(); } catch { return null; }
+  if (!mod) return null;
+  // The simple-viewer package's surface evolves between releases.
+  // Probe for the most stable creation entry point and bail if
+  // unrecognised — better to fall through to server-convert than
+  // crash on an API mismatch.
+  const Viewer = mod.SimpleViewer || mod.CadViewer || mod.default;
+  if (!Viewer || typeof Viewer !== "function") return null;
+  try {
+    host.innerHTML = "";
+    const target = document.createElement("div");
+    target.style.width = "100%";
+    target.style.height = "70vh";
+    target.style.background = "#fff";
+    target.style.borderRadius = "6px";
+    host.append(target);
+    const viewer = new Viewer(target);
+    if (typeof viewer.loadUrl === "function") {
+      await viewer.loadUrl(url);
+    } else if (typeof viewer.load === "function") {
+      await viewer.load(url);
+    } else {
+      // Unknown API — clean up and fall through to the server path.
+      host.innerHTML = "";
+      return null;
+    }
+    return () => { try { viewer.dispose?.() || viewer.destroy?.(); } catch {} host.innerHTML = ""; };
+  } catch (err) {
+    console.warn("[cad-viewer] mlightcad browser-side failed:", err?.message || err);
+    return null;
+  }
 }
 
 // ---------- Server-side DWG → DXF conversion ----------

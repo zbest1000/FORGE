@@ -11,8 +11,9 @@ import { initAuditLedger } from "./src/core/audit.js";
 import { buildIndex, scheduleRebuild } from "./src/core/search.js";
 import { installHotkeys } from "./src/core/hotkeys.js";
 import { probe, mode, getToken, login, logout, api } from "./src/core/api.js";
-import { canAccessRoute, currentUserId, effectiveGroupIds } from "./src/core/groups.js";
-import { el, mount, installRowKeyboardHandlers } from "./src/core/ui.js";
+import { canAccessRoute, currentUserId, effectiveGroupIds, currentUser, requiredGroupsForRoute } from "./src/core/groups.js";
+import { el, mount, installRowKeyboardHandlers, toast } from "./src/core/ui.js";
+import { loadLicense, onLicenseChange } from "./src/core/license.js";
 import { audit } from "./src/core/audit.js";
 
 import { renderRail } from "./src/shell/rail.js";
@@ -92,6 +93,8 @@ function setupRoutes() {
     lazy(() => import("./src/screens/docViewer.js"), "renderDocsIndex", "Documents"));
   defineRoute("/doc/:id",
     lazy(() => import("./src/screens/docViewer.js"), "renderDocViewer", "Document"));
+  defineRoute("/edit/:id",
+    lazy(() => import("./src/screens/edit.js"), "renderEdit", "Editor"));
   defineRoute("/compare/:left/:right",
     lazy(() => import("./src/screens/revisionCompare.js"), "renderRevisionCompare", "Revision Compare"));
 
@@ -371,7 +374,7 @@ async function boot() {
   }
 }
 
-window.forge = { mode, login, logout, api };
+/** @type {any} */ (window).forge = { mode, login, logout, api };
 
 function requestAccess(route, requiredIds, requiredLabels) {
   // Create a work item asking for access. Picks the first available project
@@ -428,7 +431,7 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
 boot();
 
 // Self-test suite (console only). Run `__forgeSelfTest()` in DevTools.
-window.__forgeSelfTest = async function () {
+/** @type {any} */ (window).__forgeSelfTest = async function () {
   const d = state.data;
   const results = [];
   const check = (name, cond, detail) => {

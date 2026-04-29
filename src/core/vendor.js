@@ -46,6 +46,27 @@ const loaders = {
   // docs/OFFICE_VIEWERS.md.
   "docx-preview": () => import("docx-preview"),
   xlsx: () => import("xlsx"),
+  // Univer editor (Apache-2.0). Loaded on demand by /edit/:docId. The
+  // presets bundle is ~2 MB gz so we never want it on the eager path.
+  // mlightcad cad-simple-viewer (MIT). Native browser-side DWG via the
+  // libredwg-web WASM port. Lazy-loaded; the WASM blob is multi-MB so
+  // this never lives on the eager path. Used by src/core/cad-viewer.js
+  // before falling back to the server-side LibreDWG path.
+  "mlightcad-simple": () => import("@mlightcad/cad-simple-viewer"),
+  "univer-presets": async () => {
+    const m = await import("@univerjs/presets");
+    /** @type {any} */
+    const sheetsCorePresetMod = await import("@univerjs/presets/preset-sheets-core").catch(() => ({}));
+    /** @type {any} */
+    const sheetsCoreEnUSMod = await import("@univerjs/presets/preset-sheets-core/locales/en-US").catch(() => ({}));
+    // @ts-ignore -- bundler-only side-effect import for the preset stylesheet.
+    try { await import("@univerjs/presets/lib/styles/preset-sheets-core.css"); } catch {}
+    return {
+      ...m,
+      UniverSheetsCorePreset: sheetsCorePresetMod.UniverSheetsCorePreset,
+      sheetsCoreEnUS: sheetsCoreEnUSMod.default || sheetsCoreEnUSMod,
+    };
+  },
 };
 
 function load(spec, name, probe) {
@@ -98,6 +119,8 @@ export const vendor = {
   rapidoc:     () => load("rapidoc",      "rapidoc",     m => (m.default || m)),
   docxPreview: () => load("docx-preview", "docx-preview", m => m),
   xlsx:        () => load("xlsx",         "xlsx",        m => (m.default || m)),
+  univerPresets: () => load("univer-presets", "univer-presets", m => m),
+  mlightcadSimple: () => load("mlightcad-simple", "mlightcad-simple", m => m),
 };
 
 /**
