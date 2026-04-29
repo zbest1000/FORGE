@@ -26,6 +26,13 @@ jobs:
           persist-credentials: false
 
       - name: Dependency review
+        # The GitHub-hosted action requires Dependency Graph (and on
+        # private repos, GitHub Advanced Security). On this repo the
+        # API call fails with "Dependency review is not supported on
+        # this repository", which previously failed every PR. Mark it
+        # continue-on-error so it still runs (and surfaces findings if
+        # GHAS is enabled later) without blocking the merge check.
+        continue-on-error: true
         uses: actions/dependency-review-action@595b5aeba73380359d98a5e087f648dbb0edce1b # v4.7.3
         with:
           fail-on-severity: high
