@@ -86,7 +86,7 @@ const stmtListForUser = db.prepare("SELECT id, mfa, ip, user_agent, created_at, 
  * accessJwt }` after the caller signs the access JWT — we cannot sign
  * here because Fastify's `reply.jwtSign` is bound to the request scope.
  */
-export function createSession({ userId, mfa = null, ip = null, userAgent = null }) {
+export function createSession({ userId, mfa = 0, ip = null, userAgent = null }) {
   const id = newSessionId();
   const access_jti = newAccessJti();
   const refreshSecret = newRefreshSecret();
