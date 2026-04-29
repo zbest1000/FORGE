@@ -58,6 +58,11 @@ export default defineConfig({
           if (id.includes("dxf-viewer"))        return "vendor-dxf";
           if (id.includes("rapidoc"))           return "vendor-rapidoc";
           if (id.includes("/cytoscape"))        return "vendor-cytoscape";
+          // Office document viewers — only loaded when a user opens a
+          // Word or Excel file. Each gets its own chunk so visiting one
+          // doesn't pull in the other.
+          if (id.includes("docx-preview"))      return "vendor-docx";
+          if (id.includes("xlsx") || id.includes("/sheetjs/")) return "vendor-xlsx";
           if (id.includes("/mqtt/"))            return "vendor-mqtt";
           if (id.includes("/katex/"))           return "vendor-katex";
 

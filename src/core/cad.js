@@ -35,6 +35,15 @@ export const CAD_KINDS = {
   wrl:    { dim: 3, name: "VRML",  viewer: "o3d"  },
   // BIM
   ifc:    { dim: 3, name: "IFC (BIM)", viewer: "ifc" },
+  // Office documents — viewer-only via docx-preview / xlsx (SheetJS).
+  // For full editing the recommended path is Univer (browser-side,
+  // Apache-2.0); see docs/OFFICE_VIEWERS.md. We deliberately do NOT
+  // depend on ONLYOFFICE Document Server (separate ~5 GB Docker).
+  docx: { dim: 2, name: "Word (.docx)",  viewer: "docx" },
+  doc:  { dim: 2, name: "Word (.doc)",   viewer: "docx", needsServerConvert: "docx", note: "legacy .doc requires server-side conversion" },
+  xlsx: { dim: 2, name: "Excel (.xlsx)", viewer: "xlsx" },
+  xls:  { dim: 2, name: "Excel (.xls)",  viewer: "xlsx", needsServerConvert: "xlsx" },
+  pptx: { dim: 2, name: "PowerPoint (.pptx)", viewer: "pptx", note: "viewing requires Univer or a server-side render; placeholder for now" },
 };
 
 const MIME_MAP = {
@@ -56,6 +65,11 @@ const MIME_MAP = {
   "image/png":                      "png",
   "image/jpeg":                     "jpg",
   "text/csv":                       "csv",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/msword":             "doc",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":       "xlsx",
+  "application/vnd.ms-excel":       "xls",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
 };
 
 /** Lower-case extension from a URL or filename, without leading dot. */

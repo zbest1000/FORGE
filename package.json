@@ -46,6 +46,7 @@
     "better-sqlite3": "^12.9.0",
     "date-fns": "^4.1.0",
     "dexie": "^4.4.2",
+    "docx-preview": "^0.3.7",
     "dompurify": "^3.4.1",
     "dxf-viewer": "^1.0.47",
     "echarts": "^6.0.0",
@@ -69,6 +70,7 @@
     "three": "^0.184.0",
     "uplot": "^1.6.32",
     "web-ifc": "^0.0.77",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "xstate": "^5.30.0"
   },
   "optionalDependencies": {
