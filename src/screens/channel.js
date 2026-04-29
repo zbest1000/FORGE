@@ -82,7 +82,7 @@ export function renderChannel({ id }) {
   function send(text) {
     if (!text.trim()) return;
     if (!can("create")) { toast("Read-only role cannot post", "warn"); return; }
-    const type = document.getElementById("msgType")?.value || "discussion";
+    const type = /** @type {HTMLSelectElement | null} */ (document.getElementById("msgType"))?.value || "discussion";
     const user = (state.data.users || []).find(u => u.role === state.ui.role) || state.data.users[0];
     const msg = {
       id: `M-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 4)}`,
@@ -266,7 +266,7 @@ function addChecklist(composer) {
 function addDecision(composer) {
   // Decision markers are rendered via msgType=decision; this helper labels it.
   composer.value = (composer.value ? composer.value + "\n" : "") + "Decision: ";
-  const sel = document.getElementById("msgType");
+  const sel = /** @type {HTMLSelectElement | null} */ (document.getElementById("msgType"));
   if (sel) sel.value = "decision";
   composer.focus();
 }

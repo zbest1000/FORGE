@@ -10,7 +10,7 @@
 //   * Object preview pane (spec layout: queue + preview)
 //   * Approver matrix enforcement via permissions.can()
 
-import { el, mount, card, badge, toast, modal, formRow, textarea, select, confirm } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, textarea, select, confirm, drawer } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";

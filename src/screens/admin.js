@@ -9,7 +9,7 @@
 //   * Audit ledger tamper check (verifyLedger) with visible result
 //   * Policy violations list
 
-import { el, mount, card, badge, toast, modal, formRow, input, select, confirm } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, input, select, confirm, tabs } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { ROLES } from "../core/permissions.js";
 import { exportAuditPack, verifyLedger, verifyAuditPack } from "../core/audit.js";
@@ -194,10 +194,11 @@ function licensePanel() {
                   : "Only the Organization Owner can release the activation",
                 onClick: async () => {
                   if (!isOwner) return;
-                  const ok = await dangerAction({
+                  const ok = await confirm({
                     title: "Release this activation?",
                     message: "This installation will return its seat to your license pool and drop to the Community plan immediately. You can move the license to another machine, or click Reactivate later to take the seat back here.",
                     confirmLabel: "Release seat",
+                    variant: "danger",
                   });
                   if (!ok) return;
                   try {
@@ -344,10 +345,11 @@ function offlineTokenInput(isOwner, lic) {
         disabled: !isOwner || !lic || lic.source === "fallback" || lic.source === "local_ls" || lic.source === "local_ls_unreachable",
         onClick: async () => {
           if (!isOwner) return;
-          const ok = await dangerAction({
+          const ok = await confirm({
             title: "Remove the active license?",
             message: "Your installation will downgrade to the Community plan immediately. Paid features will be unavailable until a new license is installed.",
             confirmLabel: "Remove license",
+            variant: "danger",
           });
           if (!ok) return;
           try {

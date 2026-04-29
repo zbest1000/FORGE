@@ -36,7 +36,7 @@ export function installHotkeys() {
     else if (k === "a") { e.preventDefault(); navigate("/approvals"); }
     else if (k === "/") {
       e.preventDefault();
-      const s = document.querySelector(".search-input");
+      const s = /** @type {HTMLElement | null} */ (document.querySelector(".search-input"));
       if (s) s.focus();
     }
     else if (k === "?") { e.preventDefault(); showHelp(); }

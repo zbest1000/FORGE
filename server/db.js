@@ -20,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -641,13 +641,14 @@ function migrate() {
         CREATE TABLE IF NOT EXISTS connector_runs (
           id TEXT PRIMARY KEY,
           system_id TEXT NOT NULL,
-          action TEXT NOT NULL,
+          run_type TEXT,
           status TEXT NOT NULL,
           started_at TEXT NOT NULL,
           finished_at TEXT,
           stats TEXT NOT NULL DEFAULT '{}',
           error TEXT,
-          requested_by TEXT
+          requested_by TEXT,
+          trace_id TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_connector_runs_system ON connector_runs(system_id, started_at);
 
@@ -1177,6 +1178,46 @@ function migrate() {
       }
 
       setVersion(14);
+    }
+
+    // v15: connector_runs had `action TEXT NOT NULL` from its original v6
+    // definition. The code migrated to `run_type` in v7 but never dropped
+    // the old NOT NULL column, causing every INSERT from createConnectorRun()
+    // to fail on fresh databases with "NOT NULL constraint failed:
+    // connector_runs.action". Rebuild the table without the legacy column.
+    if (getVersion() < 15) {
+      const tableExistsRow = db.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='connector_runs'"
+      ).get();
+      if (tableExistsRow) {
+        const cols = db.pragma("table_info(connector_runs)", { simple: false });
+        const hasActionNotNull = cols.some(c => c.name === "action" && c.notnull);
+        if (hasActionNotNull) {
+          // Rebuild preserving all columns *except* the legacy `action`
+          // NOT NULL column. We keep `run_type` as the canonical field and
+          // expose `action` as an alias in parseRun() for backward compat.
+          const keep = cols.filter(c => c.name !== "action");
+          const colDefs = keep.map(c => {
+            const parts = [`"${c.name}"`, c.type || "TEXT"];
+            if (c.notnull) parts.push("NOT NULL");
+            if (c.dflt_value != null) parts.push(`DEFAULT ${c.dflt_value}`);
+            if (c.pk) parts.push("PRIMARY KEY");
+            if (c.name === "system_id")
+              parts.push("REFERENCES enterprise_systems(id) ON DELETE CASCADE");
+            return parts.join(" ");
+          }).join(", ");
+          const colNames = keep.map(c => `"${c.name}"`).join(", ");
+          db.exec(`
+            CREATE TABLE "connector_runs__v15" (${colDefs});
+            INSERT INTO "connector_runs__v15" (${colNames}) SELECT ${colNames} FROM "connector_runs";
+            DROP TABLE "connector_runs";
+            ALTER TABLE "connector_runs__v15" RENAME TO "connector_runs";
+            CREATE INDEX IF NOT EXISTS idx_connector_runs_system
+              ON connector_runs(system_id, started_at);
+          `);
+        }
+      }
+      setVersion(15);
     }
   })();
   db.pragma("foreign_keys = ON");

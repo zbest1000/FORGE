@@ -7,7 +7,7 @@
 //   * Write-node action gated to Integration Admin; confirmed via HMAC sig
 //   * Simulation: trigger state_change for a bound node → event pipeline
 
-import { el, mount, card, badge, toast, modal, formRow, input, select, textarea, prompt } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, input, select, textarea, prompt, confirm } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { can } from "../core/permissions.js";
@@ -224,17 +224,12 @@ async function writeNode(nodeId, nodes) {
   if (!can("integration.write")) return;
   const val = await prompt({ title: `WRITE to ${n.id}`, message: "Will be reviewed.", defaultValue: "0" });
   if (val == null) return;
-  const ok = await dangerAction({
+  const detail = `Node: ${n.id}\nValue: ${String(val)}\nBound asset: ${n.assetId || "(unmapped)"}\nActor: ${state.ui.role}\n\nSignature is HMAC-SHA256 over the canonical payload (node, value, actor, timestamp).`;
+  const ok = await confirm({
     title: "Confirm OPC UA write",
-    message: `Write the value below to ${n.id}? The action will be signed and audited.`,
-    body: el("dl", { class: "forbidden-detail" }, [
-      el("dt", {}, ["Node"]), el("dd", {}, [n.id]),
-      el("dt", {}, ["Value"]), el("dd", {}, [String(val)]),
-      el("dt", {}, ["Bound asset"]), el("dd", {}, [n.assetId || "(unmapped)"]),
-      el("dt", {}, ["Actor"]), el("dd", {}, [state.ui.role]),
-    ]),
+    message: `Write the value below to ${n.id}? The action will be signed and audited.\n\n${detail}`,
     confirmLabel: "Sign & write",
-    details: "Signature is HMAC-SHA256 over the canonical payload (node, value, actor, timestamp).",
+    variant: "danger",
   });
   if (!ok) return;
   const sig = await signHMAC(canonicalJSON({ nodeId: n.id, value: val, actor: state.ui.role, ts: new Date().toISOString() }));

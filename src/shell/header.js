@@ -30,6 +30,7 @@ const TITLES = {
   "/approvals":   { title: "Approval Queue",   crumb: "Approvals" },
   "/operations":  { title: "Operations Data",  crumb: "Ops Data" },
   "/audit":       { title: "Audit ledger",     crumb: "Audit" },
+  "/edit":        { title: "Edit document",    crumb: "Edit" },
   "/spec":        { title: "Product Spec Reference", crumb: "Spec" },
   "/uns":         { title: "Unified Namespace", crumb: "UNS" },
   "/i3x":         { title: "i3X API Workbench", crumb: "i3X" },
@@ -116,7 +117,7 @@ export function renderHeader() {
         onClick: async () => { if (await confirm({ title: "Reset demo data", message: "Reset all local demo data? This cannot be undone.", confirmLabel: "Reset", variant: "danger" })) resetState(); },
       }, ["Reset"]),
     ]),
-    licenseBannerStrip(),
+    licenseBanner(),
   ]);
 }
 

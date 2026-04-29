@@ -43,7 +43,7 @@ export function followers(subject) {
  * Dispatch an event for a subject to all subscribers. Produces a notification
  * in `state.data.notifications` and returns the list of affected users.
  */
-export function fanout(subject, eventType, { text, route, kind } = {}) {
+export function fanout(subject, eventType, { text = "", route = "", kind = "" } = {}) {
   const subs = (state.data?.subscriptions || []).filter(x => x.subject === subject && x.events.includes(eventType));
   if (!subs.length) return [];
   const ts = new Date().toISOString();

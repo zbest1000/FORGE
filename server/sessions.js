@@ -86,20 +86,27 @@ const stmtListForUser = db.prepare("SELECT id, mfa, ip, user_agent, created_at, 
  * accessJwt }` after the caller signs the access JWT — we cannot sign
  * here because Fastify's `reply.jwtSign` is bound to the request scope.
  */
-export function createSession({ userId, mfa = null, ip = null, userAgent = null }) {
+export function createSession({ userId, mfa = 0, ip = null, userAgent = null }) {
   const id = newSessionId();
   const access_jti = newAccessJti();
   const refreshSecret = newRefreshSecret();
   const refresh_hash = hashRefreshSecret(refreshSecret);
   const ts = now();
+  // The schema's `mfa` column is `INTEGER NOT NULL DEFAULT 0` and acts
+  // as a boolean "session was MFA-verified" flag. Callers historically
+  // passed an MFA method name string (e.g. "totp") or null; coerce so
+  // any truthy value becomes 1 and any falsy/missing value becomes 0,
+  // and the schema's NOT NULL constraint is never tripped by a
+  // forwarded `null`.
+  const mfaFlag = mfa ? 1 : 0;
   stmtInsert.run({
     id, user_id: userId, access_jti, refresh_hash,
-    mfa, ip, user_agent: userAgent,
+    mfa: mfaFlag, ip, user_agent: userAgent,
     created_at: ts, last_used_at: ts,
     expires_at: isoPlus(ACCESS_TTL_S),
     refresh_expires_at: isoPlus(REFRESH_TTL_DAYS * 86_400),
   });
-  audit({ actor: userId, action: "session.create", subject: id, detail: { ip, mfa } });
+  audit({ actor: userId, action: "session.create", subject: id, detail: { ip, mfa: mfaFlag } });
   return {
     sessionId: id,
     accessJti: access_jti,

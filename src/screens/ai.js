@@ -127,7 +127,7 @@ function renderBubble(m) {
 
 function sbtn(prompt) {
   return el("button", { class: "btn sm", onClick: () => {
-    const t = document.querySelector(".ai-composer textarea");
+    const t = /** @type {HTMLTextAreaElement | null} */ (document.querySelector(".ai-composer textarea"));
     if (!t) return;
     t.value = prompt; t.focus();
     // Auto-send.

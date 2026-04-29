@@ -28,9 +28,10 @@ export async function probe() {
 
 export async function api(path, { method = "GET", body = null, headers = {} } = {}) {
   if (_mode !== "server") throw new Error("not connected to a FORGE server (demo mode)");
+  /** @type {RequestInit} */
   const init = { method, headers: { ...headers }, credentials: "same-origin" };
   const token = getToken();
-  if (token) init.headers.Authorization = `Bearer ${token}`;
+  if (token) init.headers["Authorization"] = `Bearer ${token}`;
   if (body != null) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);

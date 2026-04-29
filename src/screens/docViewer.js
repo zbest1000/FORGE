@@ -31,13 +31,27 @@ export function renderDocsIndex() {
       el("thead", {}, [el("tr", {}, ["Name","Discipline","Sensitivity","Current Rev","Revisions",""].map(h => el("th", {}, [h])))]),
       el("tbody", {}, (d.documents || []).map(doc => {
         const rev = getById("revisions", doc.currentRevisionId);
+        const ext = (doc.name?.split(".").pop() || rev?.blobName?.split(".").pop() || "").toLowerCase();
+        const editable = ext === "xlsx" || ext === "xls";
         return el("tr", { class: "row-clickable", onClick: () => navigate(`/doc/${doc.id}`) }, [
           el("td", {}, [doc.name, el("div", { class: "tiny muted" }, [doc.id])]),
           el("td", {}, [badge(doc.discipline, "info")]),
           el("td", {}, [doc.sensitivity]),
           el("td", {}, [rev ? badge(`${rev.label} · ${rev.status}`, `rev-${rev.status.toLowerCase()}`) : "—"]),
           el("td", { class: "tiny muted" }, [String(doc.revisionIds?.length || 0)]),
-          el("td", {}, [el("button", { class: "btn sm", onClick: (e) => { e.stopPropagation(); navigate(`/doc/${doc.id}`); } }, ["Open"])]),
+          el("td", {}, [
+            el("div", { class: "row" }, [
+              el("button", {
+                class: "btn sm",
+                onClick: (e) => { e.stopPropagation(); navigate(`/doc/${doc.id}`); },
+              }, ["Open"]),
+              editable ? el("button", {
+                class: "btn sm primary",
+                title: "Open in the in-browser editor (Univer)",
+                onClick: (e) => { e.stopPropagation(); navigate(`/edit/${doc.id}`); },
+              }, ["Edit"]) : null,
+            ]),
+          ]),
         ]);
       })),
     ])),

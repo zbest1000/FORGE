@@ -35,6 +35,14 @@ export function clear(node) {
   while (node && node.firstChild) node.removeChild(node.firstChild);
 }
 
+// Numbers are coerced to strings by the DOM at runtime, but the lib.dom
+// `setAttribute(name, value: string)` signature is strictly typed. SVG-heavy
+// drawing code uses raw numbers everywhere; this tiny helper keeps those
+// call sites short and typecheck-clean.
+export function setAttr(elt, name, value) {
+  elt.setAttribute(name, String(value));
+}
+
 // Selectors for "looks like a button but isn't" — applied uniformly via
 // a delegated handler installed by `installRowKeyboardHandlers()`. Keeping
 // this list central means screens don't have to repeat keyboard wiring.
@@ -86,7 +94,7 @@ export function installRowKeyboardHandlers(rootDoc = document) {
   rootDoc.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;
     const target = e.target;
-    if (!(target instanceof Element)) return;
+    if (!(target instanceof HTMLElement)) return;
     if (!target.matches(ROW_BUTTON_SELECTOR)) return;
     // Skip if the focus is on a real button/input inside the row.
     if (target !== rootDoc.activeElement) return;
@@ -164,7 +172,7 @@ export function card(title, body, opts = {}) {
   ]);
 }
 
-export function table({ columns, rows, onRowClick }) {
+export function table({ columns = [], rows = [], onRowClick = null } = {}) {
   const t = el("table", { class: "table" }, [
     el("thead", {}, [
       el("tr", {}, columns.map(c => el("th", {}, [c.header || c.key]))),
@@ -207,11 +215,11 @@ export function toast(message, variant = "") {
   }, 2800);
 }
 
-export function modal({ title, body, actions }) {
+export function modal({ title = "", body = null, actions = null } = {}) {
   const root = document.getElementById("modalRoot");
   if (!root) return { close: () => {} };
 
-  const previouslyFocused = document.activeElement;
+  const previouslyFocused = /** @type {HTMLElement | null} */ (document.activeElement);
   const close = () => {
     root.innerHTML = "";
     if (previouslyFocused && typeof previouslyFocused.focus === "function") {
@@ -226,7 +234,7 @@ export function modal({ title, body, actions }) {
       if (e.key === "Escape") { e.preventDefault(); close(); return; }
       if (e.key !== "Tab") return;
       // Trap focus within the modal.
-      const focusables = backdrop.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
+      const focusables = /** @type {NodeListOf<HTMLElement>} */ (backdrop.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"));
       const first = focusables[0]; const last = focusables[focusables.length - 1];
       if (!first) return;
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
@@ -270,17 +278,17 @@ export function modal({ title, body, actions }) {
       backdrop.querySelector("button:not(.ghost)"),
       backdrop.querySelector("button"),
     ].filter(Boolean);
-    const first = candidates[0];
+    const first = /** @type {HTMLElement | undefined} */ (candidates[0]);
     if (first) try { first.focus(); } catch {}
   }, 0);
   return { close };
 }
 
-export function drawer({ title, subtitle, body, actions, width = "520px" } = {}) {
+export function drawer({ title = "", subtitle = "", body = null, actions = null, width = "520px" } = {}) {
   const root = document.getElementById("modalRoot");
   if (!root) return { close: () => {} };
 
-  const previouslyFocused = document.activeElement;
+  const previouslyFocused = /** @type {HTMLElement | null} */ (document.activeElement);
   const close = () => {
     root.innerHTML = "";
     if (previouslyFocused && typeof previouslyFocused.focus === "function") {
@@ -294,7 +302,7 @@ export function drawer({ title, subtitle, body, actions, width = "520px" } = {})
     onKeydown: (e) => {
       if (e.key === "Escape") { e.preventDefault(); close(); return; }
       if (e.key !== "Tab") return;
-      const focusables = backdrop.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
+      const focusables = /** @type {NodeListOf<HTMLElement>} */ (backdrop.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"));
       const first = focusables[0]; const last = focusables[focusables.length - 1];
       if (!first) return;
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
@@ -335,7 +343,7 @@ export function drawer({ title, subtitle, body, actions, width = "520px" } = {})
   return { close };
 }
 
-export function confirm({ title = "Confirm", message, confirmLabel = "Confirm", variant = "primary" } = {}) {
+export function confirm({ title = "Confirm", message = "", confirmLabel = "Confirm", variant = "primary" } = {}) {
   return new Promise((resolve) => {
     modal({
       title,
@@ -352,7 +360,7 @@ export function confirm({ title = "Confirm", message, confirmLabel = "Confirm", 
  * Styled replacement for `window.prompt`. Resolves with the entered string,
  * or `null` if the user cancels. Always returns a Promise.
  */
-export function prompt({ title = "Enter value", message, defaultValue = "", placeholder = "", confirmLabel = "OK", inputType = "text" } = {}) {
+export function prompt({ title = "Enter value", message = "", defaultValue = "", placeholder = "", confirmLabel = "OK", inputType = "text" } = {}) {
   return new Promise((resolve) => {
     const inp = input({ value: defaultValue, placeholder, type: inputType });
     let resolved = false;
@@ -433,7 +441,7 @@ export function textarea(props = {}) {
 //     ariaLabel: "Asset context",
 //     onChange: (id) => {},
 //   })
-export function tabs({ tabs: list = [], sessionKey, ariaLabel, defaultId, onChange } = {}) {
+export function tabs({ tabs: list = [], sessionKey = "", ariaLabel = "", defaultId = "", onChange = null } = {}) {
   const stored = sessionKey ? sessionStorage.getItem(sessionKey) : null;
   const active = list.find(t => t.id === stored)
     || list.find(t => t.id === defaultId)

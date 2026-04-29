@@ -42,6 +42,8 @@
     "@opentelemetry/resources": "^2.7.0",
     "@opentelemetry/sdk-node": "^0.215.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
+    "@mlightcad/cad-simple-viewer": "^1.4.13",
+    "@univerjs/presets": "^0.10.6",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^12.9.0",
     "date-fns": "^4.1.0",
@@ -81,5 +83,10 @@
     "cross-env": "^7.0.3",
     "typescript": "^5.7.2",
     "vite": "^8.0.10"
+  },
+  "overrides": {
+    "@mlightcad/cad-simple-viewer": {
+      "three": "$three"
+    }
   }
 }

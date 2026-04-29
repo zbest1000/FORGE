@@ -1,4 +1,4 @@
-import { el, mount, card, badge, kpi, tabs, select, toast, prompt } from "../core/ui.js";
+import { el, mount, card, badge, kpi, tabs, select, toast, prompt, input } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";

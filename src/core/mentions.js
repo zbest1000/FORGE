@@ -10,13 +10,11 @@ import { audit } from "./audit.js";
 // Token format: @ followed by 2-24 chars (letters, digits, dot, hyphen).
 const TOKEN_RE = /(^|[\s\(\[\{])@([A-Za-z][A-Za-z0-9._-]{0,23})/g;
 
-/**
- * Resolve a token (without the @) to a user by:
- *   - exact id (e.g. U-3)
- *   - initials (case-insensitive)
- *   - last-name match (case-insensitive)
- *   - first.last or first-last
- */
+// Resolve a token (without the @) to a user by:
+//   - exact id (e.g. U-3)
+//   - initials (case-insensitive)
+//   - last-name match (case-insensitive)
+//   - first.last or first-last
 export function resolveMention(token, users) {
   const t = String(token || "").trim();
   if (!t) return null;
