@@ -161,10 +161,21 @@ jobs:
           # Import every server JS module in a fresh node process. Any
           # ReferenceError, missing import, or SQL-statement-against-a-
           # missing-table error surfaces here.
+          #
+          # `server/main.js` is excluded because it IS the server entry
+          # point — importing it actually starts Fastify + workers and
+          # the listener keeps the process alive forever. The earlier
+          # `npm run smoke:built` step already exercises main.js end-to-
+          # end (it boots the built server and curls /api/health), so
+          # the import-time signal we want for main.js is already
+          # covered. `node --check` here adds a fast syntax tripwire
+          # without the side-effect cost.
+          node --check server/main.js
           for f in server/*.js server/routes/*.js server/connectors/*.js \
                    server/security/*.js server/integrations/*.js \
                    server/historians/*.js server/graphql/*.js \
                    server/schemas/*.js; do
+            if [ "$f" = "server/main.js" ]; then continue; fi
             node -e "import('./$f').catch(e => { console.error('FAIL', '$f', e.message); process.exit(1); })"
           done
 
