@@ -53,7 +53,7 @@ function docsToolbar() {
   const fileInput = el("input", {
     type: "file",
     multiple: true,
-    accept: ".pdf,.doc,.docx,.dwg,.dxf,.ifc,.step,.stp,.iges,.igs,.png,.jpg,.jpeg,.svg,.txt,.csv,.md",
+    accept: ".pdf,.doc,.docx,.xls,.xlsx,.pptx,.dwg,.dxf,.ifc,.step,.stp,.iges,.igs,.stl,.obj,.gltf,.glb,.png,.jpg,.jpeg,.svg,.txt,.csv,.md",
     style: { display: "none" },
   });
   fileInput.addEventListener("change", () => {

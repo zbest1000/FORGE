@@ -51,6 +51,21 @@ export async function renderCad(host, { url, mime, name, fileId } = {}) {
     if (detected.viewer === "o3d" || detected.viewer === "ifc") {
       return await renderO3D(host, url, name || url, status);
     }
+    if (detected.viewer === "docx") {
+      const { renderDocx } = await import("./office.js");
+      status.remove();
+      return await renderDocx(host, url, { name });
+    }
+    if (detected.viewer === "xlsx") {
+      const { renderXlsx } = await import("./office.js");
+      status.remove();
+      return await renderXlsx(host, url, { name });
+    }
+    if (detected.viewer === "pptx") {
+      const { renderPptx } = await import("./office.js");
+      status.remove();
+      return await renderPptx(host, url, { name });
+    }
     // Fall through: image / PDF / CSV are handled by the doc viewer's
     // existing path; we just expose a hint here for completeness.
     status.replaceChildren(textPanel(`${detected.name} is rendered by the doc viewer.`, "info").firstChild);

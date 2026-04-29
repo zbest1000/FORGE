@@ -40,6 +40,12 @@ const loaders = {
   "dxf-viewer": () => import("dxf-viewer"),
   "online-3d-viewer": () => import("online-3d-viewer"),
   rapidoc: () => import("rapidoc"),
+  // Office viewers — embedded, browser-only. Replaces the ONLYOFFICE
+  // Document Server pattern (separate ~5 GB Docker) for the read-only
+  // path. Univer is the recommended editor for the editing path; see
+  // docs/OFFICE_VIEWERS.md.
+  "docx-preview": () => import("docx-preview"),
+  xlsx: () => import("xlsx"),
 };
 
 function load(spec, name, probe) {
@@ -90,6 +96,8 @@ export const vendor = {
   dxfViewer:   () => load("dxf-viewer",   "dxf-viewer",  m => m),
   online3d:    () => load("online-3d-viewer", "online-3d-viewer", m => m),
   rapidoc:     () => load("rapidoc",      "rapidoc",     m => (m.default || m)),
+  docxPreview: () => load("docx-preview", "docx-preview", m => m),
+  xlsx:        () => load("xlsx",         "xlsx",        m => (m.default || m)),
 };
 
 /**
