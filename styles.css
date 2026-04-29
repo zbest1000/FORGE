@@ -659,46 +659,172 @@ body.dock-hidden .screen-container,
 .kpi-delta.down { color: var(--danger); }
 
 /* Tables */
+/* ============================================================
+   Asana-like table — restyled for clarity, density, and clean
+   sort/filter affordances. Header row stays sticky, filter row
+   sits underneath with subtle separation, columns are softly
+   delimited so the eye can track across long rows.
+   ============================================================ */
 .table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 
 .table th,
 .table td {
   text-align: left;
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border);
+  padding: 10px 14px;
   vertical-align: middle;
+  border-bottom: 1px solid var(--border);
 }
 
-.table th {
-  color: var(--muted);
-  font-weight: 500;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+/* Soft vertical separators between columns — readable on long rows
+   without the heavy "spreadsheet grid" feel. */
+.table th + th,
+.table td + td {
+  border-left: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+/* Header row: title-cased label, mid-weight, slightly tighter padding. */
+.table thead tr:first-child th {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   background: var(--panel);
+  border-bottom: 1px solid var(--border-strong);
   position: sticky;
   top: 0;
+  z-index: 2;
+  padding: 10px 14px;
+  white-space: nowrap;
 }
 
+/* Sortable header is a button-feeling cell — pointer cursor, hover
+   highlights the column, and sort indicator gets a soft pill. */
+.table thead .col-sortable {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+}
+.table thead .col-sortable:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  color: var(--text-strong);
+}
+.table thead .col-sortable.is-sorted {
+  color: var(--accent-strong, var(--accent));
+}
+.table thead .col-sortable.is-sorted::after {
+  content: "";
+  display: inline-block;
+  margin-left: 6px;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  vertical-align: middle;
+}
+.table thead .col-sortable.sort-asc::after  { border-bottom: 5px solid currentColor; }
+.table thead .col-sortable.sort-desc::after { border-top:    5px solid currentColor; }
+
+/* Filter row: sits right under the headers, slightly recessed, no
+   left/right padding "outside" the inputs so they read as a single
+   continuous filter strip rather than as separate cells. */
+.table thead tr.filter-row th {
+  background: color-mix(in srgb, var(--panel) 70%, var(--surface));
+  border-bottom: 1px solid var(--border);
+  padding: 4px 6px;
+  position: sticky;
+  top: 38px;
+  z-index: 1;
+}
+.table thead tr.filter-row input.input {
+  width: 100%;
+  height: 26px;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.table thead tr.filter-row input.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+/* Body rows: tighter, alternating-tone hover, no full-row border on
+   the last row so the table's bottom radius reads cleanly. */
 .table tbody tr {
   transition: background 0.1s ease;
 }
-
 .table tbody tr:hover {
-  background: var(--elevated);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+.table tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .table .mono {
   font-family: var(--font-mono);
   color: var(--muted);
+  font-size: 12px;
+}
+.table .row-clickable { cursor: pointer; }
+
+/* Compact ghost button in cells (e.g. blocker links) shouldn't
+   inherit the table's row hover background — give it its own. */
+.table td .btn.ghost,
+.table td .btn.xs {
+  background: transparent;
+}
+.table td .btn.ghost:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-.table .row-clickable {
-  cursor: pointer;
+/* Column-menu button on the right edge of the header row. */
+.table thead th:last-child .btn {
+  padding: 0 8px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+/* ============================================================
+   Document drop zone — appears below the docs list, lights up
+   when a drag is over the screen container.
+   ============================================================ */
+.doc-drop-zone {
+  margin-top: 16px;
+  padding: 24px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-lg);
+  text-align: center;
+  background: color-mix(in srgb, var(--panel) 50%, var(--surface));
+  color: var(--muted);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.doc-drop-zone.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--text);
+}
+.doc-drop-icon {
+  font-size: 28px;
+  margin-bottom: 6px;
+}
+.doc-drop-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.doc-drop-hint {
+  margin-top: 4px;
 }
 
 /* Kanban */

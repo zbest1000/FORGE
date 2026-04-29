@@ -26,6 +26,7 @@ export function renderDocsIndex() {
   const root = document.getElementById("screenContainer");
   const d = state.data;
   mount(root, [
+    docsToolbar(),
     card("Documents", el("table", { class: "table" }, [
       el("thead", {}, [el("tr", {}, ["Name","Discipline","Sensitivity","Current Rev","Revisions",""].map(h => el("th", {}, [h])))]),
       el("tbody", {}, (d.documents || []).map(doc => {
@@ -40,7 +41,138 @@ export function renderDocsIndex() {
         ]);
       })),
     ])),
+    docsDropZone(),
   ]);
+}
+
+// Toolbar with native OS file-picker affordances. The hidden <input
+// type="file"> element is the standard browser primitive that drives
+// the OS file dialog (Finder on macOS, Files on Windows, Nautilus etc.
+// on Linux). Clicking the visible button triggers the input.
+function docsToolbar() {
+  const fileInput = el("input", {
+    type: "file",
+    multiple: true,
+    accept: ".pdf,.doc,.docx,.dwg,.dxf,.ifc,.step,.stp,.iges,.igs,.png,.jpg,.jpeg,.svg,.txt,.csv,.md",
+    style: { display: "none" },
+  });
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files?.length) ingestFiles(Array.from(fileInput.files));
+    fileInput.value = ""; // reset so re-selecting the same file fires
+  });
+  return el("div", { class: "row spread", style: { marginBottom: "12px", gap: "8px" } }, [
+    el("div", {}, [
+      el("h2", { style: { margin: 0, fontSize: "18px" } }, ["Documents"]),
+      el("div", { class: "tiny muted" }, [
+        "Drop files anywhere on this page or click ",
+        el("span", { style: { fontWeight: 600 } }, ["Add document"]),
+        " to use the system file picker.",
+      ]),
+    ]),
+    el("div", { class: "row" }, [
+      el("button", {
+        class: "btn primary",
+        onClick: () => fileInput.click(),
+        title: "Open the system file picker (Finder / Files / Nautilus)",
+      }, ["+ Add document"]),
+      fileInput,
+    ]),
+  ]);
+}
+
+// Drop-zone overlay rendered at the bottom of the docs index. The
+// page-level dragover handler turns this into a visible target while
+// a drag is in progress; on drop, files are routed through ingestFiles.
+function docsDropZone() {
+  const zone = el("div", {
+    class: "doc-drop-zone",
+    "aria-label": "Drop files to add new documents",
+  }, [
+    el("div", { class: "doc-drop-icon", "aria-hidden": "true" }, ["⬇"]),
+    el("div", { class: "doc-drop-title" }, ["Drop files anywhere to add documents"]),
+    el("div", { class: "doc-drop-hint tiny muted" }, [
+      "Supported: PDF, Office, CAD (DWG/DXF/IFC/STEP), images, CSV, Markdown.",
+    ]),
+  ]);
+
+  const onDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; zone.classList.add("is-active"); };
+  const onDragLeave = () => zone.classList.remove("is-active");
+  const onDrop = (e) => {
+    e.preventDefault();
+    zone.classList.remove("is-active");
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length) ingestFiles(files);
+  };
+  // Bind to the screen container so dragging anywhere over the docs
+  // list shows the drop affordance, not just the zone box itself.
+  const sc = document.getElementById("screenContainer");
+  if (sc) {
+    sc.addEventListener("dragover", onDragOver);
+    sc.addEventListener("dragleave", onDragLeave);
+    sc.addEventListener("drop", onDrop);
+  }
+  return zone;
+}
+
+// Ingest one or more files dropped into the docs UI. We create a new
+// Document + initial Revision in the local store, embed each file as a
+// blob URL so the doc viewer can preview it, and navigate to the first
+// new doc. In server mode this is where we'd POST to /api/files; for
+// the offline / demo mode the blob URL is good enough to render.
+async function ingestFiles(files) {
+  if (!files.length) return;
+  const ts = new Date().toISOString();
+  const newDocs = [];
+  for (const f of files) {
+    const docId = "DOC-" + Math.random().toString(36).slice(2, 9).toUpperCase();
+    const revId = "REV-" + Math.random().toString(36).slice(2, 9).toUpperCase();
+    const url = URL.createObjectURL(f);
+    const ext = (f.name.split(".").pop() || "").toLowerCase();
+    const discipline = ext === "dwg" || ext === "dxf" || ext === "ifc" ? "Mechanical"
+      : ext === "pdf" ? "Process" : ext === "csv" ? "Data" : "General";
+    const doc = {
+      id: docId,
+      name: f.name,
+      discipline,
+      sensitivity: "internal",
+      currentRevisionId: revId,
+      revisionIds: [revId],
+      teamSpaceId: state.data?.teamSpaces?.[0]?.id || null,
+      projectId: null,
+      acl: {},
+      labels: ["uploaded"],
+      created_at: ts,
+      updated_at: ts,
+    };
+    const rev = {
+      id: revId,
+      docId,
+      label: "A",
+      status: "Draft",
+      summary: "Initial upload",
+      notes: `Uploaded ${f.name} (${Math.round(f.size / 1024)} KB)`,
+      pdfUrl: url,
+      blobName: f.name,
+      blobType: f.type,
+      blobSize: f.size,
+      created_at: ts,
+      updated_at: ts,
+    };
+    newDocs.push({ doc, rev });
+  }
+  update(s => {
+    s.data.documents = s.data.documents || [];
+    s.data.revisions = s.data.revisions || [];
+    for (const { doc, rev } of newDocs) {
+      s.data.documents.push(doc);
+      s.data.revisions.push(rev);
+    }
+  });
+  for (const { doc } of newDocs) {
+    audit("document.upload", doc.id, { name: doc.name, via: "file-picker" });
+  }
+  toast(`${newDocs.length} document${newDocs.length === 1 ? "" : "s"} added`, "success");
+  navigate(`/doc/${newDocs[0].doc.id}`);
 }
 
 const SK = (id, k) => `doc.${id}.${k}`;

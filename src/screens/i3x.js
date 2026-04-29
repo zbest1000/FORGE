@@ -41,14 +41,20 @@ export function renderI3X() {
   if (pre) sessionStorage.removeItem("i3x.presubscribe");
 
   const defaultBody = endpoint.body ? JSON.parse(JSON.stringify(endpoint.body)) : null;
-  // Helpful defaults from context
-  if (endpoint.id === "listObjects" || endpoint.id === "value" || endpoint.id === "history") {
-    const eq = getServer().getObjects({ typeElementId: "isa95:Equipment" }).data[0];
-    if (eq) defaultBody.elementIds = [eq.elementId];
-  }
-  if (endpoint.id === "relatedObjects") {
-    const eq = getServer().getObjects({ typeElementId: "isa95:Equipment" }).data[0];
-    if (eq) defaultBody.elementIds = [eq.elementId];
+  // Helpful defaults from context. The previous version assumed every
+  // installation had an `isa95:Equipment`-typed object available, and
+  // bailed silently when it didn't — leaving the workbench in a
+  // "click Run, get empty response" state that read as broken. Now
+  // we fall back through a couple of likely types and finally pick
+  // any available object so the Run button always returns something.
+  const seedElementIds = pickSeedElementIds(3);
+  if (seedElementIds.length) {
+    if (endpoint.id === "listObjects" || endpoint.id === "value" || endpoint.id === "history") {
+      defaultBody.elementIds = seedElementIds;
+    }
+    if (endpoint.id === "relatedObjects") {
+      defaultBody.elementIds = [seedElementIds[0]];
+    }
   }
   if (pre && (endpoint.id === "value" || endpoint.id === "history" || endpoint.id === "listObjects" || endpoint.id === "registerItems")) {
     defaultBody.elementIds = [pre];
@@ -103,6 +109,25 @@ export function renderI3X() {
     streamPanel,
     renderSpecCard(),
   ]);
+}
+
+// Pick element ids the workbench can use as default request body so
+// users hitting "Run" on a fresh install always see real data flow,
+// not an empty response from an empty `elementIds: []` body. Falls
+// back through a few common ISA-95 types and finally picks anything
+// available. Defensive against the server not being initialised yet.
+function pickSeedElementIds(n = 3) {
+  let server;
+  try { server = getServer(); } catch { return []; }
+  const tryTypes = ["isa95:Equipment", "isa95:Production", "isa95:WorkUnit", "isa95:Site", null];
+  for (const t of tryTypes) {
+    try {
+      const res = server.getObjects(t ? { typeElementId: t } : {});
+      const ids = (res?.data || []).map(o => o.elementId).filter(Boolean);
+      if (ids.length) return ids.slice(0, n);
+    } catch { /* try next */ }
+  }
+  return [];
 }
 
 function rapidocCard() {
