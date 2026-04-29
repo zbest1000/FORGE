@@ -549,23 +549,31 @@ function tableView(items, batch, batchKey) {
     toggleColumn(`cf:${id}`);
   };
 
-  const sortIndicator = (colId) =>
-    sort.col === colId ? (sort.dir === 1 ? " ↑" : " ↓") : "";
+  // Header cell classes: col-sortable always; is-sorted + sort-asc /
+  // sort-desc only when this column is the active sort. Indicator
+  // arrows are rendered as a CSS triangle via ::after, not inline text,
+  // so headers stay precisely aligned.
+  const headerClass = (colId) => {
+    const cls = ["col-sortable"];
+    if (sort.col === colId) {
+      cls.push("is-sorted", sort.dir === 1 ? "sort-asc" : "sort-desc");
+    }
+    return cls.join(" ");
+  };
 
   const headerRow = el("tr", {}, [
     el("th", { style: { width: "32px" } }, [""]),
     ...cols.map(c => el("th", {
-      class: "col-sortable",
+      class: headerClass(c.id),
       onClick: () => setSort(c.id),
       title: "Click to toggle sort (asc → desc → none)",
-      style: { cursor: "pointer", userSelect: "none" },
-    }, [c.header, sortIndicator(c.id)])),
+    }, [c.header])),
     el("th", { style: { width: "40px" } }, [columnMenu(allCols, visible, toggleColumn, addCustomField)]),
   ]);
   const filterRow = el("tr", { class: "filter-row" }, [
     el("th", {}, [""]),
     ...cols.map(c => {
-      const inp = input({ value: filters[c.id] || "", placeholder: "Filter…", style: { width: "100%", fontSize: "11px", padding: "2px 6px" } });
+      const inp = input({ value: filters[c.id] || "", placeholder: "Filter…" });
       inp.addEventListener("input", () => {
         clearTimeout(inp._t);
         inp._t = setTimeout(() => setFilter(c.id, inp.value), 150);
