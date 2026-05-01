@@ -15,6 +15,19 @@ const BACKEND_ALIASES = new Map([
   ["mssql", "mssql"],
   ["sqlserver", "mssql"],
   ["sql_server", "mssql"],
+  // Phase 7a: postgres + timescaledb share the same adapter
+  // (TimescaleDB is a postgres extension; the same `pg` driver
+  // talks to both. Hypertable awareness is opt-in via the
+  // FORGE_PG_TIMESCALEDB=1 flag so a vanilla postgres install
+  // doesn't trip the time_bucket() optimisation path).
+  ["postgres", "postgresql"],
+  ["postgresql", "postgresql"],
+  ["psql", "postgresql"],
+  ["timescaledb", "postgresql"],
+  ["timescale", "postgresql"],
+  ["mysql", "mysql"],
+  ["maria", "mysql"],
+  ["mariadb", "mysql"],
 ]);
 
 export function normalizeHistorian(name = "sqlite") {
@@ -233,12 +246,198 @@ const mssqlAdapter = {
   },
 };
 
+// Phase 7a — postgres adapter. Same driver speaks vanilla
+// PostgreSQL and TimescaleDB; when FORGE_PG_TIMESCALEDB=1 the
+// query path uses time_bucket() to take advantage of hypertables
+// for big ranges. Configured via FORGE_PG_CONNECTION_STRING (a
+// `postgresql://user:pwd@host:5432/db` URL); the `pg` package is
+// in optionalDependencies so default installs stay light.
+const postgresAdapter = {
+  name: "postgresql",
+  kind: "relational-history",
+  configured() {
+    return Boolean(process.env.FORGE_PG_CONNECTION_STRING);
+  },
+  status() {
+    return {
+      name: "postgresql",
+      configured: this.configured(),
+      writable: this.configured(),
+      readable: this.configured(),
+      url: redactUrl(process.env.FORGE_PG_CONNECTION_STRING),
+      timescale: process.env.FORGE_PG_TIMESCALEDB === "1",
+    };
+  },
+  async pool() {
+    const pg = await import("pg");
+    const Pool = pg.default?.Pool || pg.Pool;
+    if (!this._pool) {
+      this._pool = new Pool({ connectionString: process.env.FORGE_PG_CONNECTION_STRING });
+    }
+    return this._pool;
+  },
+  async writeSample(point, sample) {
+    if (!this.configured()) return notConfigured("postgresql");
+    const pool = await this.pool();
+    await pool.query(
+      `INSERT INTO forge_historian_samples (point_id, asset_id, tag, ts, value, quality, source_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [point.id, point.asset_id, point.tag, new Date(sample.ts), Number(sample.value), sample.quality, sample.source_type]
+    );
+    return { backend: "postgresql", written: true };
+  },
+  async querySamples(point, query) {
+    if (!this.configured()) return null;
+    const pool = await this.pool();
+    // Same column shape as the mssql adapter so callers can swap
+    // backends without changing the historian-points contract.
+    const result = await pool.query(
+      `SELECT point_id, ts, value, quality, source_type
+         FROM forge_historian_samples
+        WHERE point_id = $1 AND ts >= $2 AND ts <= $3
+        ORDER BY ts ASC LIMIT $4`,
+      [point.id, new Date(query.since), new Date(query.until), Number(query.limit)]
+    );
+    return result.rows.map(r => ({
+      id: `${point.id}:${new Date(r.ts).toISOString()}`,
+      point_id: point.id,
+      ts: new Date(r.ts).toISOString(),
+      value: Number(r.value),
+      quality: r.quality || "Good",
+      source_type: r.source_type || "postgresql",
+      raw_payload: {},
+    }));
+  },
+  /**
+   * Aggregate read using TimescaleDB's `time_bucket` when
+   * FORGE_PG_TIMESCALEDB=1, otherwise a vanilla GROUP BY.
+   * Returns one row per bucket so the OPC UA HA service +
+   * dashboard charts can request downsampled history without
+   * pulling raw samples back over the wire.
+   */
+  async aggregateSamples(point, { since, until, bucketSeconds = 60, limit = 5000 }) {
+    if (!this.configured()) return null;
+    const pool = await this.pool();
+    const useTimescale = process.env.FORGE_PG_TIMESCALEDB === "1";
+    const sql = useTimescale
+      ? `SELECT time_bucket($1::interval, ts) AS bucket,
+                avg(value) AS avg, min(value) AS min, max(value) AS max, count(*)::int AS count
+           FROM forge_historian_samples
+          WHERE point_id = $2 AND ts >= $3 AND ts <= $4
+       GROUP BY bucket ORDER BY bucket ASC LIMIT $5`
+      : `SELECT date_trunc('second', ts) - (extract(epoch from ts)::bigint % $1)::int * interval '1 second' AS bucket,
+                avg(value) AS avg, min(value) AS min, max(value) AS max, count(*)::int AS count
+           FROM forge_historian_samples
+          WHERE point_id = $2 AND ts >= $3 AND ts <= $4
+       GROUP BY bucket ORDER BY bucket ASC LIMIT $5`;
+    const interval = useTimescale ? `${Number(bucketSeconds)} seconds` : Number(bucketSeconds);
+    const result = await pool.query(sql, [interval, point.id, new Date(since), new Date(until), Number(limit)]);
+    return result.rows.map(r => ({
+      bucket: new Date(r.bucket).toISOString(),
+      avg: Number(r.avg),
+      min: Number(r.min),
+      max: Number(r.max),
+      count: Number(r.count),
+    }));
+  },
+  async shutdown() {
+    if (this._pool) {
+      try { await this._pool.end(); } catch { /* swallow */ }
+      this._pool = null;
+    }
+  },
+};
+
+// Phase 7a — mysql / mariadb adapter. Same forge_historian_samples
+// schema; the `mysql2` package is in optionalDependencies.
+const mysqlAdapter = {
+  name: "mysql",
+  kind: "relational-history",
+  configured() {
+    return Boolean(process.env.FORGE_MYSQL_CONNECTION_STRING);
+  },
+  status() {
+    return {
+      name: "mysql",
+      configured: this.configured(),
+      writable: this.configured(),
+      readable: this.configured(),
+      url: redactUrl(process.env.FORGE_MYSQL_CONNECTION_STRING),
+    };
+  },
+  async pool() {
+    if (!this._pool) {
+      const mod = await import("mysql2/promise");
+      const mysql = mod.default || mod;
+      this._pool = await mysql.createPool({
+        uri: process.env.FORGE_MYSQL_CONNECTION_STRING,
+        connectionLimit: 4,
+        waitForConnections: true,
+      });
+    }
+    return this._pool;
+  },
+  async writeSample(point, sample) {
+    if (!this.configured()) return notConfigured("mysql");
+    const pool = await this.pool();
+    await pool.query(
+      `INSERT INTO forge_historian_samples (point_id, asset_id, tag, ts, value, quality, source_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [point.id, point.asset_id, point.tag, new Date(sample.ts), Number(sample.value), sample.quality, sample.source_type]
+    );
+    return { backend: "mysql", written: true };
+  },
+  async querySamples(point, query) {
+    if (!this.configured()) return null;
+    const pool = await this.pool();
+    const [rows] = await pool.query(
+      `SELECT point_id, ts, value, quality, source_type
+         FROM forge_historian_samples
+        WHERE point_id = ? AND ts >= ? AND ts <= ?
+        ORDER BY ts ASC LIMIT ?`,
+      [point.id, new Date(query.since), new Date(query.until), Number(query.limit)]
+    );
+    return rows.map(r => ({
+      id: `${point.id}:${new Date(r.ts).toISOString()}`,
+      point_id: point.id,
+      ts: new Date(r.ts).toISOString(),
+      value: Number(r.value),
+      quality: r.quality || "Good",
+      source_type: r.source_type || "mysql",
+      raw_payload: {},
+    }));
+  },
+  async shutdown() {
+    if (this._pool) {
+      try { await this._pool.end(); } catch { /* swallow */ }
+      this._pool = null;
+    }
+  },
+};
+
 const adapters = new Map([
   ["sqlite", sqliteAdapter],
   ["influxdb", influxAdapter],
   ["timebase", timebaseAdapter],
   ["mssql", mssqlAdapter],
+  ["postgresql", postgresAdapter],
+  ["mysql", mysqlAdapter],
 ]);
+
+/**
+ * Best-effort shutdown of every backend that holds a long-lived
+ * connection pool. Called from server/main.js's graceful-stop
+ * sequence so process exits cleanly.
+ */
+export async function shutdownHistorians() {
+  const out = [];
+  for (const a of adapters.values()) {
+    if (typeof a.shutdown === "function") {
+      try { await a.shutdown(); out.push(a.name); } catch { /* swallow */ }
+    }
+  }
+  return out;
+}
 
 export function listHistorianBackends() {
   return [...adapters.values()].map(adapter => typeof adapter.status === "function" ? adapter.status() : { name: adapter.name });

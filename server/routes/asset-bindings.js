@@ -52,6 +52,7 @@ import {
   BindingTestBody,
 } from "../schemas/asset-bindings.js";
 import { validateSelectTemplate } from "../security/sql-validator.js";
+import { dialectForBinding, DIALECTS } from "../connectors/sql-drivers.js";
 import * as connectorRegistry from "../connectors/registry.js";
 
 // ----- helpers ---------------------------------------------------------
@@ -71,6 +72,7 @@ function mapBinding(row) {
     templateVars: jsonOrDefault(row.template_vars, {}),
     queryTemplate: row.query_template || null,
     sqlMode: row.sql_mode || null,
+    dialect: row.dialect || null,
     enabled: !!row.enabled,
     lastValue: row.last_value,
     lastQuality: row.last_quality,
@@ -153,21 +155,10 @@ function upsertHistorianPoint({ orgId, asset, name, unit, dataType }) {
   return id;
 }
 
-function ensureBindingHasFreeFormSqlSupport() {
-  // Best-effort one-time idempotent ALTER. v17 in the migration plan
-  // proper would carry these but Phase 3's scope keeps the migration
-  // surface minimal. Free-form SQL persists into two added columns
-  // on `asset_point_bindings`.
-  const cols = db.pragma("table_info(asset_point_bindings)", { simple: false });
-  const has = (n) => cols.some(c => c.name === n);
-  if (!has("query_template")) {
-    try { db.prepare("ALTER TABLE asset_point_bindings ADD COLUMN query_template TEXT").run(); } catch { /* concurrent */ }
-  }
-  if (!has("sql_mode")) {
-    try { db.prepare("ALTER TABLE asset_point_bindings ADD COLUMN sql_mode TEXT").run(); } catch { /* concurrent */ }
-  }
-}
-ensureBindingHasFreeFormSqlSupport();
+// Phase 7a: v17 migration owns the canonical column shape for
+// `asset_point_bindings` (query_template, sql_mode, dialect).
+// The Phase-3 idempotent ensure-block has been retired in favour
+// of the migration; routes assume the columns are present.
 
 // ----- routes ----------------------------------------------------------
 
@@ -241,6 +232,21 @@ export default async function assetBindingRoutes(fastify) {
     // upfront so we either succeed everywhere or fail without partial
     // writes. Free-form SQL needs an extra pre-validation pass on the
     // operator-authored query templates.
+    // Phase 7a: each SQL binding carries a dialect (mssql / postgresql
+    // / mysql / sqlite) so the connector subregistry knows which
+    // driver to load. The dialect comes from (in priority): the
+    // request body's `sqlDialect`, the chosen system's config /
+    // vendor / kind, or — last resort — the legacy `mssql` default.
+    const sqlDialect = req.body?.sqlDialect ? String(req.body.sqlDialect).toLowerCase() : null;
+    if (sqlDialect && !DIALECTS[sqlDialect]) {
+      return sendError(reply, {
+        status: 400,
+        code: "unknown_dialect",
+        message: `Unknown SQL dialect "${sqlDialect}" (allowed: ${Object.keys(DIALECTS).join(", ")})`,
+      });
+    }
+    const resolvedDialect = sqlDialect || dialectForBinding({ system });
+
     const overridesByPoint = new Map(overrides.map(o => [o.profilePointId, o]));
     const resolved = [];
     for (const p of points) {
@@ -280,13 +286,16 @@ export default async function assetBindingRoutes(fastify) {
               details: { profilePointId: p.id },
             });
           }
-          const v = validateSelectTemplate(tpl);
+          // Validate against the binding's resolved dialect so the
+          // operator's PostgreSQL-flavoured query doesn't get
+          // rejected by the MSSQL parser (and vice versa).
+          const v = validateSelectTemplate(tpl, { dialect: resolvedDialect });
           if (!v.ok) {
             return sendError(reply, {
               status: 400,
               code: "sql_validation_failed",
               message: `${p.name}: ${v.message}`,
-              details: { profilePointId: p.id, reason: v.code, ...(v.details || {}) },
+              details: { profilePointId: p.id, reason: v.code, dialect: resolvedDialect, ...(v.details || {}) },
             });
           }
           queryTemplate = tpl;
@@ -324,6 +333,7 @@ export default async function assetBindingRoutes(fastify) {
                              template_vars = @template_vars,
                              query_template = @query_template,
                              sql_mode = @sql_mode,
+                             dialect = @dialect,
                              enabled = 1,
                              updated_at = @ts
                        WHERE id = @id`)
@@ -337,6 +347,7 @@ export default async function assetBindingRoutes(fastify) {
               template_vars: JSON.stringify(r.vars),
               query_template: r.queryTemplate,
               sql_mode: r.sqlMode,
+              dialect: sourceKind === "sql" ? resolvedDialect : null,
               ts,
             });
           updated.push(existing.id);
@@ -344,10 +355,10 @@ export default async function assetBindingRoutes(fastify) {
           const bid = uuid("APB");
           db.prepare(`INSERT INTO asset_point_bindings
             (id, org_id, asset_id, profile_version_id, profile_point_id, point_id, system_id,
-             source_kind, source_path, template_vars, query_template, sql_mode,
+             source_kind, source_path, template_vars, query_template, sql_mode, dialect,
              enabled, created_by, created_at, updated_at)
             VALUES (@id, @org_id, @asset_id, @profile_version_id, @profile_point_id, @point_id, @system_id,
-                    @source_kind, @source_path, @template_vars, @query_template, @sql_mode,
+                    @source_kind, @source_path, @template_vars, @query_template, @sql_mode, @dialect,
                     1, @created_by, @ts, @ts)`)
             .run({
               id: bid,
@@ -362,6 +373,7 @@ export default async function assetBindingRoutes(fastify) {
               template_vars: JSON.stringify(r.vars),
               query_template: r.queryTemplate,
               sql_mode: r.sqlMode,
+              dialect: sourceKind === "sql" ? resolvedDialect : null,
               created_by: req.user.id,
               ts,
             });
@@ -420,29 +432,46 @@ export default async function assetBindingRoutes(fastify) {
           message: `${m.pointName}: ${pathErr.message}`,
         });
       }
-      if (m.sourceKind === "sql" && (m.sqlMode === "free_form" || m.queryTemplate)) {
-        if (!can(req.user, "historian.sql.raw")) {
-          return sendError(reply, {
-            status: 403,
-            code: "forbidden",
-            message: "free-form SQL requires the `historian.sql.raw` capability",
-          });
-        }
-        if (!m.queryTemplate) {
+      if (m.sourceKind === "sql") {
+        // Resolve dialect per-mapping. Mappings can override the
+        // system-derived default via mapping.sqlDialect; the dialect
+        // gets persisted on the binding so the connector subregistry
+        // and validator agree forever after.
+        let mDialect = m.sqlDialect ? String(m.sqlDialect).toLowerCase() : null;
+        if (mDialect && !DIALECTS[mDialect]) {
           return sendError(reply, {
             status: 400,
-            code: "missing_query_template",
-            message: `${m.pointName}: free-form SQL mode requires a queryTemplate`,
+            code: "unknown_dialect",
+            message: `${m.pointName}: unknown SQL dialect "${m.sqlDialect}"`,
           });
         }
-        const v = validateSelectTemplate(m.queryTemplate);
-        if (!v.ok) {
-          return sendError(reply, {
-            status: 400,
-            code: "sql_validation_failed",
-            message: `${m.pointName}: ${v.message}`,
-            details: { reason: v.code, ...(v.details || {}) },
-          });
+        if (!mDialect) mDialect = dialectForBinding({ system });
+        m._resolvedDialect = mDialect;
+
+        if (m.sqlMode === "free_form" || m.queryTemplate) {
+          if (!can(req.user, "historian.sql.raw")) {
+            return sendError(reply, {
+              status: 403,
+              code: "forbidden",
+              message: "free-form SQL requires the `historian.sql.raw` capability",
+            });
+          }
+          if (!m.queryTemplate) {
+            return sendError(reply, {
+              status: 400,
+              code: "missing_query_template",
+              message: `${m.pointName}: free-form SQL mode requires a queryTemplate`,
+            });
+          }
+          const v = validateSelectTemplate(m.queryTemplate, { dialect: mDialect });
+          if (!v.ok) {
+            return sendError(reply, {
+              status: 400,
+              code: "sql_validation_failed",
+              message: `${m.pointName}: ${v.message}`,
+              details: { reason: v.code, dialect: mDialect, ...(v.details || {}) },
+            });
+          }
         }
       }
     }
@@ -469,6 +498,7 @@ export default async function assetBindingRoutes(fastify) {
         ).get(asset.id, pointId);
         const ts = now();
         const sqlMode = m.sourceKind === "sql" ? (m.sqlMode || (m.queryTemplate ? "free_form" : "schema_defined")) : null;
+        const dialect = m.sourceKind === "sql" ? (m._resolvedDialect || "mssql") : null;
         if (existing) {
           db.prepare(`UPDATE asset_point_bindings
                          SET profile_version_id = NULL,
@@ -479,6 +509,7 @@ export default async function assetBindingRoutes(fastify) {
                              template_vars = @template_vars,
                              query_template = @query_template,
                              sql_mode = @sql_mode,
+                             dialect = @dialect,
                              enabled = 1,
                              updated_at = @ts
                        WHERE id = @id`)
@@ -490,6 +521,7 @@ export default async function assetBindingRoutes(fastify) {
               template_vars: JSON.stringify(baseVars),
               query_template: m.queryTemplate || null,
               sql_mode: sqlMode,
+              dialect,
               ts,
             });
           updated.push(existing.id);
@@ -497,10 +529,10 @@ export default async function assetBindingRoutes(fastify) {
           const bid = uuid("APB");
           db.prepare(`INSERT INTO asset_point_bindings
             (id, org_id, asset_id, profile_version_id, profile_point_id, point_id, system_id,
-             source_kind, source_path, template_vars, query_template, sql_mode,
+             source_kind, source_path, template_vars, query_template, sql_mode, dialect,
              enabled, created_by, created_at, updated_at)
             VALUES (@id, @org_id, @asset_id, NULL, NULL, @point_id, @system_id,
-                    @source_kind, @source_path, @template_vars, @query_template, @sql_mode,
+                    @source_kind, @source_path, @template_vars, @query_template, @sql_mode, @dialect,
                     1, @created_by, @ts, @ts)`)
             .run({
               id: bid,
@@ -513,6 +545,7 @@ export default async function assetBindingRoutes(fastify) {
               template_vars: JSON.stringify(baseVars),
               query_template: m.queryTemplate || null,
               sql_mode: sqlMode,
+              dialect,
               created_by: req.user.id,
               ts,
             });

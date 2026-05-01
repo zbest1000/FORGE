@@ -4,6 +4,7 @@ import { Id, NonEmptyString } from "./common.js";
 
 const SourceKind = { type: "string", enum: ["mqtt", "opcua", "sql"] };
 const SqlMode = { type: "string", enum: ["schema_defined", "free_form"] };
+const SqlDialect = { type: "string", enum: ["mssql", "postgresql", "mysql", "sqlite"] };
 
 const TemplateVars = { type: "object", additionalProperties: { type: ["string", "number", "boolean", "null"] } };
 
@@ -24,6 +25,7 @@ const CustomMappingItem = {
     // source_template + binding source_path.
     queryTemplate: { type: ["string", "null"], maxLength: 8192 },
     sqlMode: { type: ["string", "null"], enum: ["schema_defined", "free_form", null] },
+    sqlDialect: { type: ["string", "null"], enum: ["mssql", "postgresql", "mysql", "sqlite", null] },
   },
 };
 
@@ -49,6 +51,7 @@ export const ApplyProfileBody = {
       },
     },
     sqlMode: SqlMode, // applies to sql profiles; ignored otherwise
+    sqlDialect: SqlDialect, // optional override for the binding-level dialect
   },
 };
 
