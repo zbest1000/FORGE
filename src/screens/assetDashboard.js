@@ -253,7 +253,7 @@ function computeCounts(tree, unassigned) {
 }
 
 function headerRow({ enterprises, locations, assets }, loading, demo) {
-  return el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
+  return el("div", { class: "row spread mb-3" }, [
     el("div", {}, [
       el("div", { class: "strong" }, ["Asset dashboard"]),
       el("div", { class: "tiny muted" }, [
@@ -401,7 +401,7 @@ function treeRow({ label, kind, meta, indent, open, hasChildren, active, onToggl
     }, [open ? "▾" : "▸"]) : el("span", { style: { width: "16px", display: "inline-block" } }),
     el("span", { class: "tree-dot" }),
     el("span", { class: "tree-label", style: { flex: 1 } }, [label]),
-    el("span", { class: "tiny muted", style: { marginLeft: "8px" } }, [meta || ""]),
+    el("span", { class: "tiny muted ml-2" }, [meta || ""]),
     onRename ? el("span", {
       class: "tiny",
       title: "Rename",
@@ -502,7 +502,7 @@ function filterTree(tree, filter) {
 
 function cardGrid(assets) {
   if (!assets.length) {
-    return el("div", { class: "muted", style: { padding: "32px", textAlign: "center" } }, [
+    return el("div", { class: "muted p-6 center" }, [
       "No assets match.",
     ]);
   }

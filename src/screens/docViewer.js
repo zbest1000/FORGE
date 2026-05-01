@@ -74,7 +74,7 @@ function docsToolbar() {
     if (fileInput.files?.length) ingestFiles(Array.from(fileInput.files));
     fileInput.value = ""; // reset so re-selecting the same file fires
   });
-  return el("div", { class: "row spread", style: { marginBottom: "12px", gap: "8px" } }, [
+  return el("div", { class: "row spread mb-3 gap-2" }, [
     el("div", {}, [
       el("h2", { style: { margin: 0, fontSize: "18px" } }, ["Documents"]),
       el("div", { class: "tiny muted" }, [
@@ -258,7 +258,7 @@ function revisionSafetyBanner(doc, rev) {
 }
 
 function metadataBar(doc, rev) {
-  return el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
+  return el("div", { class: "row spread mb-3" }, [
     el("div", { class: "row wrap" }, [
       badge(doc.id, "info"),
       badge(doc.discipline || "—", "info"),
@@ -689,7 +689,7 @@ function renderCsvTable(parsed) {
       el("thead", {}, [el("tr", {}, headers.map(h => el("th", {}, [h])))]),
       el("tbody", {}, body.map(r => el("tr", {}, headers.map((_, i) => el("td", {}, [r[i] ?? ""]))))),
     ]),
-    rows.length > 200 ? el("div", { class: "tiny muted", style: { padding: "8px" } }, [`Showing 200 of ${rows.length} rows.`]) : null,
+    rows.length > 200 ? el("div", { class: "tiny muted p-2" }, [`Showing 200 of ${rows.length} rows.`]) : null,
   ]);
 }
 

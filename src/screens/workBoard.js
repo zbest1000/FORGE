@@ -74,7 +74,7 @@ function projectContext(project, items) {
   const incidents = (d.incidents || []).filter(i => projectAssets.some(a => a.id === i.assetId));
   const tabKey = `project.context.tab.${project.id}`;
   const ctx = { orgName, site, loc, projectAssets, projectDocs, dataSources, maintenance, incidents, items };
-  return el("div", { class: "stack project-context", style: { marginBottom: "16px" } }, [
+  return el("div", { class: "stack project-context mb-4" }, [
     tabs({
       sessionKey: tabKey,
       ariaLabel: "Project context",
@@ -264,7 +264,7 @@ function header(project, view, filter, count, batch, viewKey, filterKey, batchKe
     sessionStorage.setItem(filterKey, searchInput.value);
     renderWorkBoard({ id });
   });
-  return el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
+  return el("div", { class: "row spread mb-3" }, [
     el("div", {}, [
       el("div", { class: "strong" }, [project.name]),
       el("div", { class: "tiny muted" }, [`${count} items · status ${project.status}`]),
@@ -440,7 +440,7 @@ const COLUMN_DEFS = [
   { id: "assigned",  header: "Assigned",  sort: (a, b) => (Date.parse(a.assignedAt) || Infinity) - (Date.parse(b.assignedAt) || Infinity), filter: (w, q) => (w.assignedAt || "").toLowerCase().includes(q), render: (w) => el("span", { class: "tiny muted" }, [w.assignedAt ? new Date(w.assignedAt).toLocaleDateString() : "—"]) },
   { id: "due",       header: "Due",       sort: (a, b) => (Date.parse(a.due) || Infinity) - (Date.parse(b.due) || Infinity), filter: (w, q) => (w.due || "").toLowerCase().includes(q), render: (w) => el("span", { class: "tiny muted" }, [w.due ? new Date(w.due).toLocaleDateString() : "—"]) },
   { id: "blockers",  header: "Blocked by", sort: (a, b) => (a.blockers?.length || 0) - (b.blockers?.length || 0), filter: (w, q) => (w.blockers || []).join(",").toLowerCase().includes(q), render: (w) => renderBlockers(w) },
-  { id: "labels",    header: "Labels",    sort: (a, b) => (a.labels?.length || 0) - (b.labels?.length || 0), filter: (w, q) => (w.labels || []).join(",").toLowerCase().includes(q), render: (w) => el("div", { class: "row wrap", style: { gap: "4px" } }, (w.labels || []).map(l => badge(l, "")) || []) },
+  { id: "labels",    header: "Labels",    sort: (a, b) => (a.labels?.length || 0) - (b.labels?.length || 0), filter: (w, q) => (w.labels || []).join(",").toLowerCase().includes(q), render: (w) => el("div", { class: "row wrap gap-1" }, (w.labels || []).map(l => badge(l, "")) || []) },
 ];
 
 // Default visible columns (ordered). Other columns are hidden until the
@@ -454,7 +454,7 @@ function sevRank(s) {
 function renderBlockers(w) {
   const blockers = w.blockers || [];
   if (!blockers.length) return el("span", { class: "tiny muted" }, ["—"]);
-  return el("span", { class: "row wrap", style: { gap: "4px" } },
+  return el("span", { class: "row wrap gap-1" },
     blockers.map(id => el("button", {
       class: "btn xs ghost",
       title: `Open ${id}`,
@@ -597,7 +597,7 @@ function tableView(items, batch, batchKey) {
         el("td", {}, [""]),
       ]))),
     ]),
-    !rows.length ? el("div", { class: "muted tiny", style: { padding: "12px", textAlign: "center" } }, [
+    !rows.length ? el("div", { class: "muted tiny p-3 center" }, [
       items.length ? "No rows match the current filters." : "No items yet.",
     ]) : null,
   ].filter(Boolean)));
@@ -624,7 +624,7 @@ function columnMenu(allCols, visible, toggleColumn, addCustomField) {
           boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
         },
       }, [
-        el("div", { class: "tiny strong", style: { padding: "4px" } }, ["Columns"]),
+        el("div", { class: "tiny strong p-1" }, ["Columns"]),
         ...allCols.map(c => {
           const checked = visible.includes(c.id);
           const cb = el("input", { type: "checkbox", checked, onChange: () => toggleColumn(c.id) });
@@ -745,7 +745,7 @@ function calendarView(items, projectId) {
   for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
   while (cells.length % 7) cells.push(null);
 
-  const headerRow = el("div", { class: "row spread", style: { marginBottom: "8px" } }, [
+  const headerRow = el("div", { class: "row spread mb-2" }, [
     el("button", { class: "btn sm", onClick: () => setMonth(-1), "aria-label": "previous month" }, ["← Prev"]),
     el("div", { class: "strong" }, [monthLabel]),
     el("button", { class: "btn sm", onClick: () => setMonth(1), "aria-label": "next month" }, ["Next →"]),
