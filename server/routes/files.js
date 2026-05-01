@@ -139,15 +139,32 @@ export default async function fileRoutes(fastify) {
   // this lets the asset-visual transcode path (HEIC / HEIF / AVIF →
   // WebP + JPEG) discard the original payload without leaving an
   // orphaned content-addressed blob on disk.
+  // Per-route rate limit. File uploads write to disk + SQLite + run
+  // sharp on the asset-visual path; abuse here would saturate I/O
+  // long before the global rate limit kicks in. 30/min/user is well
+  // above the realistic dashboard ceiling (only a user upload-bombing
+  // the route hits it) and matches the cap on the other
+  // write-amplifying routes (apply-profile, custom-mapping).
+  //
+  // We attach the limiter via `fastify.rateLimit({...})` so CodeQL's
+  // js/missing-rate-limiting query recognises the route as gated.
+  // The decorator is only present once `@fastify/rate-limit` has been
+  // registered (production); under tests where the plugin isn't
+  // wired, we fall through to require_("create") only — which is
+  // expected, the test suite explicitly exercises the un-rate-limited
+  // path.
+  const uploadPreHandlers = [];
+  if (typeof fastify.rateLimit === "function") {
+    uploadPreHandlers.push(fastify.rateLimit({ max: 30, timeWindow: "1 minute" }));
+  }
+  uploadPreHandlers.push(require_("create"));
+
   fastify.post("/api/files", {
-    // Per-route rate limit. File uploads write to disk + SQLite + run
-    // sharp on the asset-visual path; abuse here would saturate I/O
-    // long before the global rate limit kicks in. 30/min/user is well
-    // above the realistic dashboard ceiling (a user upload-bombing the
-    // route is the only thing that hits this) and matches the cap on
-    // the other write-amplifying routes (apply-profile, custom-mapping).
+    // The `config.rateLimit` form is kept for back-compat with any
+    // observability / introspection tooling that reads the route
+    // config; the actual gating is the preHandler chain above.
     config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
-    preHandler: require_("create"),
+    preHandler: uploadPreHandlers,
   }, async (req, reply) => {
     if (!req.isMultipart()) return reply.code(415).send({ error: "multipart required" });
 
