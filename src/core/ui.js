@@ -202,17 +202,114 @@ export function table({ columns = [], rows = [], onRowClick = null } = {}) {
   return t;
 }
 
-export function toast(message, variant = "") {
+// Variant-specific auto-dismiss timeouts (UX-D). Successes flash by;
+// warnings linger; errors stay long enough to read + react. Operators
+// can opt into a sticky toast for unrecoverable failures via the
+// `sticky: true` option below.
+const TOAST_DEFAULT_TIMEOUTS = {
+  "":        2800,
+  info:      2800,
+  success:   2800,
+  warn:      5000,
+  danger:    8000,
+};
+
+/**
+ * Surface a transient message in the bottom-right toast stack.
+ *
+ * Backwards-compatible call shape: `toast("Saved", "success")` still
+ * works. The third argument is an options bag that adds:
+ *
+ *   • `action`    `{ label, onClick }`. Renders an inline button
+ *                 inside the toast; clicking it runs `onClick()` and
+ *                 dismisses. Useful for "Undo" / "Retry" patterns.
+ *   • `sticky`    `true` to disable auto-dismiss. The user must click
+ *                 the close (✕) button to dismiss. Reserved for
+ *                 unrecoverable errors.
+ *   • `timeout`   override the variant-specific default in ms.
+ *
+ * Behaviour additions (UX-D):
+ *   - Manual dismiss via a close button on every toast (a11y
+ *     requirement: a sticky `aria-live` region must be dismissible).
+ *   - Hover-pause: the auto-dismiss timer pauses while the pointer
+ *     or focus is on the toast, so a user reading a long message
+ *     isn't cut off.
+ *   - Variant-specific timeouts (info/success 2.8 s, warn 5 s,
+ *     danger 8 s); see `TOAST_DEFAULT_TIMEOUTS`.
+ *
+ * Returns a `{ close }` handle the caller can use to dismiss
+ * programmatically (e.g. when the action it surfaced succeeds).
+ */
+export function toast(message, variant = "", opts = {}) {
   const root = document.getElementById("toastRoot");
-  if (!root) return;
-  if (message == null || String(message).trim() === "") return;
-  const node = el("div", { class: `toast ${variant}`.trim() }, [message]);
-  root.append(node);
-  setTimeout(() => {
-    node.style.transition = "opacity 0.3s ease";
+  if (!root) return { close: () => {} };
+  if (message == null || String(message).trim() === "") return { close: () => {} };
+
+  const { action = null, sticky = false } = opts || {};
+  const timeoutMs = sticky
+    ? null
+    : (opts?.timeout != null ? opts.timeout : (TOAST_DEFAULT_TIMEOUTS[variant] ?? TOAST_DEFAULT_TIMEOUTS[""]));
+
+  // Two-phase removal: opacity to 0 (fast) → DOM removal so the next
+  // toast in the stack reflows in cleanly.
+  let removed = false;
+  let dismissTimer = null;
+  let removeTimer = null;
+  const close = () => {
+    if (removed) return;
+    removed = true;
+    if (dismissTimer) { clearTimeout(dismissTimer); dismissTimer = null; }
+    node.style.transition = "opacity 200ms ease";
     node.style.opacity = "0";
-    setTimeout(() => node.remove(), 300);
-  }, 2800);
+    removeTimer = setTimeout(() => node.remove(), 220);
+  };
+
+  const closeBtn = el("button", {
+    class: "toast-close",
+    type: "button",
+    "aria-label": "Dismiss notification",
+    onClick: () => { close(); },
+  }, ["✕"]);
+
+  const actionBtn = action && action.label && typeof action.onClick === "function"
+    ? el("button", {
+        class: "toast-action",
+        type: "button",
+        onClick: () => {
+          try { action.onClick(); } finally { close(); }
+        },
+      }, [action.label])
+    : null;
+
+  const node = el("div", {
+    class: `toast ${variant}${sticky ? " sticky" : ""}`.trim(),
+    role: variant === "danger" ? "alert" : "status",
+  }, [
+    el("div", { class: "toast-message" }, [message]),
+    actionBtn,
+    closeBtn,
+  ]);
+
+  // Hover/focus-pause: clear the auto-dismiss timer while the user
+  // is interacting; restart when they leave. Sticky toasts have no
+  // timer so the listeners are no-ops.
+  if (timeoutMs != null) {
+    const start = () => {
+      if (removed || dismissTimer) return;
+      dismissTimer = setTimeout(close, timeoutMs);
+    };
+    const pause = () => {
+      if (dismissTimer) { clearTimeout(dismissTimer); dismissTimer = null; }
+    };
+    node.addEventListener("mouseenter", pause);
+    node.addEventListener("mouseleave", start);
+    node.addEventListener("focusin", pause);
+    node.addEventListener("focusout", start);
+    start();
+  }
+
+  root.append(node);
+  return { close };
 }
 
 export function modal({ title = "", body = null, actions = null } = {}) {
@@ -499,4 +596,128 @@ export function tabs({ tabs: list = [], sessionKey = "", ariaLabel = "", default
   }
   render();
   return el("section", { class: "tabs-wrap" }, [tablist, panel]);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// State primitives (UX-D).
+// ─────────────────────────────────────────────────────────────────
+//
+// Three universal "this is what's happening" surfaces — loading,
+// empty, error — plus a `skeleton()` shimmer for richer pre-data
+// placeholders. Every primitive carries the right ARIA: loading is
+// `role="status" aria-busy="true"`, empty is informational, error
+// is `role="alert"`. Shape stays small + composable so screens can
+// drop them into any container.
+//
+// Why this matters: pre-UX-D, twelve screens hand-rolled a
+// `<div class="muted tiny">Loading…</div>` each — different copy,
+// different ARIA (none), different visual. Centralising the
+// vocabulary means a screen-reader user hears "Loading enterprise
+// list, busy" instead of silence, and the visual treatment is
+// tunable in one place.
+
+/**
+ * Loading state. Renders a centred spinner + label.
+ *
+ * @param {Object} [opts]
+ * @param {string} [opts.message="Loading…"] — visible label.
+ * @param {"sm"|"md"|"lg"} [opts.size="md"] — spinner size.
+ * @param {boolean} [opts.compact=false] — true → inline pill (no
+ *   centered min-height padding), suitable for embedding inside
+ *   table cells / card headers.
+ */
+export function loadingState({ message = "Loading…", size = "md", compact = false } = {}) {
+  return el("div", {
+    class: `state-loading state-loading-${size}${compact ? " compact" : ""}`,
+    role: "status",
+    "aria-busy": "true",
+    "aria-live": "polite",
+  }, [
+    el("span", { class: "state-spinner", "aria-hidden": "true" }),
+    el("span", { class: "state-loading-label" }, [message]),
+  ]);
+}
+
+/**
+ * Empty state — "you have no data here yet". Optional inline
+ * call-to-action button.
+ *
+ * @param {Object} opts
+ * @param {string} [opts.icon="📦"] — small glyph in the header.
+ *   Decorative — `aria-hidden`. Pass `null` to omit.
+ * @param {string} opts.title — short noun phrase.
+ * @param {string|Node} [opts.message] — supporting copy.
+ * @param {{ label: string, onClick: Function, variant?: string }} [opts.action]
+ *   — primary CTA. Variant defaults to `"primary"`.
+ */
+export function emptyState({ icon = "📦", title, message = "", action = null } = {}) {
+  return el("div", { class: "state-empty", role: "status" }, [
+    icon ? el("div", { class: "state-icon", "aria-hidden": "true" }, [icon]) : null,
+    title ? el("div", { class: "state-title" }, [title]) : null,
+    message ? el("div", { class: "state-message" }, [message]) : null,
+    action && action.label && typeof action.onClick === "function"
+      ? el("button", {
+          class: `btn ${action.variant || "primary"}`.trim(),
+          type: "button",
+          onClick: () => action.onClick(),
+        }, [action.label])
+      : null,
+  ]);
+}
+
+/**
+ * Error state — operation failed, recoverable or not. Uses
+ * `role="alert"` so AT announces immediately on insertion. Pairs
+ * a clear title + the technical detail (which can be a string or a
+ * pre-built Node, e.g. a stack trace) + a Retry button slot.
+ *
+ * @param {Object} opts
+ * @param {string} opts.title
+ * @param {string|Node} [opts.message] — technical detail / error message.
+ * @param {{ label: string, onClick: Function, variant?: string }} [opts.action]
+ *   — typically `{ label: "Retry", onClick: refetch }`.
+ */
+export function errorState({ title, message = "", action = null } = {}) {
+  return el("div", { class: "state-error", role: "alert" }, [
+    el("div", { class: "state-icon state-icon-danger", "aria-hidden": "true" }, ["⚠"]),
+    title ? el("div", { class: "state-title" }, [title]) : null,
+    message ? el("div", { class: "state-message" }, [message]) : null,
+    action && action.label && typeof action.onClick === "function"
+      ? el("button", {
+          class: `btn ${action.variant || "primary"}`.trim(),
+          type: "button",
+          onClick: () => action.onClick(),
+        }, [action.label])
+      : null,
+  ]);
+}
+
+/**
+ * Skeleton placeholder — shimmer-pulsed bars / cards while real data
+ * loads. Use when the eventual layout is known + bounded enough that
+ * showing the shape reduces perceived latency more than a spinner.
+ *
+ * @param {Object} [opts]
+ * @param {"lines"|"table"|"card"} [opts.kind="lines"] — visual shape.
+ *   * `lines`  N stacked bars of varying widths (default 3).
+ *   * `table`  one bar per `rows`, full-width.
+ *   * `card`   one rounded rectangle the size of a card.
+ * @param {number} [opts.rows=3] — number of placeholder rows.
+ */
+export function skeleton({ kind = "lines", rows = 3 } = {}) {
+  if (kind === "card") {
+    return el("div", { class: "skeleton skeleton-card", "aria-hidden": "true" });
+  }
+  const bars = [];
+  // Vary widths so the placeholder doesn't look like a column of
+  // identical bars — closer to real text proportions.
+  const widths = ["100%", "92%", "78%", "85%", "70%", "95%", "88%"];
+  for (let i = 0; i < rows; i++) {
+    const w = kind === "table" ? "100%" : widths[i % widths.length];
+    bars.push(el("div", {
+      class: `skeleton skeleton-${kind === "table" ? "table-row" : "line"}`,
+      style: { width: w },
+    }));
+  }
+  return el("div", { class: "skeleton-wrap", "aria-hidden": "true" }, bars);
 }
