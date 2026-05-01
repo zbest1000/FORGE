@@ -145,6 +145,9 @@ function setupRoutes() {
   defineRoute("/spec",
     lazy(() => import("./src/screens/spec.js"), "renderSpec", "Spec Reference"));
 
+  defineRoute("/profiles",
+    lazy(() => import("./src/screens/profilesAdmin.js"), "renderProfilesAdmin", "Asset profiles"));
+
   defineRoute("/uns",
     lazy(() => import("./src/screens/uns.js"), "renderUNSIndex", "Unified Namespace"));
   defineRoute("/i3x",

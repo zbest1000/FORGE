@@ -82,7 +82,7 @@ function matches(path, route) {
   if (route === "/docs") return p === "/docs" || p.startsWith("/doc/") || p.startsWith("/compare/");
   if (route === "/drawings") return p === "/drawings" || p.startsWith("/drawing/");
   if (route === "/projects") return p === "/projects" || p.startsWith("/work-board/") || p === "/approvals";
-  if (route === "/assets") return p === "/assets" || p.startsWith("/asset/") || p === "/uns" || p === "/i3x";
+  if (route === "/assets") return p === "/assets" || p.startsWith("/asset/") || p === "/uns" || p === "/i3x" || p === "/profiles";
   if (route === "/operations") return p === "/operations";
   if (route === "/incidents") return p === "/incidents" || p.startsWith("/incident/");
   if (route === "/team-spaces") return p === "/team-spaces" || p.startsWith("/team-space/") || p.startsWith("/channel/");

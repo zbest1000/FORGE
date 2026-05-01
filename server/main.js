@@ -40,6 +40,7 @@ import enterpriseSystemRoutes from "./routes/enterprise-systems.js";
 import licenseRoutes from "./routes/license.js";
 import operationsRoutes from "./routes/operations.js";
 import assetHierarchyRoutes from "./routes/asset-hierarchy.js";
+import assetProfileRoutes from "./routes/asset-profiles.js";
 import { config } from "./config.js";
 import { getLicense, requireFeature, FEATURES, pollLocalLicenseServer, loadPersistedActivation, localLicenseStatus } from "./license.js";
 
@@ -390,6 +391,7 @@ await registerWithFeature(complianceRoutes, FEATURES.COMPLIANCE_CONSOLE);
 await registerWithFeature(enterpriseSystemRoutes, FEATURES.ENTERPRISE_SYSTEMS);
 await app.register(operationsRoutes);
 await app.register(assetHierarchyRoutes);
+await app.register(assetProfileRoutes);
 attachSSE(app);
 registerMetrics(app);
 
