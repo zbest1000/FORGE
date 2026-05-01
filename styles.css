@@ -1,4 +1,19 @@
-/* FORGE — Design tokens, layout, component styles */
+/* FORGE — Design tokens, layout, component styles
+ *
+ * Token taxonomy (UX-A onwards):
+ *   --space-*    spacing scale    (4 / 8 / 12 / 16 / 24 / 32 px)
+ *   --radius-*   corner radius    (sm 4 / md 8 / lg 12 px)
+ *   --timing-*   motion duration  (fast 120 / normal 150 / slow 250 ms)
+ *   --ease-*     motion easing    (standard / emphasized)
+ *   --font-*     typeface stacks  (sans / mono)
+ *
+ * Theme tokens (`--bg`, `--surface`, `--accent`, etc.) live in the
+ * `.theme-dark` / `.theme-light` blocks below.
+ *
+ * Motion tokens collapse to ~0 under `prefers-reduced-motion: reduce`,
+ * so component CSS that uses them gets accessibility for free —
+ * components must avoid hard-coded durations.
+ */
 
 :root {
   --space-1: 4px;
@@ -11,8 +26,42 @@
   --radius-md: 8px;
   --radius-lg: 12px;
 
+  --timing-fast: 120ms;
+  --timing-normal: 150ms;
+  --timing-slow: 250ms;
+  --ease-standard: ease;
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Tell the UA which colour scheme this document supports — keeps
+     native scrollbars, form controls, and the browser chrome
+     (location bar contrast hint) in sync with the active theme. The
+     pre-paint script in `index.html` overrides this per-instance. */
+  color-scheme: dark light;
+
   --font-sans: "Inter", "IBM Plex Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Respect the user's system-level reduced-motion preference. We zero
+   the timing tokens (so any component that consumes them collapses
+   automatically), and harden the rule with a sweeping `* { ... }`
+   override that catches anything still using literal durations.
+   Keeps form-validation `:invalid` shake and similar critical
+   feedback at 1ms — visible jump, no animation. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --timing-fast: 0.01ms;
+    --timing-normal: 0.01ms;
+    --timing-slow: 0.01ms;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 .theme-dark {
@@ -186,7 +235,10 @@ button {
   font-size: 10px;
   line-height: 1;
   text-align: center;
-  transition: all 0.15s ease;
+  transition: background-color var(--timing-normal) var(--ease-standard),
+              border-color var(--timing-normal) var(--ease-standard),
+              color var(--timing-normal) var(--ease-standard),
+              box-shadow var(--timing-normal) var(--ease-standard);
 }
 
 .rail-btn:hover {
@@ -424,7 +476,10 @@ body.dock-hidden .screen-container,
   align-items: center;
   justify-content: center;
   gap: 6px;
-  transition: all 0.15s ease;
+  transition: background-color var(--timing-normal) var(--ease-standard),
+              border-color var(--timing-normal) var(--ease-standard),
+              color var(--timing-normal) var(--ease-standard),
+              box-shadow var(--timing-normal) var(--ease-standard);
   white-space: nowrap;
 }
 
@@ -763,7 +818,7 @@ body.dock-hidden .screen-container,
 /* Body rows: tighter, alternating-tone hover, no full-row border on
    the last row so the table's bottom radius reads cleanly. */
 .table tbody tr {
-  transition: background 0.1s ease;
+  transition: background-color var(--timing-fast) var(--ease-standard);
 }
 .table tbody tr:hover {
   background: color-mix(in srgb, var(--accent) 6%, var(--surface));
@@ -808,7 +863,8 @@ body.dock-hidden .screen-container,
   text-align: center;
   background: color-mix(in srgb, var(--panel) 50%, var(--surface));
   color: var(--muted);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color var(--timing-normal) var(--ease-standard),
+              background-color var(--timing-normal) var(--ease-standard);
 }
 .doc-drop-zone.is-active {
   border-color: var(--accent);
@@ -1481,7 +1537,7 @@ body.dock-hidden .screen-container,
   pointer-events: auto;
   min-width: 240px;
   max-width: 360px;
-  animation: toastIn 0.2s ease;
+  animation: toastIn var(--timing-slow) var(--ease-emphasized);
 }
 
 .toast.success { border-left-color: var(--success); }
@@ -1794,25 +1850,39 @@ body.dock-hidden .screen-container,
 .calendar-pill.sev-medium { background: var(--warn); color: #0b1220; }
 .calendar-pill.sev-low { background: var(--accent); color: #0b1220; }
 
+/* Skip-link (UX-A): modernised hide pattern. The legacy
+   `left: -9999px` trick worked but reflowed the document on every
+   focus and could leak under transforms; the visually-hidden idiom
+   below keeps the link in the layout flow without taking any space,
+   and pops it back into view on `:focus-visible`. Same accessible
+   contract — first-Tab from anywhere reveals it. */
 .skip-link {
   position: absolute;
-  left: -9999px;
-  top: auto;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
+  left: 12px;
+  top: 12px;
   background: var(--accent);
   color: #0b1220;
   padding: 8px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
+  font-weight: 600;
   z-index: 10000;
+  /* Visually hidden until focused: the accessible name still reaches
+     screen readers but the pixels don't paint. */
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
 }
-.skip-link:focus {
-  left: 12px;
-  top: 12px;
+.skip-link:focus,
+.skip-link:focus-visible {
+  clip-path: none;
   width: auto;
   height: auto;
+  overflow: visible;
+  white-space: normal;
   outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
 }
 
 button:focus-visible,
@@ -1874,9 +1944,51 @@ button.activity-row { cursor: pointer; }
 }
 
 /* Scrollbars */
+/* Scrollbars — themed for both rendering engines. WebKit uses the
+   pseudo-element form, Firefox uses the standardised `scrollbar-*`
+   shorthand. The thumb tracks the active theme's border colour so
+   light + dark stay coherent. */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* Windows high-contrast / forced-colors mode (UX-A).
+   In this mode the OS overrides every author colour with system
+   colours, which is what we want for accessibility — but the
+   override can erase focus indicators if they rely on `outline:
+   transparent` or `box-shadow` alone. We force the focus outline
+   to use `Highlight` so it remains visible, and pin button text
+   to `ButtonText` so transparent button backgrounds don't render
+   white-on-white. */
+@media (forced-colors: active) {
+  :focus-visible,
+  button:focus-visible,
+  .btn:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [role="button"]:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px;
+  }
+  .btn,
+  .btn.primary,
+  .btn.danger,
+  .btn.ghost {
+    forced-color-adjust: none;
+    background: ButtonFace;
+    color: ButtonText;
+    border: 1px solid ButtonText;
+  }
+  .skip-link { background: Highlight; color: HighlightText; }
+}
 
 /* Responsive */
 @media (max-width: 1280px) {
@@ -2054,7 +2166,9 @@ body.portal-mode .far-left-rail .rail-logo { background: var(--portal-accent, va
   align-items: start;
   text-decoration: none;
   color: var(--text);
-  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+  transition: transform var(--timing-fast) var(--ease-emphasized),
+              box-shadow var(--timing-fast) var(--ease-emphasized),
+              border-color var(--timing-fast) var(--ease-emphasized);
   cursor: pointer;
 }
 

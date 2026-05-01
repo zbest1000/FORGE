@@ -155,7 +155,8 @@ function setupRoutes() {
 }
 
 function applyTheme() {
-  const cls = [state.ui.theme === "dark" ? "theme-dark" : "theme-light"];
+  const themeName = state.ui.theme === "dark" ? "theme-dark" : "theme-light";
+  const cls = [themeName];
   if (state.ui.focusMode) cls.push("focus-mode");
   if (!state.ui.showLeftPanel) cls.push("hide-left-panel");
   if (!state.ui.showContextPanel) cls.push("hide-right-panel", "hide-context-panel");
@@ -164,6 +165,15 @@ function applyTheme() {
   if (!state.ui.dockVisible) cls.push("dock-hidden");
   if (state.ui.portalId) cls.push("portal-mode", "portal-" + state.ui.portalId);
   document.body.className = cls.join(" ");
+  // UX-A: keep the html element's theme class + native colour-scheme
+  // hint in lockstep with the body's. The pre-paint script in
+  // `index.html` seeds these; we re-apply on every render so user
+  // toggles (View ▾ → Toggle theme, header rail icon) flow through
+  // to native form controls and the browser scrollbar gutter.
+  const de = document.documentElement;
+  de.classList.remove("theme-dark", "theme-light");
+  de.classList.add(themeName);
+  de.style.colorScheme = state.ui.theme === "dark" ? "dark" : "light";
 }
 
 // Routes where the right context panel adds enough value that we auto-open
