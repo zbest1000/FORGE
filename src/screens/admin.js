@@ -9,7 +9,7 @@
 //   * Audit ledger tamper check (verifyLedger) with visible result
 //   * Policy violations list
 
-import { el, mount, card, badge, toast, modal, formRow, input, select, confirm, tabs } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, input, select, confirm, tabs, loadingState } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { ROLES } from "../core/permissions.js";
 import { exportAuditPack, verifyLedger, verifyAuditPack } from "../core/audit.js";
@@ -398,7 +398,7 @@ function fmtDateTime(s) {
 
 // ---------- server admin panels (only in server mode) ----------
 function apiTokensPanel() {
-  const list = el("div", { class: "stack" }, [el("div", { class: "tiny muted" }, ["Loading…"])]);
+  const list = el("div", { class: "stack" }, [loadingState({ message: "Loading API tokens…", compact: true })]);
   const refresh = async () => {
     try {
       const tokens = await api("/api/tokens");
@@ -494,7 +494,7 @@ function webhooksPanel() {
 }
 
 function automationsPanel() {
-  const root = el("div", { class: "stack" }, [el("div", { class: "tiny muted" }, ["Loading…"])]);
+  const root = el("div", { class: "stack" }, [loadingState({ message: "Loading automation status…", compact: true })]);
   const refresh = async () => {
     try {
       const status = await api("/api/automations/n8n/status");

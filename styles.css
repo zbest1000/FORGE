@@ -1601,17 +1601,203 @@ body.dock-hidden .screen-container,
   box-shadow: var(--shadow-lg);
   pointer-events: auto;
   min-width: 240px;
-  max-width: 360px;
+  max-width: 380px;
   animation: toastIn var(--timing-slow) var(--ease-emphasized);
+  /* UX-D: layout slot for [message] [action] [close]. The message
+     wraps; action and close stay aligned to the right. */
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.toast .toast-message {
+  flex: 1;
+  min-width: 0;
+  /* Paint the message at body-line-height so multi-line errors stay
+     readable. */
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.toast .toast-action {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-strong);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+.toast .toast-action:hover {
+  background: var(--panel);
+  border-color: var(--ring);
+}
+
+.toast .toast-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px var(--space-1);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  /* The close button is the smallest target on the toast; keep it
+     within thumb-friendly clickable area on phones. */
+  min-width: 24px;
+  min-height: 24px;
+}
+.toast .toast-close:hover {
+  background: var(--panel);
+  color: var(--text);
 }
 
 .toast.success { border-left-color: var(--success); }
 .toast.warn    { border-left-color: var(--warn); }
 .toast.danger  { border-left-color: var(--danger); }
+/* Sticky toasts visually communicate "this won't go away by itself"
+   via a slightly heavier border + a subtle inset highlight. */
+.toast.sticky {
+  border-width: 1px;
+  border-left-width: 4px;
+  box-shadow: var(--shadow-xl);
+}
 
 @keyframes toastIn {
   from { transform: translateX(20px); opacity: 0; }
   to   { transform: translateX(0); opacity: 1; }
+}
+
+/* ───────────────────────────────────────────────────────────────
+   State primitives (UX-D) — loading / empty / error / skeleton.
+   Used via loadingState(), emptyState(), errorState(), skeleton()
+   in src/core/ui.js. Centralised here so future tone changes hit
+   every screen at once.
+   ─────────────────────────────────────────────────────────────── */
+
+.state-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-4);
+  color: var(--muted);
+  font-size: 13px;
+  min-height: 120px;
+}
+.state-loading.compact {
+  padding: var(--space-1) var(--space-2);
+  min-height: 0;
+}
+.state-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: state-spin 800ms linear infinite;
+}
+.state-loading-sm .state-spinner { width: 12px; height: 12px; border-width: 2px; }
+.state-loading-lg .state-spinner { width: 24px; height: 24px; border-width: 3px; }
+
+@keyframes state-spin {
+  to { transform: rotate(360deg); }
+}
+/* Reduced-motion users see a soft pulse instead of a rotating ring,
+   so there's still a "something is happening" signal without the
+   vestibular trigger. */
+@media (prefers-reduced-motion: reduce) {
+  .state-spinner {
+    animation: none;
+    border-top-color: var(--accent);
+    opacity: 0.7;
+  }
+}
+
+.state-empty,
+.state-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-4);
+  text-align: center;
+  min-height: 160px;
+}
+
+.state-icon {
+  font-size: 32px;
+  line-height: 1;
+  opacity: 0.85;
+  margin-bottom: var(--space-1);
+}
+.state-icon-danger {
+  color: var(--danger);
+  opacity: 1;
+}
+
+.state-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.state-message {
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 48ch;
+  line-height: 1.5;
+}
+
+.state-empty .btn,
+.state-error .btn {
+  margin-top: var(--space-2);
+}
+
+/* Skeletons — pulsing shimmer placeholder. The keyframe sweeps a
+   light-band gradient across the surface so contributors don't have
+   to think about which background to use; the bar stays on the
+   right token tone in both themes. */
+.skeleton-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--panel) 0%,
+    color-mix(in srgb, var(--panel) 60%, var(--elevated)) 50%,
+    var(--panel) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1400ms ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+.skeleton-line     { height: 12px; }
+.skeleton-table-row { height: 32px; border-radius: var(--radius-sm); }
+.skeleton-card {
+  height: 120px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+    background: var(--panel);
+  }
 }
 
 /* Command palette */

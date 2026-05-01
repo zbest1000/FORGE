@@ -15,7 +15,7 @@
 
 import {
   el, mount, card, badge, kpi, toast, modal, formRow, input, textarea,
-  select, prompt, confirm,
+  select, prompt, confirm, loadingState,
 } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { api } from "../core/api.js";
@@ -30,7 +30,7 @@ export async function renderAssetConfig({ assetId, target }) {
     mount(target, [renderDemoNotice()]);
     return;
   }
-  mount(target, [el("div", { class: "muted tiny" }, ["Loading…"])]);
+  mount(target, [loadingState({ message: "Loading asset configuration…" })]);
 
   const [bindings, profiles, systems, me] = await Promise.all([
     api(`/api/assets/${assetId}/bindings`),

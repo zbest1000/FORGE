@@ -10,7 +10,7 @@
 //   * Revision timeline with supersede chain markers
 //   * Approval banner + request-approval flow (delegated to /approvals)
 
-import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea, prompt } from "../core/ui.js";
+import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea, prompt, loadingState } from "../core/ui.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -336,7 +336,12 @@ function paperPage(doc, rev, page) {
     const host = document.createElement("div");
     host.className = "asset-host";
     host.style.minHeight = "420px";
-    host.textContent = "Loading…";
+    // UX-D: hand-rolled "Loading…" textContent replaced with the
+    // shared loadingState() primitive so screen-readers announce
+    // the busy state and the visual treatment matches the rest of
+    // the app. Subsequent error/success branches still mutate
+    // host content so the contract is unchanged.
+    host.replaceChildren(loadingState({ message: "Loading document…" }));
     (async () => {
       try {
         if (kind === "pdf") {

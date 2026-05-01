@@ -16,7 +16,7 @@
 
 import {
   el, mount, card, badge, kpi, toast, modal, formRow, input, textarea,
-  prompt, confirm,
+  prompt, confirm, errorState,
 } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
@@ -91,13 +91,16 @@ export async function renderAssetDashboard() {
   try {
     payload = await api("/api/asset-tree");
   } catch (err) {
+    // UX-D: errorState gives a consistent "this failed, here's how to
+    // recover" surface across screens. Retains the same retry semantics
+    // as the previous bespoke callout but with consistent ARIA
+    // (`role="alert"`) and visual treatment.
     return mount(root, [
-      card("Asset dashboard", el("div", { class: "stack" }, [
-        el("div", { class: "callout danger" }, [
-          `Failed to load /api/asset-tree: ${err?.message || err}`,
-        ]),
-        el("button", { class: "btn", onClick: () => renderAssetDashboard() }, ["Retry"]),
-      ])),
+      errorState({
+        title: "Failed to load asset tree",
+        message: String(err?.message || err),
+        action: { label: "Retry", onClick: () => renderAssetDashboard() },
+      }),
     ]);
   }
 
