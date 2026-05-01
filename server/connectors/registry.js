@@ -32,8 +32,10 @@ import { audit } from "../audit.js";
 import { broadcast } from "../sse.js";
 import * as sqlRegistry from "./sql-registry.js";
 import * as mqttRegistry from "./mqtt-registry.js";
+import * as opcuaRegistry from "./opcua-registry.js";
+import { refreshOpcuaServerForBinding } from "../opcua-server.js";
 
-const SUBREGISTRIES = [sqlRegistry, mqttRegistry];
+const SUBREGISTRIES = [sqlRegistry, mqttRegistry, opcuaRegistry];
 
 const _state = {
   logger: null,
@@ -120,6 +122,12 @@ export async function dispatchSample({ binding, value, ts, quality = "Good", raw
   // detail screen can filter cheaply.
   broadcast("historian", { pointId: binding.point_id, assetId: binding.asset_id, value: Number(value), ts: sampleTs, quality }, binding.org_id);
   broadcast(`historian:point:${binding.point_id}`, { value: Number(value), ts: sampleTs, quality }, binding.org_id);
+
+  // Phase 5: keep the FORGE-as-OPC-UA-server's published value in
+  // sync. This is a noop when the server is disabled (the default
+  // hook check returns early).
+  try { refreshOpcuaServerForBinding({ binding, value: Number(value), ts: sampleTs, quality }); }
+  catch { /* server-side hook errors must not break dispatch */ }
 }
 
 /**

@@ -43,6 +43,7 @@ import assetHierarchyRoutes from "./routes/asset-hierarchy.js";
 import assetProfileRoutes from "./routes/asset-profiles.js";
 import assetBindingRoutes from "./routes/asset-bindings.js";
 import * as connectorRegistry from "./connectors/registry.js";
+import { startOpcuaServer, stopOpcuaServer } from "./opcua-server.js";
 import { config } from "./config.js";
 import { getLicense, requireFeature, FEATURES, pollLocalLicenseServer, loadPersistedActivation, localLicenseStatus } from "./license.js";
 
@@ -483,6 +484,13 @@ startTamperWorker(app.log);
 connectorRegistry.init({ logger: app.log }).catch(err =>
   app.log.warn({ err: String(err?.message || err) }, "connector registry init failed"));
 
+// Phase 5: optional FORGE-as-OPC-UA-server (spec §7.1). Boots only
+// when FORGE_OPCUA_SERVER_ENABLED=1 so the default install doesn't
+// open port 4840. Failures are non-fatal — the rest of FORGE keeps
+// running.
+startOpcuaServer({ logger: app.log }).catch(err =>
+  app.log.warn({ err: String(err?.message || err) }, "opcua server start failed"));
+
 // Record boot in the audit ledger.
 audit({ actor: "system", action: "server.start", subject: "forge", detail: { host: HOST, port: PORT, pid: process.pid } });
 
@@ -585,6 +593,7 @@ async function shutdown(sig) {
       Promise.resolve().then(() => stopMqttBridge()),
       Promise.resolve().then(() => stopOpcuaBridge()),
       Promise.resolve().then(() => connectorRegistry.shutdown()),
+      Promise.resolve().then(() => stopOpcuaServer()),
     ]);
 
     // 3) Stop Fastify (closes the listener + pending requests).
