@@ -32,6 +32,7 @@ import {
   LocationPatchBody,
   ReResolveBindingsBody,
 } from "../schemas/asset-hierarchy.js";
+import { refreshOpcuaServerAddressSpace } from "../opcua-server.js";
 
 // ----- helpers ---------------------------------------------------------
 
@@ -181,6 +182,7 @@ export default async function assetHierarchyRoutes(fastify) {
       .run({ id, org_id: orgId, workspace_id: wsId, name, description, sort_order: sortOrder, acl: JSON.stringify(acl), created_by: req.user.id, ts });
     audit({ actor: req.user.id, action: "enterprise.create", subject: id, detail: { name } });
     broadcast("asset-hierarchy", { kind: "enterprise.create", id }, orgId);
+    refreshOpcuaServerAddressSpace({ enterpriseId: id });
     const row = db.prepare("SELECT * FROM enterprises WHERE id = ?").get(id);
     applyEtag(reply, row);
     return mapEnterprise(row);
@@ -223,6 +225,7 @@ export default async function assetHierarchyRoutes(fastify) {
 
     audit({ actor: req.user.id, action: "enterprise.update", subject: row.id, detail: { changes: patch, oldName, affectedBindings: total } });
     broadcast("asset-hierarchy", { kind: "enterprise.update", id: row.id }, row.org_id);
+    refreshOpcuaServerAddressSpace({ enterpriseId: row.id });
     const updated = db.prepare("SELECT * FROM enterprises WHERE id = ?").get(row.id);
     applyEtag(reply, updated);
     return { ...mapEnterprise(updated), affectedBindings: total, sample: affected };
@@ -241,6 +244,7 @@ export default async function assetHierarchyRoutes(fastify) {
     db.prepare("DELETE FROM enterprises WHERE id = ?").run(row.id);
     audit({ actor: req.user.id, action: "enterprise.delete", subject: row.id, detail: { name: row.name } });
     broadcast("asset-hierarchy", { kind: "enterprise.delete", id: row.id }, row.org_id);
+    refreshOpcuaServerAddressSpace({ enterpriseId: row.id });
     return { ok: true };
   });
 
@@ -316,6 +320,7 @@ export default async function assetHierarchyRoutes(fastify) {
       });
     audit({ actor: req.user.id, action: "location.create", subject: id, detail: { name, enterpriseId } });
     broadcast("asset-hierarchy", { kind: "location.create", id }, orgId);
+    refreshOpcuaServerAddressSpace({ locationId: id });
     const row = db.prepare("SELECT * FROM locations WHERE id = ?").get(id);
     applyEtag(reply, row);
     return mapLocation(row);
@@ -356,6 +361,7 @@ export default async function assetHierarchyRoutes(fastify) {
 
     audit({ actor: req.user.id, action: "location.update", subject: row.id, detail: { changes: patch, oldName, affectedBindings: total } });
     broadcast("asset-hierarchy", { kind: "location.update", id: row.id }, row.org_id);
+    refreshOpcuaServerAddressSpace({ locationId: row.id });
     const updated = db.prepare("SELECT * FROM locations WHERE id = ?").get(row.id);
     applyEtag(reply, updated);
     return { ...mapLocation(updated), affectedBindings: total, sample: affected };
@@ -372,6 +378,7 @@ export default async function assetHierarchyRoutes(fastify) {
     db.prepare("DELETE FROM locations WHERE id = ?").run(row.id);
     audit({ actor: req.user.id, action: "location.delete", subject: row.id, detail: { name: row.name } });
     broadcast("asset-hierarchy", { kind: "location.delete", id: row.id }, row.org_id);
+    refreshOpcuaServerAddressSpace({ locationId: row.id });
     return { ok: true };
   });
 

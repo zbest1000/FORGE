@@ -54,6 +54,7 @@ import {
 import { validateSelectTemplate } from "../security/sql-validator.js";
 import { dialectForBinding, DIALECTS } from "../connectors/sql-drivers.js";
 import * as connectorRegistry from "../connectors/registry.js";
+import { refreshOpcuaServerAddressSpace } from "../opcua-server.js";
 
 // ----- helpers ---------------------------------------------------------
 
@@ -399,6 +400,7 @@ export default async function assetBindingRoutes(fastify) {
       },
     });
     broadcast("bindings", { assetId: asset.id, kind: "apply_profile", inserted: inserted.length, updated: updated.length }, orgId);
+    refreshOpcuaServerAddressSpace({ assetId: asset.id });
     connectorRegistry.reload({ assetId: asset.id });
 
     const after = db.prepare("SELECT * FROM asset_point_bindings WHERE asset_id = ? ORDER BY created_at").all(asset.id);
@@ -561,6 +563,7 @@ export default async function assetBindingRoutes(fastify) {
       detail: { inserted: inserted.length, updated: updated.length, mappingCount: mappings.length },
     });
     broadcast("bindings", { assetId: asset.id, kind: "custom_mapping", inserted: inserted.length, updated: updated.length }, orgId);
+    refreshOpcuaServerAddressSpace({ assetId: asset.id });
     connectorRegistry.reload({ assetId: asset.id });
 
     const after = db.prepare("SELECT * FROM asset_point_bindings WHERE asset_id = ? ORDER BY created_at").all(asset.id);
@@ -587,6 +590,7 @@ export default async function assetBindingRoutes(fastify) {
       detail: { assetId: asset.id, sourceKind: row.source_kind, systemId: row.system_id },
     });
     broadcast("bindings", { assetId: asset.id, kind: "delete", bindingId: row.id }, orgId);
+    refreshOpcuaServerAddressSpace({ assetId: asset.id });
     connectorRegistry.reload({ bindingId: row.id, assetId: asset.id });
     return { ok: true };
   });

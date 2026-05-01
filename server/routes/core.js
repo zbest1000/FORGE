@@ -18,6 +18,7 @@ import {
   ApprovalDecideBody,
 } from "../schemas/core.js";
 import { AssetCreateBody, AssetPatchBody } from "../schemas/asset-hierarchy.js";
+import { refreshOpcuaServerAddressSpace } from "../opcua-server.js";
 
 function mapRowJson(row, fields) {
   const out = { ...row };
@@ -322,6 +323,7 @@ export default async function coreRoutes(fastify) {
     });
     audit({ actor: req.user.id, action: "asset.create", subject: id, detail: { name, enterpriseId, locationId } });
     broadcast("assets", { id, kind: "create" }, orgId);
+    refreshOpcuaServerAddressSpace({ assetId: id });
     const row = db.prepare("SELECT * FROM assets WHERE id = ?").get(id);
     applyEtag(reply, row);
     return mapRowJson(row, ["acl", "labels", "mqtt_topics", "opcua_nodes", "doc_ids"]);
@@ -385,6 +387,7 @@ export default async function coreRoutes(fastify) {
     db.prepare(`UPDATE assets SET ${sets.join(", ")} WHERE id = @id`).run(params);
     audit({ actor: req.user.id, action: "asset.update", subject: row.id, detail: { changes: patch } });
     broadcast("assets", { id: row.id, kind: "update" }, row.org_id);
+    refreshOpcuaServerAddressSpace({ assetId: row.id });
     const updated = db.prepare("SELECT * FROM assets WHERE id = ?").get(row.id);
     applyEtag(reply, updated);
     return mapRowJson(updated, ["acl", "labels", "mqtt_topics", "opcua_nodes", "doc_ids"]);
@@ -440,6 +443,10 @@ export default async function coreRoutes(fastify) {
 
     broadcast("assets", { id: row.id, kind: "delete" }, row.org_id);
     if (bindingIds.length > 0) broadcast("bindings", { assetId: row.id, kind: "cascade_delete", bindingIds }, row.org_id);
+    // Phase 7d — granular rebuild of the affected enterprise's
+    // subtree so external OPC UA clients see the deleted asset
+    // disappear on their next Browse.
+    refreshOpcuaServerAddressSpace({ enterpriseId: row.enterprise_id });
 
     // Tell the connector orchestrator the bindings are gone so
     // MQTT/OPC UA subscriptions are unwound. Best-effort —
