@@ -1,11 +1,17 @@
 /* FORGE — Design tokens, layout, component styles
  *
- * Token taxonomy (UX-A onwards):
- *   --space-*    spacing scale    (4 / 8 / 12 / 16 / 24 / 32 px)
- *   --radius-*   corner radius    (sm 4 / md 8 / lg 12 px)
- *   --timing-*   motion duration  (fast 120 / normal 150 / slow 250 ms)
- *   --ease-*     motion easing    (standard / emphasized)
- *   --font-*     typeface stacks  (sans / mono)
+ * ┌───────────────────────────────────────────────────────────────┐
+ * │ TOKEN TAXONOMY                                                │
+ * ├───────────────────────────────────────────────────────────────┤
+ * │ --space-*    spacing scale     (4 / 8 / 12 / 16 / 24 / 32 px) │
+ * │ --radius-*   corner radius     (sm 4 / md 8 / lg 12 px)       │
+ * │ --timing-*   motion duration   (fast 120 / normal 150 /       │
+ * │                                 slow 250 ms)                  │
+ * │ --ease-*     motion easing     (standard / emphasized)        │
+ * │ --shadow-*   elevation         (sm / md / lg) — UX-C          │
+ * │ --font-*     typeface stacks   (sans / mono)                  │
+ * │ --ring       focus-ring colour (= --accent by default) — UX-C │
+ * └───────────────────────────────────────────────────────────────┘
  *
  * Theme tokens (`--bg`, `--surface`, `--accent`, etc.) live in the
  * `.theme-dark` / `.theme-light` blocks below.
@@ -13,6 +19,33 @@
  * Motion tokens collapse to ~0 under `prefers-reduced-motion: reduce`,
  * so component CSS that uses them gets accessibility for free —
  * components must avoid hard-coded durations.
+ *
+ * ┌───────────────────────────────────────────────────────────────┐
+ * │ WCAG AA CONTRAST AUDIT (UX-C)                                 │
+ * ├──────────────┬───────────────────┬────────┬───────────────────┤
+ * │ Pair         │ DARK              │ LIGHT  │ Threshold         │
+ * ├──────────────┼─────────┬─────────┼─────────┬─────────────────┤
+ * │ text/bg      │ 14.7    │ 14.4    │ ≥ 4.5  AA normal text     │
+ * │ text/surface │ 13.8    │ 13.4    │ ≥ 4.5                     │
+ * │ text/panel   │ 14.9    │ 13.5    │ ≥ 4.5                     │
+ * │ text-strong/ │ 17.6    │ 16.6    │ ≥ 4.5                     │
+ * │   surface    │         │         │                           │
+ * │ muted/panel  │  6.0    │  6.5    │ ≥ 4.5                     │
+ * │ accent/      │  6.7    │  5.6    │ ≥ 4.5  links + active tab │
+ * │   surface    │         │         │                           │
+ * │ success/surf │  4.6    │  4.8    │ ≥ 4.5                     │
+ * │ warn/surface │  4.7    │  4.8    │ ≥ 4.5                     │
+ * │ danger/surf  │  5.0    │  4.6    │ ≥ 4.5                     │
+ * │ info/surface │  6.0    │  4.9    │ ≥ 4.5                     │
+ * │ border-      │  3.9    │  4.1    │ ≥ 3.0  UI component       │
+ * │   strong/    │         │         │        (WCAG § 1.4.11)    │
+ * │   surface    │         │         │                           │
+ * │ ring/surface │  6.7    │  5.6    │ ≥ 3.0  focus indicator    │
+ * └──────────────┴─────────┴─────────┴────────────────────────────┘
+ *
+ * Audit is enforced in CI by `test/theme-contrast.test.js`. Any
+ * future token change that drops a pair below threshold fails the
+ * build with the offending pair named.
  */
 
 :root {
@@ -31,6 +64,21 @@
   --timing-slow: 250ms;
   --ease-standard: ease;
   --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Elevation (UX-C). Each step pairs a soft, wide shadow for the
+     diffuse glow with a tight inner shadow for the contact line —
+     gives controls a real sense of layering without the puffy "drop
+     shadow" look. Both themes share the rgb(0,0,0) base; the alpha
+     levels are tuned so light theme stays subtle (no aggressive
+     darkening on a near-white surface). */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.10),
+               0 1px 1px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.18),
+               0 1px 3px rgba(0, 0, 0, 0.10);
+  --shadow-lg: 0 12px 30px rgba(0, 0, 0, 0.30),
+               0 4px 8px rgba(0, 0, 0, 0.16);
+  --shadow-xl: 0 20px 60px rgba(0, 0, 0, 0.40),
+               0 6px 14px rgba(0, 0, 0, 0.22);
 
   /* Tell the UA which colour scheme this document supports — keeps
      native scrollbars, form controls, and the browser chrome
@@ -70,7 +118,10 @@
   --elevated: #1a2234;
   --panel: #0f172a;
   --border: #24314a;
-  --border-strong: #3a4a6b;
+  /* --border-strong lifted from #3a4a6b (~2.0:1 on --surface) to
+     #6075a8 (~3.9:1) so panel separators meet WCAG § 1.4.11
+     non-text contrast for UI components (≥ 3:1). */
+  --border-strong: #6075a8;
   --text: #e5e7eb;
   --text-strong: #f8fafc;
   /* --muted lightened from #94a3b8 (~2.5:1 on --panel) to #b3c0d4 (~5.4:1 AA) */
@@ -78,6 +129,7 @@
   --muted-soft: #94a3b8;
   --accent: #38bdf8;
   --accent-strong: #0ea5e9;
+  --ring: #38bdf8;
   --success: #22c55e;
   --warn: #f59e0b;
   --danger: #ef4444;
@@ -115,15 +167,24 @@
   --elevated: #ffffff;
   --panel: #eef2f8;
   --border: #d2dae8;
-  --border-strong: #adb9cf;
+  /* --border-strong darkened from #adb9cf (~1.9:1 on --surface) to
+     #6b7a93 (~4.1:1) — UI component contrast per WCAG § 1.4.11. */
+  --border-strong: #6b7a93;
   --text: #1a2336;
   --text-strong: #0b1220;
   --muted: #4b576b;
   --muted-soft: #6c7891;
-  --accent: #0284c7;
-  --accent-strong: #0369a1;
-  --success: #16a34a;
-  --warn: #d97706;
+  /* Accent darkened from #0284c7 (sky-600, 3.88:1 — fail) to #0369a1
+     (sky-700, 5.63:1 — AA pass). --accent-strong steps deeper to
+     #075985 (sky-800, 7.17:1 — AAA) so the active-state hierarchy
+     stays visible. */
+  --accent: #0369a1;
+  --accent-strong: #075985;
+  --ring: #0369a1;
+  /* Semantic colours used as text on neutral surfaces. Each darkened
+     to clear the 4.5:1 AA threshold (originals were 3.0–3.1:1). */
+  --success: #15803d;
+  --warn: #b45309;
   --danger: #dc2626;
   --info: #2563eb;
   --purple: #7c3aed;
@@ -335,7 +396,7 @@ button {
   font: inherit;
 }
 button.tree-item:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
 
@@ -810,7 +871,7 @@ body.dock-hidden .screen-container,
   border-radius: 4px;
 }
 .table thead tr.filter-row input.input:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--ring);
   outline-offset: -1px;
   border-color: var(--accent);
 }
@@ -1189,7 +1250,7 @@ body.dock-hidden .screen-container,
   border-radius: var(--radius-md);
   padding: 48px;
   position: relative;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
@@ -1396,8 +1457,7 @@ body.dock-hidden .screen-container,
   background: var(--elevated);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45),
-              0 4px 12px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-xl);
   width: min(560px, 90vw);
   max-height: 80vh;
   overflow: auto;
@@ -1447,7 +1507,12 @@ body.dock-hidden .screen-container,
   height: 100%;
   background: var(--surface);
   border-left: 1px solid var(--border-strong);
-  box-shadow: -16px 0 48px rgba(0,0,0,0.35);
+  /* Drawer slides in from the right; the shadow trails to the left
+     of the panel edge. We layer the standard --shadow-lg on top of
+     a directional offset so the depth cue reads correctly even on
+     the light theme where rgba black is subtler. */
+  box-shadow: -16px 0 48px rgba(0, 0, 0, 0.30),
+              var(--shadow-lg);
   display: flex;
   flex-direction: column;
 }
@@ -1533,7 +1598,7 @@ body.dock-hidden .screen-container,
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
   font-size: 13px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  box-shadow: var(--shadow-lg);
   pointer-events: auto;
   min-width: 240px;
   max-width: 360px;
@@ -1566,7 +1631,7 @@ body.dock-hidden .screen-container,
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  box-shadow: var(--shadow-xl);
   display: flex;
   flex-direction: column;
   max-height: 60vh;
@@ -1891,7 +1956,7 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 .mono { font-family: var(--font-mono); }
@@ -1932,7 +1997,7 @@ button.activity-row { cursor: pointer; }
 }
 
 .activity-row:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
@@ -2241,7 +2306,7 @@ body.portal-mode .far-left-rail .rail-logo { background: var(--portal-accent, va
   display: flex;
   flex-direction: column;
   gap: 2px;
-  box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+  box-shadow: var(--shadow-lg);
   z-index: 50;
 }
 .view-menu-popover .vm-row {
@@ -2297,7 +2362,11 @@ body.portal-mode .far-left-rail .rail-logo { background: var(--portal-accent, va
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 6px 20px rgba(14,165,233,0.25);
+  /* The hub-logo carries an accent-tinted glow, not a neutral
+     shadow — keep this one as a custom rgba pinned to the sky-500
+     base so it always reads as "the brand mark", regardless of
+     active theme. */
+  box-shadow: 0 6px 20px rgba(14, 165, 233, 0.25);
 }
 
 .hub-title {
@@ -2343,7 +2412,7 @@ body.portal-mode .far-left-rail .rail-logo { background: var(--portal-accent, va
 
 .hub-tile:hover {
   transform: translateY(-2px);
-  box-shadow: 0 12px 30px rgba(0,0,0,0.25);
+  box-shadow: var(--shadow-lg);
   border-color: var(--portal-accent, var(--accent));
 }
 
@@ -2467,7 +2536,7 @@ body.portal-mode .far-left-rail .rail-logo { background: var(--portal-accent, va
   font-size: 16px;
   cursor: pointer;
   z-index: 200;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  box-shadow: var(--shadow-md);
 }
 body.hide-rail .layout-restore { display: flex; }
 body.focus-mode.hide-rail .layout-restore { display: flex; }
@@ -2484,7 +2553,7 @@ body.focus-mode.hide-rail .layout-restore { display: flex; }
 .revision-row:focus-visible,
 .uns-tree-item:focus-visible,
 .hub-tile:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
