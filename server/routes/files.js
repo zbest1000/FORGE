@@ -139,7 +139,16 @@ export default async function fileRoutes(fastify) {
   // this lets the asset-visual transcode path (HEIC / HEIF / AVIF →
   // WebP + JPEG) discard the original payload without leaving an
   // orphaned content-addressed blob on disk.
-  fastify.post("/api/files", { preHandler: require_("create") }, async (req, reply) => {
+  fastify.post("/api/files", {
+    // Per-route rate limit. File uploads write to disk + SQLite + run
+    // sharp on the asset-visual path; abuse here would saturate I/O
+    // long before the global rate limit kicks in. 30/min/user is well
+    // above the realistic dashboard ceiling (a user upload-bombing the
+    // route is the only thing that hits this) and matches the cap on
+    // the other write-amplifying routes (apply-profile, custom-mapping).
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+    preHandler: require_("create"),
+  }, async (req, reply) => {
     if (!req.isMultipart()) return reply.code(415).send({ error: "multipart required" });
 
     let parentKind = null, parentId = null, name = null;
@@ -260,14 +269,27 @@ export default async function fileRoutes(fastify) {
 
       // Persist the WebP primary + JPEG derivative under their own
       // SHA-addressed paths. Dedupe is preserved (same input image
-      // resolves to the same outputs, hash-equal).
+      // resolves to the same outputs, hash-equal). We write with the
+      // exclusive-create flag (`wx`) and swallow EEXIST so the
+      // existsSync+write pair stays atomic — a concurrent uploader of
+      // the same content would otherwise race the existsSync check.
+      // EEXIST is benign here: SHA-addressed content guarantees the
+      // bytes already on disk are byte-identical to what we'd write.
+      const writeIfMissing = (filePath, buffer) => {
+        try {
+          fs.writeFileSync(filePath, buffer, { flag: "wx" });
+        } catch (err) {
+          if (err.code !== "EEXIST") throw err;
+        }
+      };
+
       const webpHash = crypto.createHash("sha256").update(result.webp.buffer).digest("hex");
       const webpPath = pathFor(webpHash);
-      if (!fs.existsSync(webpPath)) fs.writeFileSync(webpPath, result.webp.buffer);
+      writeIfMissing(webpPath, result.webp.buffer);
 
       const jpegHash = crypto.createHash("sha256").update(result.jpeg.buffer).digest("hex");
       const jpegPath = pathFor(jpegHash);
-      if (!fs.existsSync(jpegPath)) fs.writeFileSync(jpegPath, result.jpeg.buffer);
+      writeIfMissing(jpegPath, result.jpeg.buffer);
 
       const baseName = (path.parse(name || "image").name || "image").trim() || "image";
       const webpName = `${baseName}.webp`;
