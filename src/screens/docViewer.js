@@ -11,6 +11,7 @@
 //   * Approval banner + request-approval flow (delegated to /approvals)
 
 import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea, prompt, loadingState } from "../core/ui.js";
+import { idle } from "../core/idle.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
@@ -342,7 +343,12 @@ function paperPage(doc, rev, page) {
     // the app. Subsequent error/success branches still mutate
     // host content so the contract is unchanged.
     host.replaceChildren(loadingState({ message: "Loading document…" }));
-    (async () => {
+    // UX-G: defer the heavy viewer kickoff (PDF.js / CSV parser) to
+    // the next idle period so the screen shell paints first. The
+    // loadingState() above gives the user immediate feedback while
+    // the browser finishes layout. Image previews stay synchronous —
+    // they're cheap and a deferred image load looks like a bug.
+    const startRender = async () => {
       try {
         if (kind === "pdf") {
           const pdf = await openPdf(url);
@@ -359,7 +365,16 @@ function paperPage(doc, rev, page) {
       } catch (e) {
         host.textContent = "Failed to render: " + e.message;
       }
-    })();
+    };
+    if (kind === "image") {
+      // No deferral — keep the synchronous flow.
+      startRender();
+    } else {
+      // PDF + CSV go through the idle scheduler. 250ms hard deadline
+      // so a preview that the user is actively waiting for never
+      // stalls behind a busy main thread.
+      idle(startRender, { timeout: 250 });
+    }
     container.replaceChildren(host);
     for (const c of comments) container.append(commentPin(c));
   }
