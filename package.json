@@ -88,5 +88,9 @@
     "@mlightcad/cad-simple-viewer": {
       "three": "$three"
     }
+  },
+  "optionalDependencies": {
+    "pg": "^8.13.0",
+    "mysql2": "^3.11.0"
   }
 }

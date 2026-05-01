@@ -130,25 +130,14 @@ function pollIntervalForList(bindings) {
 }
 
 async function pollSystem(system, bindings) {
-  // Phase 3: Re-use `server/historians/index.js`'s mssql driver — the
-  // import is dynamic so the optional dep doesn't load on every server
-  // boot. Routes that DON'T poll keep the lighter footprint.
-  let mssql;
-  try {
-    mssql = await import("../historians/index.js");
-  } catch {
-    return; // historian module unavailable; nothing to do
-  }
-  // The current historian module exports the queryHistorianSamples
-  // helper used elsewhere. For phase-3 scope we delegate the actual
-  // wire-execution to a focused helper that's mocked easily under
-  // test. The shape below is intentionally conservative: each poll
-  // produces zero-or-more samples per binding and dispatches them one
-  // at a time so the connector-registry can update last_value.
+  // Phase 7a: route through `sql-drivers.js`'s driver registry so
+  // mssql / postgresql / mysql / external-sqlite all flow through
+  // the same wire-execution path. Per-binding dialect is read from
+  // the binding row (v17) or fuzzy-matched from system metadata.
   for (const binding of bindings) {
     try {
       const cursor = _state.cursors.get(binding.id) || new Date(0).toISOString();
-      const samples = await fetchSamplesForBinding({ system, binding, since: cursor, mssql });
+      const samples = await fetchSamplesForBinding({ system, binding, since: cursor });
       for (const s of samples) {
         await _state.dispatch({
           binding,
@@ -160,7 +149,7 @@ async function pollSystem(system, bindings) {
         _state.cursors.set(binding.id, s.ts);
       }
     } catch (err) {
-      _state.logger?.warn?.({ err: String(err?.message || err), bindingId: binding.id }, "[sql-registry] binding poll failed");
+      _state.logger?.warn?.({ err: String(err?.message || err), bindingId: binding.id, code: err?.code }, "[sql-registry] binding poll failed");
     }
   }
 }
@@ -178,15 +167,11 @@ async function pollSystem(system, bindings) {
  * pre-validated at write time; here we only re-validate the
  * IDENT-only resolved bind values and execute.
  */
-let _fetchImpl = async ({ system, binding, since }) => {
-  // Default no-op: returns no samples. Tests + Phase 4+ override.
-  return [];
-};
+let _fetchImpl = null;
 
+/** Test seam: replace the wire-execution. */
 export function setSampleFetcher(fn) { _fetchImpl = fn; }
-export function resetSampleFetcher() {
-  _fetchImpl = async () => [];
-}
+export function resetSampleFetcher() { _fetchImpl = null; }
 
 async function fetchSamplesForBinding(args) {
   const tpl = jsonOrDefault(args.binding.pv_source_template, {});
@@ -197,7 +182,57 @@ async function fetchSamplesForBinding(args) {
   for (const k of ["ts_column", "value_column", "point_column", "asset_filter_column"]) {
     if (tpl[k] && !IDENT_RE.test(String(tpl[k]))) return [];
   }
-  return _fetchImpl(args);
+  if (_fetchImpl) return _fetchImpl(args);
+  return realFetch(args);
+}
+
+/**
+ * Real wire-execution. Builds the per-dialect SELECT (free-form
+ * uses the operator-authored template; schema-defined builds a
+ * canonical SELECT against the profile's source_template) and
+ * dispatches through the shared driver registry. Errors surface
+ * with structured codes so the orchestrator's binding `last_error`
+ * field gets actionable strings.
+ */
+async function realFetch({ system, binding, since }) {
+  const drivers = await import("./sql-drivers.js");
+  const dialect = drivers.dialectForBinding({ binding, system });
+  const tpl = jsonOrDefault(binding.pv_source_template, {});
+  const sqlMode = String(binding.sql_mode || tpl.mode || "schema_defined");
+  const limit = Number(tpl.poll_batch || 1000);
+  const params = {
+    point_id: binding.point_id || binding.pp_name || "",
+    asset_id: binding.asset_id || "",
+    since,
+    until: new Date().toISOString(),
+    limit,
+  };
+  let query;
+  if (sqlMode === "free_form" && binding.query_template) {
+    query = String(binding.query_template);
+  } else if (tpl.table && tpl.ts_column && tpl.value_column) {
+    // Build the canonical schema-defined query. Identifiers were
+    // already allowlisted by IDENT_RE; values bind via the driver.
+    const cols = [
+      `${tpl.ts_column} AS ts`,
+      `${tpl.value_column} AS value`,
+    ];
+    if (tpl.quality_column && IDENT_RE.test(tpl.quality_column)) {
+      cols.push(`${tpl.quality_column} AS quality`);
+    }
+    const filterCol = tpl.asset_filter_column;
+    const valueFilter = filterCol ? `AND ${filterCol} = :asset_id` : "";
+    // mssql / postgres / mysql / sqlite all accept `LIMIT n`; mssql
+    // also accepts `TOP n`. We use LIMIT consistently because the
+    // driver-side bind translation handles dialect quirks.
+    query = `SELECT ${cols.join(", ")} FROM ${tpl.table}
+              WHERE ${tpl.ts_column} > :since AND ${tpl.ts_column} <= :until ${valueFilter}
+              ORDER BY ${tpl.ts_column} ASC LIMIT :limit`;
+  } else {
+    // No template, no free-form — nothing to do.
+    return [];
+  }
+  return drivers.executeSelect({ system, dialect, query, params });
 }
 
 // Re-export for test-harness use.

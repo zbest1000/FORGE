@@ -89,6 +89,25 @@ const RAW_REJECT_PATTERNS = [
 
 const _parser = new Parser();
 
+// FORGE-canonical dialect names → node-sql-parser dialect names.
+// The connector subregistry stores the FORGE form on each binding;
+// the validator translates so callers can pass either freely.
+const FORGE_TO_PARSER_DIALECT = {
+  mssql:      "transactsql",
+  postgresql: "postgresql",
+  mysql:      "mysql",
+  sqlite:     "sqlite",
+};
+
+function resolveParserDialect(dialect) {
+  const k = String(dialect || "").toLowerCase();
+  if (FORGE_TO_PARSER_DIALECT[k]) return FORGE_TO_PARSER_DIALECT[k];
+  // Already a node-sql-parser-native value (e.g. 'transactsql' or
+  // 'mariadb'); pass through verbatim. Unknown values fall back to
+  // transactsql for back-compat with Phase 3.
+  return dialect || "transactsql";
+}
+
 /**
  * Validate a free-form SQL template.
  *
@@ -102,13 +121,14 @@ const _parser = new Parser();
  *
  * @param {string} template
  * @param {object} [opts]
- * @param {string} [opts.dialect="mssql"]  node-sql-parser dialect.
- *        FORGE talks to MSSQL today via `server/historians/index.js`;
- *        node-sql-parser exposes that dialect under the
- *        `transactsql` key. Other dialects (postgresql, mysql,
- *        sqlite) ship per-driver in later phases.
+ * @param {string} [opts.dialect="mssql"]  Either a FORGE canonical
+ *        dialect (`mssql` / `postgresql` / `mysql` / `sqlite`) or a
+ *        raw node-sql-parser dialect name. The connector subregistry
+ *        passes the binding's `dialect` column straight through;
+ *        legacy callers pass the parser-native name for back-compat.
  */
 export function validateSelectTemplate(template, { dialect = "transactsql" } = {}) {
+  const parserDialect = resolveParserDialect(dialect);
   if (typeof template !== "string" || !template.trim()) {
     return { ok: false, code: "empty", message: "SQL template is empty" };
   }
@@ -132,12 +152,12 @@ export function validateSelectTemplate(template, { dialect = "transactsql" } = {
   // Parse. Catch syntax errors with a stable code.
   let asts;
   try {
-    asts = _parser.astify(template, { database: dialect });
+    asts = _parser.astify(template, { database: parserDialect });
   } catch (err) {
     return {
       ok: false,
       code: "parse_error",
-      message: `SQL did not parse (${dialect}): ${String(err?.message || err).split("\n")[0]}`,
+      message: `SQL did not parse (${parserDialect}): ${String(err?.message || err).split("\n")[0]}`,
     };
   }
 
@@ -259,7 +279,7 @@ export function validateSelectTemplate(template, { dialect = "transactsql" } = {
     ok: true,
     ast,
     params: [...paramSet],
-    dialect,
+    dialect: parserDialect,
   };
 }
 

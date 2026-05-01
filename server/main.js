@@ -595,6 +595,10 @@ async function shutdown(sig) {
       Promise.resolve().then(() => stopOpcuaBridge()),
       Promise.resolve().then(() => connectorRegistry.shutdown()),
       Promise.resolve().then(() => stopOpcuaServer()),
+      Promise.resolve().then(async () => {
+        const { shutdownHistorians } = await import("./historians/index.js");
+        await shutdownHistorians();
+      }),
     ]);
 
     // 3) Stop Fastify (closes the listener + pending requests).

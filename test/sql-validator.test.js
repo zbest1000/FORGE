@@ -201,6 +201,44 @@ test("accepts every allowed parameter name in isolation", () => {
   }
 });
 
+test("multi-dialect: forge canonical names route to the right parser", () => {
+  // Phase 7a — the validator now accepts both FORGE-canonical and
+  // node-sql-parser-native dialect names. Each FORGE name must
+  // accept its dialect's idiomatic SELECT.
+  const cases = [
+    { dialect: "mssql",      sql: "SELECT TOP 10 ts FROM t WHERE point_id = :point_id LIMIT :limit" },
+    { dialect: "postgresql", sql: "SELECT ts FROM t WHERE point_id = :point_id LIMIT :limit" },
+    { dialect: "mysql",      sql: "SELECT ts FROM t WHERE point_id = :point_id LIMIT :limit" },
+    { dialect: "sqlite",     sql: "SELECT ts FROM t WHERE point_id = :point_id LIMIT :limit" },
+  ];
+  for (const c of cases) {
+    const r = validateSelectTemplate(c.sql, { dialect: c.dialect });
+    assert.equal(r.ok, true, `${c.dialect} accept failed: ${r.code} ${r.message}`);
+    // The returned dialect is the parser-native name so callers
+    // can plumb it to the executor without re-translating.
+    assert.ok(r.dialect, `dialect echoed back for ${c.dialect}`);
+  }
+});
+
+test("multi-dialect: bound-param + LIMIT rules apply uniformly", () => {
+  for (const dialect of ["mssql", "postgresql", "mysql", "sqlite"]) {
+    // Missing LIMIT rejected uniformly.
+    const noLimit = validateSelectTemplate(
+      "SELECT ts FROM t WHERE point_id = :point_id ORDER BY ts",
+      { dialect }
+    );
+    assert.equal(noLimit.ok, false, `${dialect}: missing LIMIT must reject`);
+    assert.equal(noLimit.code, "missing_limit");
+    // Unknown bind param rejected uniformly.
+    const badParam = validateSelectTemplate(
+      "SELECT ts FROM t WHERE point = :pointid LIMIT :limit",
+      { dialect }
+    );
+    assert.equal(badParam.ok, false, `${dialect}: unknown bind param must reject`);
+    assert.equal(badParam.code, "unknown_parameter");
+  }
+});
+
 test("structural reject (e.g. trailing semicolon) wins over namespace reject", () => {
   // When two reject rules both match, the raw-text scan runs first so
   // the operator gets the most actionable error. We rely on this

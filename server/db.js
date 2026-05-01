@@ -20,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -1481,6 +1481,71 @@ function migrate() {
       }
 
       setVersion(16);
+    }
+
+    // v17: Consolidate `asset_point_bindings` schema.
+    //
+    // Phase 3 added `query_template` + `sql_mode` via idempotent
+    // ALTER TABLE inside the route module to keep the diff small.
+    // Phase 7a (multi-vendor SQL) needs an additional `dialect`
+    // column AND we want the canonical CREATE TABLE shape to
+    // include all three so a fresh DB matches an upgraded one.
+    // Rebuild the table preserving every existing column +
+    // pragma-driven UNIQUE/NOT NULL constraints, plus appending
+    // the new columns idempotently.
+    if (getVersion() < 17) {
+      const tableExists = db.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_point_bindings'"
+      ).get();
+      if (tableExists) {
+        const ensureCol = (name, ddl) => {
+          try { db.prepare(`ALTER TABLE asset_point_bindings ADD COLUMN ${ddl}`).run(); }
+          catch (err) {
+            if (!/duplicate column name/i.test(String(err?.message || err))) throw err;
+          }
+        };
+        // Idempotent ADD COLUMN — Phase 3 already added query_template
+        // + sql_mode via the route module on first server boot, but a
+        // freshly created v16 DB that never hit the routes hasn't.
+        ensureCol("query_template", "query_template TEXT");
+        ensureCol("sql_mode", "sql_mode TEXT");
+        ensureCol("dialect", "dialect TEXT");
+
+        // Backfill `dialect` for existing rows: pull the system's
+        // vendor / kind / config and pick the matching dialect key.
+        // Schema-defined-only rows on legacy mssql systems get
+        // `dialect='mssql'`; postgres / mysql / sqlite inferred
+        // from vendor when present. Free-form rows already carry
+        // the choice in `query_template`; we record dialect for
+        // consistency.
+        const bindingsToBackfill = db.prepare(`
+          SELECT b.id, es.vendor, es.kind, es.category, es.config
+            FROM asset_point_bindings b
+            LEFT JOIN enterprise_systems es ON es.id = b.system_id
+           WHERE b.source_kind = 'sql' AND (b.dialect IS NULL OR b.dialect = '')
+        `).all();
+        const setDialect = db.prepare("UPDATE asset_point_bindings SET dialect = ? WHERE id = ?");
+        for (const b of bindingsToBackfill) {
+          let cfg = {};
+          try { cfg = b.config ? JSON.parse(b.config) : {}; } catch { /* ignore */ }
+          let dialect = String(cfg.dialect || "").toLowerCase();
+          if (!dialect) {
+            const v = String(b.vendor || "").toLowerCase();
+            const k = String(b.kind || b.category || "").toLowerCase();
+            if (/postgres|psql|timescale/.test(v) || /postgres/.test(k)) dialect = "postgresql";
+            else if (/mysql|maria/.test(v) || /mysql/.test(k)) dialect = "mysql";
+            else if (/sqlite/.test(v) || /sqlite/.test(k)) dialect = "sqlite";
+            else dialect = "mssql"; // pre-Phase-7 default
+          }
+          setDialect.run(dialect, b.id);
+        }
+
+        // Add an index on the new dialect column so the connector's
+        // sql-registry can prune to a per-dialect work-list cheaply.
+        db.exec("CREATE INDEX IF NOT EXISTS idx_asset_point_bindings_dialect ON asset_point_bindings(dialect)");
+      }
+
+      setVersion(17);
     }
   })();
   db.pragma("foreign_keys = ON");
