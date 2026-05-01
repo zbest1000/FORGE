@@ -41,6 +41,8 @@ import licenseRoutes from "./routes/license.js";
 import operationsRoutes from "./routes/operations.js";
 import assetHierarchyRoutes from "./routes/asset-hierarchy.js";
 import assetProfileRoutes from "./routes/asset-profiles.js";
+import assetBindingRoutes from "./routes/asset-bindings.js";
+import * as connectorRegistry from "./connectors/registry.js";
 import { config } from "./config.js";
 import { getLicense, requireFeature, FEATURES, pollLocalLicenseServer, loadPersistedActivation, localLicenseStatus } from "./license.js";
 
@@ -392,6 +394,7 @@ await registerWithFeature(enterpriseSystemRoutes, FEATURES.ENTERPRISE_SYSTEMS);
 await app.register(operationsRoutes);
 await app.register(assetHierarchyRoutes);
 await app.register(assetProfileRoutes);
+await app.register(assetBindingRoutes);
 attachSSE(app);
 registerMetrics(app);
 
@@ -473,6 +476,12 @@ startRollupWorker(app.log);
 startOutboxWorker(app.log);
 startRetentionWorker(app.log);
 startTamperWorker(app.log);
+// Phase 3: connector registry (SQL polling subregistry boots here;
+// MQTT + OPC UA registries land in Phase 4 + 5). Honours the
+// FORGE_DISABLE_CONNECTOR_REGISTRY=1 escape hatch for in-process
+// route tests that don't want side-effecting timers.
+connectorRegistry.init({ logger: app.log }).catch(err =>
+  app.log.warn({ err: String(err?.message || err) }, "connector registry init failed"));
 
 // Record boot in the audit ledger.
 audit({ actor: "system", action: "server.start", subject: "forge", detail: { host: HOST, port: PORT, pid: process.pid } });
@@ -575,6 +584,7 @@ async function shutdown(sig) {
       Promise.resolve().then(() => stopRollupWorker()),
       Promise.resolve().then(() => stopMqttBridge()),
       Promise.resolve().then(() => stopOpcuaBridge()),
+      Promise.resolve().then(() => connectorRegistry.shutdown()),
     ]);
 
     // 3) Stop Fastify (closes the listener + pending requests).
