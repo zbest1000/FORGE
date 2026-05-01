@@ -99,6 +99,49 @@ export function reload({ systemId, bindingId, assetId } = {}) {
 }
 
 /**
+ * Phase 7c — writeback orchestrator. Routes a write to the right
+ * subregistry based on the binding's `source_kind`. Caller
+ * (server/routes/tag-writeback.js) has already enforced the
+ * `device.write` capability + per-route rate limit + audit row.
+ *
+ * Returns the structured `{ ok, code, message?, ... }` shape each
+ * subregistry uses, so the route can pass it through to the
+ * client without re-wrapping.
+ *
+ *   - mqtt   → publishWriteback (QoS 2)
+ *   - opcua  → writeBindingValue (Session.write)
+ *   - sql    → 405 / unsupported_writeback (the historian's
+ *              forge_historian_samples table is append-only — a
+ *              writeback path would silently corrupt the audit
+ *              trail; refuse cleanly instead).
+ */
+export async function writeBindingValue({ binding, value, quality = "Good" }) {
+  if (!binding) return { ok: false, code: "missing_binding", message: "binding required" };
+  if (!_state.initialised || process.env.FORGE_DISABLE_CONNECTOR_REGISTRY === "1") {
+    return { ok: false, code: "registry_disabled", message: "connector registry is disabled" };
+  }
+  switch (binding.source_kind) {
+    case "mqtt": {
+      const m = await import("./mqtt-registry.js");
+      return m.publishWriteback({ binding, value, quality });
+    }
+    case "opcua": {
+      const m = await import("./opcua-registry.js");
+      return m.writeBindingValue({ binding, value });
+    }
+    case "sql": {
+      return {
+        ok: false,
+        code: "unsupported_writeback",
+        message: "SQL bindings are read-only; writeback to the source historian is not supported",
+      };
+    }
+    default:
+      return { ok: false, code: "unknown_source_kind", message: `unknown source_kind: ${binding.source_kind}` };
+  }
+}
+
+/**
  * Subregistries call this with each sample they receive. We persist
  * via the historian adapter, broadcast SSE, and update last_seen on
  * the binding row. `binding` is the row from `asset_point_bindings`

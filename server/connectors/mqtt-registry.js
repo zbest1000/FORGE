@@ -323,5 +323,43 @@ async function rebuild() {
   }
 }
 
+/**
+ * Phase 7c — writeback. Publish a value back to the registered
+ * broker on a binding's resolved topic. Returns `{ ok }` so the
+ * orchestrator's router can shape a uniform response across
+ * source kinds. QoS 2 (exactly once) per spec §1.2 — command
+ * writebacks must not duplicate.
+ *
+ * Caller is `server/connectors/registry.js`'s
+ * `writeBindingValue()` orchestrator, which is invoked by the
+ * `device.write`-gated `POST /api/tags/:pointId/write` route
+ * (audit + capability + per-route rate limit applied upstream).
+ */
+export async function publishWriteback({ binding, value, quality = "Good", retain = false } = {}) {
+  if (!binding || !binding.system_id || !binding.source_path) {
+    return { ok: false, code: "missing_binding_fields", message: "binding has no system_id or source_path" };
+  }
+  const sysState = _state.systems.get(binding.system_id);
+  if (!sysState || sysState.status !== "connected" || !sysState.client) {
+    return { ok: false, code: "broker_unavailable", message: `broker for system ${binding.system_id} is not connected` };
+  }
+  const payload = JSON.stringify({
+    value: Number(value),
+    quality,
+    ts: new Date().toISOString(),
+    source: "forge.writeback",
+  });
+  return new Promise((resolve) => {
+    sysState.client.publish(binding.source_path, payload, { qos: 2, retain: !!retain }, (err) => {
+      if (err) {
+        _state.logger?.warn?.({ err: String(err?.message || err), bindingId: binding.id }, "[mqtt-registry] writeback publish failed");
+        resolve({ ok: false, code: "publish_failed", message: String(err?.message || err) });
+      } else {
+        resolve({ ok: true, topic: binding.source_path, qos: 2 });
+      }
+    });
+  });
+}
+
 // Test-harness introspection.
 export const _internals = { state: _state, patternToRegex, dedupeTopics, parsePayload, withinBudget };
