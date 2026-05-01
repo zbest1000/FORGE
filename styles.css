@@ -1938,6 +1938,159 @@ body.dock-hidden .screen-container,
 .gap-5 { gap: var(--space-5); }
 .gap-6 { gap: var(--space-6); }
 
+/* ────────────────────────────────────────────────────────────────
+   Breadcrumb trail (UX-G).
+   Sub-header inside a screen's main pane that shows the user's
+   path through a resource hierarchy. Distinct from the top-bar
+   `.breadcrumb` in the page header which carries org/workspace
+   metadata. WAI-ARIA Breadcrumb pattern with role="navigation"
+   on the wrapper and aria-current="page" on the current item.
+   ──────────────────────────────────────────────────────────── */
+.breadcrumb-trail {
+  margin-bottom: var(--space-3);
+}
+.breadcrumb-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+}
+.breadcrumb-list li {
+  display: inline-flex;
+  align-items: center;
+}
+.breadcrumb-link {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: none;
+}
+.breadcrumb-link:hover {
+  color: var(--text-strong);
+  background: var(--panel);
+}
+.breadcrumb-current {
+  color: var(--text-strong);
+  font-weight: 500;
+  padding: 2px 4px;
+}
+.breadcrumb-sep {
+  color: var(--muted);
+  user-select: none;
+  padding: 0 2px;
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Print stylesheet (UX-G).
+   Hide app chrome (rail, panels, header, dock, toasts, modal
+   backdrop) so a printed page shows only the screen's content.
+   Force black-on-white for ink savings + readability. Append the
+   page URL after each link so a printed copy retains its
+   citations. Page margins set to a print-safe 0.75 in.
+   ──────────────────────────────────────────────────────────── */
+@media print {
+  @page {
+    margin: 0.75in;
+  }
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  body {
+    /* Override any active theme colours so print ink isn't tinted
+       by the dark/light token palette. */
+    color-scheme: light !important;
+  }
+  /* Hide the entire app chrome. The screen-container occupies the
+     full page width; everything else is interactive UI not useful
+     in print. */
+  .far-left-rail,
+  .left-panel,
+  .right-context-panel,
+  .main-header,
+  .operations-dock,
+  .layout-restore,
+  .toast-root,
+  .modal-backdrop,
+  .palette-backdrop,
+  .skip-link {
+    display: none !important;
+  }
+  .app-shell {
+    display: block !important;
+    grid-template-columns: none !important;
+    grid-template-rows: none !important;
+  }
+  .main-content {
+    min-height: 0 !important;
+  }
+  .screen-container {
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  /* Surface tones flatten to plain white-card with a thin border
+     — keeps the layout scannable without leaning on colour. */
+  .card,
+  .kpi,
+  .modal {
+    background: #ffffff !important;
+    border: 1px solid #888 !important;
+    box-shadow: none !important;
+  }
+  /* Append the URL of every link so a printed page retains its
+     citations. Skip in-page anchors. */
+  a[href]:not([href^="#"])::after {
+    content: " (" attr(href) ")";
+    font-size: 90%;
+    color: #555;
+    word-wrap: break-word;
+  }
+  /* Hide UI buttons. Anything semantically interactive (e.g. form
+     buttons in a print layout) opts back in by adding `.print-keep`. */
+  button,
+  .btn {
+    display: none !important;
+  }
+  button.print-keep,
+  .btn.print-keep {
+    display: inline-flex !important;
+  }
+  /* Tables: avoid breaking a row across page boundaries. */
+  thead {
+    display: table-header-group;
+  }
+  tr,
+  img,
+  svg,
+  .activity-row,
+  .kanban-card {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  img,
+  svg {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+  /* Animations off in print — no purpose. */
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 /* Command palette */
 .palette-backdrop {
   position: fixed;
