@@ -71,6 +71,7 @@
     "prom-client": "^15.1.3",
     "rapidoc": "^9.3.8",
     "sharp": "^0.34.5",
+    "sparkplug-payload": "^1.0.3",
     "svg-pan-zoom": "^3.6.2",
     "three": "^0.184.0",
     "uplot": "^1.6.32",
