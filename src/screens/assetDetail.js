@@ -125,21 +125,23 @@ function overviewTab(asset, ctx) {
 }
 
 function dataTabStub(asset, dataSources) {
-  return el("div", { class: "stack" }, [
-    card("Live & Historical Data", el("div", { class: "stack" }, [
-      el("p", { class: "muted" }, [
-        "The Live | Historical toggle, eCharts trend per binding, and rolling SSE buffer ship in Phase 4 (MQTT registry) + Phase 5 (OPC UA registry).",
-      ]),
-      el("p", { class: "tiny muted" }, [
-        "Phase 1 surfaces this tab so the asset card's \"View data\" button has a destination. Today the Overview tab's Signals sub-tab still renders the demo-seeded historian points and trends.",
-      ]),
-      dataSources.length
-        ? el("div", { class: "row wrap" }, dataSources.map(ds =>
-            el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, [ds.integrationId || "src"]), ds.endpoint])
-          ))
-        : el("div", { class: "tiny muted" }, ["No data sources mapped to this asset yet."]),
-    ]), { subtitle: "Phase 4 wires registry-driven MQTT/OPC UA into this view." }),
+  // Phase 4 — live + historical view. Lazy-imports the implementation
+  // module so the chart + SSE buffer machinery only loads when a user
+  // opens the Data tab. The same target node is reused across
+  // mode toggles (live ⇄ historical) so the SSE source can be torn
+  // down and re-attached cleanly.
+  const target = el("div", { id: "asset-data-target", class: "stack" }, [
+    el("div", { class: "muted tiny" }, ["Loading data view…"]),
   ]);
+  import("./assetData.js").then((mod) => {
+    mod.renderAssetData({ assetId: asset.id, target });
+  }).catch((err) => {
+    target.innerHTML = "";
+    target.append(el("div", { class: "callout danger" }, [
+      `Failed to load asset data view: ${err?.message || err}`,
+    ]));
+  });
+  return target;
 }
 
 function configTabStub(asset) {

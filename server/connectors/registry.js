@@ -31,8 +31,9 @@ import { db, now } from "../db.js";
 import { audit } from "../audit.js";
 import { broadcast } from "../sse.js";
 import * as sqlRegistry from "./sql-registry.js";
+import * as mqttRegistry from "./mqtt-registry.js";
 
-const SUBREGISTRIES = [sqlRegistry];
+const SUBREGISTRIES = [sqlRegistry, mqttRegistry];
 
 const _state = {
   logger: null,
