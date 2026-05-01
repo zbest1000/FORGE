@@ -37,8 +37,10 @@ npm test         # node --test
 
 ## Branch and commit conventions
 
-- Branch from `main`; name as `cursor/<topic>-<slug>` for cloud agents,
-  or anything descriptive otherwise.
+- Branch from `main`. Name your branch after the work — recent in-tree
+  patterns are `feat/<topic>`, `fix/<topic>`, `chore/<topic>`,
+  `ux/phase-<x>-<slug>`. Anything descriptive is fine; CI runs on every
+  PR targeting `main`.
 - Each commit is one logical change; messages start with `feat:`,
   `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, …
 

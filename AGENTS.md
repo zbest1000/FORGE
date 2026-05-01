@@ -13,7 +13,11 @@ client (see `README.md` and `docs/SERVER.md` for a feature overview).
 - **`.claude/skills/enterprise-ux-audit/SKILL.md`** — Enterprise UI/UX audit
   skill. Use it when reviewing FORGE's information architecture, product
   experience, accessibility, design system, or frontend component direction.
-  The baseline report lives at `docs/ENTERPRISE_UX_REDESIGN_AUDIT.md`.
+  The current UX plan + design rationale lives at `docs/UX_AUDIT.md`
+  (the seven-phase UX-A through UX-G plan, fully shipped). The earlier
+  baseline report is preserved as
+  `docs/archive/ENTERPRISE_UX_REDESIGN_AUDIT-2026.md` for decision-trail
+  context.
 
 When you discover new testing tricks or runbook knowledge, update
 `.cursor/skills/runbook.md` in the same PR — see its **Updating this skill**
