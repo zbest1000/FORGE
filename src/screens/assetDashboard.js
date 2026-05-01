@@ -46,24 +46,18 @@ export async function renderAssetDashboard() {
   const root = document.getElementById("screenContainer");
   if (!root) return;
 
+  // Demo mode: build the tree from the in-browser seed so a sales /
+  // UX walkthrough sees a fully populated dashboard without standing
+  // up the server. Mutations are no-ops with a clear toast — the demo
+  // is read-only.
   if (!state.server?.connected) {
-    return mount(root, [
-      el("div", { class: "stack", style: { padding: "16px", maxWidth: "640px" } }, [
-        card("Asset dashboard", el("div", { class: "stack" }, [
-          el("p", { class: "muted" }, [
-            "The asset dashboard requires a connected FORGE server. Sign in or run the server in dev mode to see your enterprises, locations, and asset cards.",
-          ]),
-          el("div", { class: "row" }, [
-            el("button", { class: "btn", onClick: () => navigate("/hub") }, ["Go to Hub"]),
-          ]),
-        ])),
-        card("Legacy table view", legacyAssetsTableNote()),
-      ]),
-    ]);
+    const payload = buildDemoTree();
+    mount(root, [renderShell(payload, { demo: true })]);
+    return;
   }
 
   // Server mode — render the loading shell synchronously, then populate.
-  mount(root, [renderShell({ tree: [], unassigned: [], loading: true })]);
+  mount(root, [renderShell({ tree: [], unassigned: [], loading: true }, { demo: false })]);
 
   let payload;
   try {
@@ -80,6 +74,90 @@ export async function renderAssetDashboard() {
   }
 
   mount(root, [renderShell(payload)]);
+}
+
+/**
+ * Convert the in-browser seed (state.data.locations / state.data.assets)
+ * into the same `{ tree, unassigned }` shape `/api/asset-tree` returns
+ * in server mode. The seed's location rows already use a self-FK
+ * (`parentId`) and a free-text `kind` discriminator — exactly the
+ * ISA-95 pattern from spec §4 — so the conversion is a recursive walk
+ * with one carve-out: rows whose `kind === "enterprise"` become
+ * top-level enterprises rather than locations.
+ */
+function buildDemoTree() {
+  const allLocs = state.data?.locations || [];
+  const allAssets = state.data?.assets || [];
+  const enterprises = allLocs.filter(l => l.kind === "enterprise");
+  const locations = allLocs.filter(l => l.kind !== "enterprise");
+
+  const childrenByParent = new Map();
+  for (const l of locations) {
+    const k = l.parentId || null;
+    if (!childrenByParent.has(k)) childrenByParent.set(k, []);
+    childrenByParent.get(k).push(l);
+  }
+
+  const assetsByLocation = new Map();
+  for (const a of allAssets) {
+    const k = a.locationId || a.siteId || null;
+    if (!k) continue;
+    if (!assetsByLocation.has(k)) assetsByLocation.set(k, []);
+    assetsByLocation.get(k).push(packDemoAsset(a));
+  }
+
+  function buildLocNode(loc) {
+    const children = (childrenByParent.get(loc.id) || []).map(buildLocNode);
+    const assets = assetsByLocation.get(loc.id) || [];
+    return {
+      id: loc.id,
+      name: loc.name,
+      kind: loc.kind,
+      parentLocationId: loc.parentId || null,
+      children,
+      assets,
+    };
+  }
+
+  const tree = enterprises.map(ent => ({
+    id: ent.id,
+    name: ent.name,
+    description: ent.description || "",
+    sortOrder: 0,
+    locations: (childrenByParent.get(ent.id) || []).map(buildLocNode),
+    ungroupedAssets: (assetsByLocation.get(ent.id) || []),
+  }));
+
+  // Assets with no location at all (rare in demo) bubble to the
+  // unassigned bucket exactly like the server response.
+  const placedIds = new Set();
+  function collectPlaced(loc) {
+    for (const a of loc.assets) placedIds.add(a.id);
+    for (const c of loc.children) collectPlaced(c);
+  }
+  for (const ent of tree) {
+    for (const l of ent.locations) collectPlaced(l);
+    for (const a of ent.ungroupedAssets) placedIds.add(a.id);
+  }
+  const unassigned = allAssets.filter(a => !placedIds.has(a.id)).map(packDemoAsset);
+
+  return { tree, unassigned };
+}
+
+function packDemoAsset(a) {
+  // Look up which profile version this asset is bound to via the demo
+  // bindings so the card surfaces the "profile" badge consistently
+  // with the server-mode response.
+  const bindings = (state.data?.assetPointBindings || []).filter(b => b.assetId === a.id && b.enabled);
+  const versionId = bindings[0]?.profileVersionId || null;
+  return {
+    id: a.id,
+    name: a.name,
+    type: a.type,
+    status: a.status,
+    visualFileId: a.visualFileId || null,
+    profileVersionId: versionId,
+  };
 }
 
 // Backward-compat alias for the existing /assets route binding which
@@ -99,7 +177,7 @@ function legacyAssetsTableNote() {
   ]);
 }
 
-function renderShell({ tree, unassigned, loading }) {
+function renderShell({ tree, unassigned, loading = false }, { demo = false } = {}) {
   const filter = (sessionStorage.getItem(SS_FILTER_TEXT) || "").toLowerCase();
   const expanded = getExpanded();
   const selected = sessionStorage.getItem(SS_SELECTED_NODE) || ""; // "ent:..." or "loc:..."
@@ -116,7 +194,7 @@ function renderShell({ tree, unassigned, loading }) {
   const cards = selectedAssetsFor(selected, filtered, unassigned, filter);
 
   return el("div", { class: "stack" }, [
-    headerRow(counts, loading),
+    headerRow(counts, loading, demo),
     toolbar(filter),
     el("div", { class: "three-col asset-dashboard" }, [
       card("Hierarchy", treePanel(filtered, unassigned, expanded, selected), {
@@ -142,7 +220,7 @@ function computeCounts(tree, unassigned) {
   return { enterprises: tree.length, locations, assets };
 }
 
-function headerRow({ enterprises, locations, assets }, loading) {
+function headerRow({ enterprises, locations, assets }, loading, demo) {
   return el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
     el("div", {}, [
       el("div", { class: "strong" }, ["Asset dashboard"]),
@@ -151,10 +229,23 @@ function headerRow({ enterprises, locations, assets }, loading) {
       ]),
     ]),
     el("div", { class: "row wrap" }, [
-      badge("Phase 1 · grid + visuals", "accent"),
+      demo
+        ? badge("Demo mode · read-only", "warn", { title: "Sign in to a FORGE server to edit." })
+        : badge("Live · server-backed", "success"),
       el("button", { class: "btn sm", onClick: () => renderAssetDashboard() }, ["Refresh"]),
     ]),
   ]);
+}
+
+/**
+ * Guard that mutations call before round-tripping the API. Returns
+ * true when the server is connected; otherwise toasts a clear
+ * read-only notice and returns false so the caller can short-circuit.
+ */
+function requireServer(actionLabel = "edit") {
+  if (state.server?.connected) return true;
+  toast(`Demo mode is read-only — sign in to a FORGE server to ${actionLabel}.`, "warn");
+  return false;
 }
 
 // Debounce timer for the toolbar's filter input. Module-level so the
@@ -177,6 +268,7 @@ function toolbar(filter) {
     el("button", { class: "btn sm", onClick: () => createEnterprisePrompt() }, ["+ Enterprise"]),
     el("button", { class: "btn sm", onClick: () => createLocationPrompt() }, ["+ Location"]),
     el("button", { class: "btn sm primary", onClick: () => createAssetPrompt() }, ["+ Asset"]),
+    el("button", { class: "btn sm ghost", onClick: () => navigate("/profiles") }, ["Profiles →"]),
   ]));
 }
 
@@ -476,6 +568,7 @@ function summaryPanel(selected, tree, unassigned) {
 // ----- mutations -------------------------------------------------------
 
 async function createEnterprisePrompt() {
+  if (!requireServer("create enterprises")) return;
   const name = await prompt({ title: "New enterprise", message: "Name your enterprise (top-level grouping for assets).", confirmLabel: "Create" });
   if (!name) return;
   try {
@@ -488,6 +581,7 @@ async function createEnterprisePrompt() {
 }
 
 async function createLocationPrompt() {
+  if (!requireServer("create locations")) return;
   // Prompt for an enterprise picker + optional parent location +
   // name + kind. Users can build the full ISA-95 chain
   // (Enterprise → Site → Area → Line → Cell) by repeatedly picking
@@ -581,6 +675,7 @@ async function createLocationPrompt() {
 }
 
 async function createAssetPrompt() {
+  if (!requireServer("create assets")) return;
   const tree = await api("/api/asset-tree").catch(() => ({ tree: [] }));
   const selected = sessionStorage.getItem(SS_SELECTED_NODE) || "";
   let chosenEnterpriseId = selected.startsWith("ent:") ? selected.slice(4) : (tree.tree[0]?.id || null);
@@ -659,6 +754,7 @@ async function createAssetPrompt() {
 }
 
 async function renameEnterprisePrompt(e) {
+  if (!requireServer("rename enterprises")) return;
   const newName = await prompt({ title: `Rename ${e.name}`, defaultValue: e.name, confirmLabel: "Rename" });
   if (!newName || newName === e.name) return;
   try {
@@ -684,6 +780,7 @@ async function renameEnterprisePrompt(e) {
 }
 
 async function renameLocationPrompt(l) {
+  if (!requireServer("rename locations")) return;
   const newName = await prompt({ title: `Rename ${l.name}`, defaultValue: l.name, confirmLabel: "Rename" });
   if (!newName || newName === l.name) return;
   try {
@@ -709,6 +806,7 @@ async function renameLocationPrompt(l) {
 }
 
 async function deleteEnterprise(e) {
+  if (!requireServer("delete enterprises")) return;
   const ok = await confirm({ title: "Delete enterprise", message: `Delete ${e.name}? This is refused if any assets reference it.`, confirmLabel: "Delete", variant: "danger" });
   if (!ok) return;
   try {
@@ -726,6 +824,7 @@ async function deleteEnterprise(e) {
 }
 
 async function deleteLocation(l) {
+  if (!requireServer("delete locations")) return;
   const ok = await confirm({ title: "Delete location", message: `Delete ${l.name}? This is refused if any assets reference it.`, confirmLabel: "Delete", variant: "danger" });
   if (!ok) return;
   try {
@@ -743,6 +842,7 @@ async function deleteLocation(l) {
 }
 
 async function uploadVisual(asset) {
+  if (!requireServer("upload images")) return;
   // Mirror docViewer.js's hidden file-input pattern.
   const fi = el("input", { type: "file", accept: "image/png,image/jpeg,image/bmp", style: { display: "none" } });
   document.body.append(fi);

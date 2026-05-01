@@ -346,6 +346,101 @@ export function buildSeed() {
     { id: "N-4", ts: iso(-5),  kind: "integration", text: "Webhook Vendor A failed 3x", route: "/integrations" },
   ];
 
+  // -------------------------------------------------------------------
+  // Asset Profiles (demo mode).
+  //
+  // Spec ref: docs/INDUSTRIAL_EDGE_PLATFORM_SPEC.md §4.3 — an "asset
+  // class" defines the expected schema (data points + units) for a
+  // family of assets (Centrifugal Pump, Heat Exchanger, ...). FORGE's
+  // `asset_profile` is the implementation of that concept, plus a
+  // source-kind binding (mqtt/opcua/sql) and a path template that
+  // resolves to the per-asset address space.
+  //
+  // The shape mirrors the server tables exactly so the Profiles admin
+  // and dashboard demo paths can render the same nodes the API would
+  // return when connected to a server.
+  // -------------------------------------------------------------------
+  const assetProfiles = [
+    {
+      id: "PROF-PUMP-DEMO",
+      orgId: "ORG-1",
+      workspaceId: null, // library-scoped
+      name: "Centrifugal Pump",
+      description: "Standard rotating-equipment profile: temperature, pressure, vibration, motor current.",
+      sourceKind: "mqtt",
+      latestVersionId: "PVER-PUMP-V2",
+      status: "active",
+      ownerId: "U-4",
+      createdAt: iso(-60 * 24 * 30),
+      updatedAt: iso(-60 * 24 * 5),
+    },
+    {
+      id: "PROF-HEX-DEMO",
+      orgId: "ORG-1",
+      workspaceId: "WS-1",
+      name: "Shell-and-Tube Heat Exchanger",
+      description: "Inlet/outlet temperatures, tube-side and shell-side pressure drop.",
+      sourceKind: "opcua",
+      latestVersionId: "PVER-HEX-V1",
+      status: "active",
+      ownerId: "U-1",
+      createdAt: iso(-60 * 24 * 14),
+      updatedAt: iso(-60 * 24 * 14),
+    },
+    {
+      id: "PROF-BOILER-DEMO",
+      orgId: "ORG-1",
+      workspaceId: "WS-1",
+      name: "Industrial Boiler",
+      description: "Steam pressure, feedwater flow, stack temperature, fuel-gas pressure (MSSQL historian).",
+      sourceKind: "sql",
+      latestVersionId: "PVER-BOILER-V1",
+      status: "draft",
+      ownerId: "U-3",
+      createdAt: iso(-60 * 24 * 7),
+      updatedAt: iso(-60 * 24 * 7),
+    },
+  ];
+
+  const assetProfileVersions = [
+    { id: "PVER-PUMP-V1",   profileId: "PROF-PUMP-DEMO", version: 1, sourceTemplate: { topic_template: "forge/{enterprise}/{site}/{asset}/{point}", qos: 1 }, status: "active",  notes: "initial",            createdBy: "U-4", createdAt: iso(-60 * 24 * 30) },
+    { id: "PVER-PUMP-V2",   profileId: "PROF-PUMP-DEMO", version: 2, sourceTemplate: { topic_template: "forge/{enterprise}/{site}/{asset}/{point}", qos: 1 }, status: "active",  notes: "added vibration",    createdBy: "U-4", createdAt: iso(-60 * 24 * 5)  },
+    { id: "PVER-HEX-V1",    profileId: "PROF-HEX-DEMO",  version: 1, sourceTemplate: { node_template: "ns=2;s={enterprise}.{site}.{asset}.{point}" },         status: "active",  notes: "initial",            createdBy: "U-1", createdAt: iso(-60 * 24 * 14) },
+    { id: "PVER-BOILER-V1", profileId: "PROF-BOILER-DEMO", version: 1, sourceTemplate: { table: "boiler_samples", ts_column: "ts", value_column: "value", point_column: "tag", asset_filter_column: "asset_path", poll_interval_ms: 5000 }, status: "draft", notes: "initial", createdBy: "U-3", createdAt: iso(-60 * 24 * 7) },
+  ];
+
+  const assetProfilePoints = [
+    // Pump v1
+    { id: "PPT-PUMP-V1-1", profileVersionId: "PVER-PUMP-V1", name: "temperature",   unit: "C",   dataType: "number", sourcePathTemplate: "{enterprise}/{site}/{asset}/temperature",   order: 0 },
+    { id: "PPT-PUMP-V1-2", profileVersionId: "PVER-PUMP-V1", name: "pressure",      unit: "bar", dataType: "number", sourcePathTemplate: "{enterprise}/{site}/{asset}/pressure",      order: 1 },
+    { id: "PPT-PUMP-V1-3", profileVersionId: "PVER-PUMP-V1", name: "motor_current", unit: "A",   dataType: "number", sourcePathTemplate: "{enterprise}/{site}/{asset}/motor_current", order: 2 },
+    // Pump v2 — adds vibration
+    { id: "PPT-PUMP-V2-1", profileVersionId: "PVER-PUMP-V2", name: "temperature",   unit: "C",   dataType: "number", sourcePathTemplate: "{enterprise}/{site}/{asset}/temperature",   order: 0 },
+    { id: "PPT-PUMP-V2-2", profileVersionId: "PVER-PUMP-V2", name: "pressure",      unit: "bar", dataType: "number", sourcePathTemplate: "{enterprise}/{site}/{asset}/pressure",      order: 1 },
+    { id: "PPT-PUMP-V2-3", profileVersionId: "PVER-PUMP-V2", name: "motor_current", unit: "A",   dataType: "number", sourcePathTemplate: "{enterprise}/{site}/{asset}/motor_current", order: 2 },
+    { id: "PPT-PUMP-V2-4", profileVersionId: "PVER-PUMP-V2", name: "vibration",     unit: "mm/s",dataType: "number", sourcePathTemplate: "{enterprise}/{site}/{asset}/vibration",     order: 3 },
+    // Heat Exchanger v1
+    { id: "PPT-HEX-V1-1",  profileVersionId: "PVER-HEX-V1", name: "inlet_temp",     unit: "C",   dataType: "number", sourcePathTemplate: "{enterprise}.{site}.{asset}.inlet_temp",  order: 0 },
+    { id: "PPT-HEX-V1-2",  profileVersionId: "PVER-HEX-V1", name: "outlet_temp",    unit: "C",   dataType: "number", sourcePathTemplate: "{enterprise}.{site}.{asset}.outlet_temp", order: 1 },
+    { id: "PPT-HEX-V1-3",  profileVersionId: "PVER-HEX-V1", name: "shell_dp",       unit: "kPa", dataType: "number", sourcePathTemplate: "{enterprise}.{site}.{asset}.shell_dp",    order: 2 },
+    { id: "PPT-HEX-V1-4",  profileVersionId: "PVER-HEX-V1", name: "tube_dp",        unit: "kPa", dataType: "number", sourcePathTemplate: "{enterprise}.{site}.{asset}.tube_dp",     order: 3 },
+    // Boiler v1
+    { id: "PPT-BOILER-V1-1", profileVersionId: "PVER-BOILER-V1", name: "steam_pressure",  unit: "bar",  dataType: "number", sourcePathTemplate: "{asset}.steam_pressure",    order: 0 },
+    { id: "PPT-BOILER-V1-2", profileVersionId: "PVER-BOILER-V1", name: "feedwater_flow",  unit: "m3/h", dataType: "number", sourcePathTemplate: "{asset}.feedwater_flow",    order: 1 },
+    { id: "PPT-BOILER-V1-3", profileVersionId: "PVER-BOILER-V1", name: "stack_temp",      unit: "C",    dataType: "number", sourcePathTemplate: "{asset}.stack_temp",        order: 2 },
+    { id: "PPT-BOILER-V1-4", profileVersionId: "PVER-BOILER-V1", name: "fuel_gas_press",  unit: "bar",  dataType: "number", sourcePathTemplate: "{asset}.fuel_gas_press",    order: 3 },
+  ];
+
+  // A pair of pre-bound assets so the dashboard immediately shows
+  // "profile" badges + the rename-re-resolve flow has affected
+  // bindings to demo against. The bindings reference existing assets
+  // from the assets[] array above (AS-1, AS-2 are pumps).
+  const assetPointBindings = [
+    { id: "APB-DEMO-1", orgId: "ORG-1", assetId: "AS-1", profileVersionId: "PVER-PUMP-V2", profilePointId: "PPT-PUMP-V2-1", pointId: null, systemId: null, sourceKind: "mqtt", sourcePath: "Atlas Industrial Systems/North Plant/Feeder A1/temperature",   templateVars: { enterprise: "Atlas Industrial Systems", site: "North Plant", asset: "Feeder A1" }, enabled: 1, createdAt: iso(-60 * 24 * 5), updatedAt: iso(-60 * 24 * 5) },
+    { id: "APB-DEMO-2", orgId: "ORG-1", assetId: "AS-1", profileVersionId: "PVER-PUMP-V2", profilePointId: "PPT-PUMP-V2-2", pointId: null, systemId: null, sourceKind: "mqtt", sourcePath: "Atlas Industrial Systems/North Plant/Feeder A1/pressure",      templateVars: { enterprise: "Atlas Industrial Systems", site: "North Plant", asset: "Feeder A1" }, enabled: 1, createdAt: iso(-60 * 24 * 5), updatedAt: iso(-60 * 24 * 5) },
+    { id: "APB-DEMO-3", orgId: "ORG-1", assetId: "AS-1", profileVersionId: "PVER-PUMP-V2", profilePointId: "PPT-PUMP-V2-4", pointId: null, systemId: null, sourceKind: "mqtt", sourcePath: "Atlas Industrial Systems/North Plant/Feeder A1/vibration",     templateVars: { enterprise: "Atlas Industrial Systems", site: "North Plant", asset: "Feeder A1" }, enabled: 1, createdAt: iso(-60 * 24 * 5), updatedAt: iso(-60 * 24 * 5) },
+  ];
+
   return {
     organization,
     workspace,
@@ -381,5 +476,9 @@ export function buildSeed() {
     aiAgents,
     auditEvents,
     notifications,
+    assetProfiles,
+    assetProfileVersions,
+    assetProfilePoints,
+    assetPointBindings,
   };
 }
