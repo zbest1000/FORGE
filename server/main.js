@@ -18,7 +18,7 @@ import { userById } from "./auth.js";
 import { resolveToken } from "./tokens.js";
 import { authenticateAccess } from "./sessions.js";
 import { registerIdempotency } from "./idempotency.js";
-import { attachSSE } from "./sse.js";
+import { attachSSE, registerSubscribeRoute } from "./sse.js";
 import { register_ as registerMetrics } from "./metrics.js";
 
 import mercurius from "mercurius";
@@ -397,6 +397,7 @@ await app.register(assetHierarchyRoutes);
 await app.register(assetProfileRoutes);
 await app.register(assetBindingRoutes);
 attachSSE(app);
+registerSubscribeRoute(app);
 registerMetrics(app);
 
 // §19 success-metrics endpoints (live + historical).
