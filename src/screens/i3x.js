@@ -172,7 +172,13 @@ function endpointList(activeId) {
   const wrap = el("div", { class: "stack" });
   for (const [tag, list] of Object.entries(groups)) {
     wrap.append(el("div", { class: "tree-group-title" }, [tag]));
-    list.forEach(ep => wrap.append(el("div", {
+    // UX-E: endpoint rows are the click target with no inner
+    // interactive children, so they render as real <button>s.
+    // Keyboard activation is intrinsic; the
+    // `installRowKeyboardHandlers()` observer no longer needs to
+    // retro-fit role + tabindex.
+    list.forEach(ep => wrap.append(el("button", {
+      type: "button",
       class: `tree-item ${ep.id === activeId ? "active" : ""}`,
       onClick: () => { window.location.hash = `#/i3x?ep=${ep.id}`; },
     }, [

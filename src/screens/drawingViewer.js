@@ -750,7 +750,13 @@ function ifcPanel(dr) {
 }
 function renderIfcTree(node, selected, onSelect, depth = 0) {
   const container = el("div", { style: { paddingLeft: depth * 12 + "px" } });
-  container.append(el("div", {
+  // UX-E: row is the click target with no inner interactive children,
+  // so it renders as a real <button>. Keyboard activation (Enter /
+  // Space) is intrinsic — we no longer rely on the
+  // `installRowKeyboardHandlers()` MutationObserver to retro-fit
+  // role + tabindex onto a <div>.
+  container.append(el("button", {
+    type: "button",
     class: `tree-item ${node.id === selected ? "active" : ""}`,
     onClick: () => onSelect(node.id),
   }, [
