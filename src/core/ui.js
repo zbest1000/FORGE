@@ -620,11 +620,11 @@ export function tabs({ tabs: list = [], sessionKey = "", ariaLabel = "", default
  * Loading state. Renders a centred spinner + label.
  *
  * @param {Object} [opts]
- * @param {string} [opts.message="Loading…"] — visible label.
- * @param {"sm"|"md"|"lg"} [opts.size="md"] — spinner size.
- * @param {boolean} [opts.compact=false] — true → inline pill (no
- *   centered min-height padding), suitable for embedding inside
- *   table cells / card headers.
+ * @param {string} [opts.message] visible label (default "Loading...").
+ * @param {"sm"|"md"|"lg"} [opts.size] spinner size (default "md").
+ * @param {boolean} [opts.compact] true for inline pill (no centered
+ *   min-height padding), suitable for embedding inside table cells
+ *   or card headers (default false).
  */
 export function loadingState({ message = "Loading…", size = "md", compact = false } = {}) {
   return el("div", {
@@ -639,18 +639,20 @@ export function loadingState({ message = "Loading…", size = "md", compact = fa
 }
 
 /**
- * Empty state — "you have no data here yet". Optional inline
- * call-to-action button.
+ * Empty state. "You have no data here yet" surface with an optional
+ * inline call-to-action button.
  *
- * @param {Object} opts
- * @param {string} [opts.icon="📦"] — small glyph in the header.
- *   Decorative — `aria-hidden`. Pass `null` to omit.
- * @param {string} opts.title — short noun phrase.
- * @param {string|Node} [opts.message] — supporting copy.
+ * @param {Object} [opts]
+ * @param {string|null} [opts.icon] small glyph in the header (decorative,
+ *   aria-hidden). Default "package" emoji. Pass `null` to omit.
+ * @param {string} [opts.title] short noun phrase. Required in practice
+ *   to render anything meaningful, but typed optional so a programmatic
+ *   `emptyState()` call doesn't blow up the type-checker.
+ * @param {string|Node} [opts.message] supporting copy.
  * @param {{ label: string, onClick: Function, variant?: string }} [opts.action]
- *   — primary CTA. Variant defaults to `"primary"`.
+ *   primary CTA. Variant defaults to "primary".
  */
-export function emptyState({ icon = "📦", title, message = "", action = null } = {}) {
+export function emptyState({ icon = "📦", title = "", message = "", action = null } = {}) {
   return el("div", { class: "state-empty", role: "status" }, [
     icon ? el("div", { class: "state-icon", "aria-hidden": "true" }, [icon]) : null,
     title ? el("div", { class: "state-title" }, [title]) : null,
@@ -666,18 +668,20 @@ export function emptyState({ icon = "📦", title, message = "", action = null }
 }
 
 /**
- * Error state — operation failed, recoverable or not. Uses
+ * Error state. Operation failed, recoverable or not. Uses
  * `role="alert"` so AT announces immediately on insertion. Pairs
  * a clear title + the technical detail (which can be a string or a
  * pre-built Node, e.g. a stack trace) + a Retry button slot.
  *
- * @param {Object} opts
- * @param {string} opts.title
- * @param {string|Node} [opts.message] — technical detail / error message.
+ * @param {Object} [opts]
+ * @param {string} [opts.title] short headline. Typed optional so a
+ *   programmatic `errorState()` call passes the type-checker, but
+ *   callers should always supply one.
+ * @param {string|Node} [opts.message] technical detail / error message.
  * @param {{ label: string, onClick: Function, variant?: string }} [opts.action]
- *   — typically `{ label: "Retry", onClick: refetch }`.
+ *   typically `{ label: "Retry", onClick: refetch }`.
  */
-export function errorState({ title, message = "", action = null } = {}) {
+export function errorState({ title = "", message = "", action = null } = {}) {
   return el("div", { class: "state-error", role: "alert" }, [
     el("div", { class: "state-icon state-icon-danger", "aria-hidden": "true" }, ["⚠"]),
     title ? el("div", { class: "state-title" }, [title]) : null,
@@ -693,16 +697,16 @@ export function errorState({ title, message = "", action = null } = {}) {
 }
 
 /**
- * Skeleton placeholder — shimmer-pulsed bars / cards while real data
+ * Skeleton placeholder. Shimmer-pulsed bars / cards while real data
  * loads. Use when the eventual layout is known + bounded enough that
  * showing the shape reduces perceived latency more than a spinner.
  *
  * @param {Object} [opts]
- * @param {"lines"|"table"|"card"} [opts.kind="lines"] — visual shape.
- *   * `lines`  N stacked bars of varying widths (default 3).
- *   * `table`  one bar per `rows`, full-width.
- *   * `card`   one rounded rectangle the size of a card.
- * @param {number} [opts.rows=3] — number of placeholder rows.
+ * @param {"lines"|"table"|"card"} [opts.kind] visual shape (default
+ *   "lines"). `lines` is N stacked bars of varying widths; `table`
+ *   is one bar per row at full width; `card` is one rounded
+ *   rectangle the size of a card.
+ * @param {number} [opts.rows] number of placeholder rows (default 3).
  */
 export function skeleton({ kind = "lines", rows = 3 } = {}) {
   if (kind === "card") {
