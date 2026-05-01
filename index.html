@@ -42,7 +42,43 @@
     <!-- Vendor packages and styles are bundled by Vite for production.
       The import map remains as a source-serving fallback only. -->
   </head>
-  <body class="theme-dark">
+  <!--
+    Pre-paint theme resolution (UX-A). The body class drives FORGE's
+    light/dark theme tokens; running this before first paint avoids the
+    "flash of wrong theme" returning users would otherwise see when
+    their persisted preference is light. Logic kept in lockstep with
+    `src/core/theme.js::applyInitialTheme()` — the JS module is the
+    canonical implementation and the source of unit-test coverage; this
+    inline copy is intentionally minimal so it parses + executes before
+    any deferred module fetches resolve.
+
+    The script writes the class onto `document.documentElement` (so it
+    can paint the bg colour during the brief moment before <body>
+    parses) AND a `data-initial-theme` attribute the boot path reads
+    when constructing the body class. `app.js::applyTheme()` is still
+    the canonical applier post-boot.
+  -->
+  <script>
+  (function () {
+    var theme = "dark";
+    try {
+      var raw = localStorage.getItem("forge.state.v1");
+      if (raw) {
+        var p = JSON.parse(raw);
+        var t = p && p.ui && p.ui.theme;
+        if (t === "dark" || t === "light") theme = t;
+        else if (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches) theme = "light";
+      } else if (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches) {
+        theme = "light";
+      }
+    } catch (_e) { /* swallow — fall back to dark */ }
+    var de = document.documentElement;
+    de.classList.add("theme-" + theme);
+    de.dataset.initialTheme = theme;
+    de.style.colorScheme = theme;
+  })();
+  </script>
+  <body>
     <a href="#screenContainer" class="skip-link">Skip to main content</a>
     <div id="app" class="app-shell">
       <aside class="far-left-rail" id="farLeftRail" aria-label="Primary navigation"></aside>

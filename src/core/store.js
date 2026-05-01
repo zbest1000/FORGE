@@ -4,11 +4,27 @@ const LS_KEY = "forge.state.v1";
 
 const listeners = new Set();
 
+// UX-A: default theme respects the pre-paint resolution. The inline
+// script in `index.html` writes `data-initial-theme` onto <html>
+// after consulting localStorage + `prefers-color-scheme`, so we read
+// it here to seed the in-memory store. If the attribute is missing
+// (headless tests, screen-readers, environments where the inline
+// script didn't run) we fall back to `"dark"`. The hydrate path
+// below still overrides this with whatever was saved last —
+// `data-initial-theme` is purely for the very first session.
+function _defaultTheme() {
+  try {
+    const t = globalThis.document?.documentElement?.dataset?.initialTheme;
+    if (t === "dark" || t === "light") return t;
+  } catch { /* not a browser context */ }
+  return "dark";
+}
+
 export const state = {
   route: "",
   ui: {
     role: "Engineer/Contributor",
-    theme: "dark",
+    theme: _defaultTheme(),
     // Operations notifications now surface through the header bell button.
     // Older sessions used a permanent bottom dock — keeping the flag for
     // backwards-compat with the View ▾ menu, but defaulting it to off.
