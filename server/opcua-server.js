@@ -34,13 +34,22 @@
 //     OPC UA assigned port).
 //   - Start gate: only boots when FORGE_OPCUA_SERVER_ENABLED=1.
 //
-// Out of scope for these phases (queued):
-//   - Method calls (writeback) — high-risk; gated behind a
-//     dedicated `device.write` capability in Phase 7c.
-//   - Live address-space refresh on hierarchy / asset / binding
-//     changes — Phase 7d.
+// Phase 7d — Live address-space refresh.
+//   - `refreshOpcuaServerAddressSpace({ enterpriseId, locationId,
+//     assetId, bindingId })` rebuilds the affected enterprise
+//     subtree without taking the server down. Called by every
+//     route that writes to enterprises / locations / assets /
+//     bindings (asset-hierarchy, core, asset-bindings).
+//   - Granularity: any scope resolves to its owning enterprise; we
+//     tear down + rebuild that one UAObject. Scope-less calls do
+//     a full `Enterprises` folder rebuild (slow but correct).
+//
+// Out of scope (queued):
 //   - User-name/password / X.509 user authentication — anonymous
 //     only at v0; SSO + token mapping later.
+//   - Method-node WriteValue surface on the server itself (the
+//     canonical writeback path is the REST route gated by the
+//     `device.write` capability per Phase 7c).
 
 import { db, jsonOrDefault } from "./db.js";
 
@@ -48,7 +57,14 @@ let _server = null;
 let _logger = null;
 let _node_opcua = null;
 let _addressSpace = null;
-let _refreshHooks = new Map(); // bindingId → fn(value, ts, quality)
+let _ns = null;                  // FORGE namespace handle for surgical add/delete
+let _enterpriseRoot = null;      // the "Enterprises" parent folder UAObject
+let _refreshHooks = new Map();   // bindingId → fn(value, ts, quality)
+// Phase 7d: per-enterprise UAObject map. Lets
+// refreshOpcuaServerAddressSpace() tear down + rebuild a single
+// enterprise's subtree (granular path) instead of resetting the
+// whole `Enterprises` folder (full path).
+let _entNodes = new Map();       // enterpriseId → UAObject
 
 function strictMode(env = process.env) {
   if (/^(1|true|yes|on)$/i.test(String(env.FORGE_STRICT_CONFIG || ""))) return true;
@@ -172,32 +188,69 @@ export function refreshOpcuaServerForBinding({ binding, value, ts, quality }) {
 // ----- Address space construction -----------------------------------------
 
 function buildAddressSpace(server) {
-  const m = _node_opcua;
   const addressSpace = server.engine.addressSpace;
   _addressSpace = addressSpace;
   // Custom namespace under `urn:forge:asset-tree`. Every browse
-  // path under it derives from the live DB; calling
-  // rebuildAddressSpace() (Phase 6) will refresh after big CRUD
-  // events. For Phase 5 we build once at boot.
-  const ns = addressSpace.registerNamespace("urn:forge:asset-tree");
+  // path under it derives from the live DB. Phase 7d's
+  // refreshOpcuaServerAddressSpace() reuses this namespace +
+  // tracked enterpriseRoot to rebuild subtrees in place after
+  // hierarchy / asset / binding writes.
+  _ns = addressSpace.registerNamespace("urn:forge:asset-tree");
 
   const rootFolder = addressSpace.findNode("ObjectsFolder")
     || addressSpace.rootFolder?.objects;
 
-  const enterpriseRoot = ns.addObject({
+  _enterpriseRoot = _ns.addObject({
     organizedBy: rootFolder,
     browseName: "Enterprises",
     description: "FORGE-managed enterprise → location → asset hierarchy",
   });
 
+  // Initial full build delegates to the per-enterprise builder so
+  // Phase 7d's incremental rebuild reuses the same code path.
   const enterprises = db.prepare("SELECT * FROM enterprises ORDER BY org_id, sort_order, name").all();
+  const idx = buildLookupIndexes();
+  for (const ent of enterprises) {
+    addEnterpriseSubtree(ent, idx);
+  }
+}
+
+/**
+ * Build the per-enterprise UAObject (+ its full location/asset/
+ * binding subtree) in the FORGE namespace. Tracks the resulting
+ * UAObject in `_entNodes` so refreshOpcuaServerAddressSpace() can
+ * find it on a subsequent write.
+ */
+function addEnterpriseSubtree(ent, idx) {
+  const entObj = _ns.addObject({
+    organizedBy: _enterpriseRoot,
+    browseName: safeBrowseName(ent.name),
+    description: ent.description || ent.name,
+  });
+  _entNodes.set(ent.id, entObj);
+  const tops = (idx.locsByEnterprise.get(ent.id) || []).filter(l => !l.parent_location_id);
+  for (const top of tops) addLocation(_ns, entObj, top, idx.childrenByLoc, idx.assetsByLoc, idx.bindingsByAsset);
+  const ungrouped = idx.assetsByEnt.get(ent.id) || [];
+  for (const a of ungrouped) addAsset(_ns, entObj, a, idx.bindingsByAsset.get(a.id) || []);
+  return entObj;
+}
+
+function safeBrowseName(s) {
+  return String(s || "node").replace(/[^A-Za-z0-9_\-]/g, "_") || "node";
+}
+
+/**
+ * Read the live DB and produce the index Maps every subtree
+ * builder needs. Always reads fresh — Phase 7d's refresh path
+ * specifically wants to see post-write state, so caching here
+ * would defeat the point.
+ */
+function buildLookupIndexes() {
   const locations = db.prepare("SELECT * FROM locations ORDER BY enterprise_id, sort_order, name").all();
   const assets = db.prepare("SELECT * FROM assets").all();
   const bindings = db.prepare(
     "SELECT b.*, hp.name AS point_name, hp.unit AS point_unit FROM asset_point_bindings b LEFT JOIN historian_points hp ON hp.id = b.point_id WHERE b.enabled = 1"
   ).all();
-
-  // Index lookups for fast traversal.
   const locsByEnterprise = new Map();
   for (const l of locations) {
     if (!locsByEnterprise.has(l.enterprise_id)) locsByEnterprise.set(l.enterprise_id, []);
@@ -225,26 +278,7 @@ function buildAddressSpace(server) {
     if (!bindingsByAsset.has(b.asset_id)) bindingsByAsset.set(b.asset_id, []);
     bindingsByAsset.get(b.asset_id).push(b);
   }
-
-  function safeBrowseName(s) {
-    return String(s || "node").replace(/[^A-Za-z0-9_\-]/g, "_") || "node";
-  }
-
-  for (const ent of enterprises) {
-    const entObj = ns.addObject({
-      organizedBy: enterpriseRoot,
-      browseName: safeBrowseName(ent.name),
-      description: ent.description || ent.name,
-    });
-    // Top-level locations under this enterprise (parent_location_id IS NULL).
-    const tops = (locsByEnterprise.get(ent.id) || []).filter(l => !l.parent_location_id);
-    for (const top of tops) {
-      addLocation(ns, entObj, top, childrenByLoc, assetsByLoc, bindingsByAsset);
-    }
-    // Ungrouped assets directly under the enterprise.
-    const ungrouped = assetsByEnt.get(ent.id) || [];
-    for (const a of ungrouped) addAsset(ns, entObj, a, bindingsByAsset.get(a.id) || []);
-  }
+  return { locsByEnterprise, childrenByLoc, assetsByLoc, assetsByEnt, bindingsByAsset };
 }
 
 function addLocation(ns, parent, loc, childrenByLoc, assetsByLoc, bindingsByAsset) {
@@ -370,5 +404,102 @@ function makeForgeHistorian(pointId) {
   };
 }
 
+/**
+ * Phase 7d — public address-space refresh entry point.
+ *
+ * Routes that write to enterprises / locations / assets /
+ * bindings call this immediately after the DB write succeeds so
+ * external OPC UA clients see the new shape on their next Browse.
+ *
+ * Granularity: any scope resolves to its owning enterprise; we
+ * tear down + rebuild that one UAObject. Callers who don't pin
+ * the scope (e.g. a bulk import) get a full Enterprises folder
+ * rebuild.
+ *
+ * Always safe to call:
+ *   - Noop when the OPC UA server is disabled (default install).
+ *   - Catches every error so a hierarchy / asset / binding write
+ *     can never get a 500 because the address-space layer
+ *     hiccupped.
+ *
+ * Naming intentionally avoids "CRUD" — these are *writes* in the
+ * sense of API mutations; the function operates on the OPC UA
+ * server's address-space state, not a generic CRUD helper.
+ */
+export function refreshOpcuaServerAddressSpace(scope = {}) {
+  if (!_server || !_addressSpace || !_ns || !_enterpriseRoot) return;
+  try {
+    const entId = resolveEnterpriseId(scope);
+    if (entId) refreshEnterpriseSubtree(entId);
+    else fullRefresh();
+  } catch (err) {
+    _logger?.warn?.({ err: String(err?.message || err), scope }, "[opcua-server] refresh failed");
+  }
+}
+
+function resolveEnterpriseId({ enterpriseId, locationId, assetId, bindingId } = {}) {
+  if (enterpriseId) return enterpriseId;
+  if (locationId) {
+    const r = db.prepare("SELECT enterprise_id FROM locations WHERE id = ?").get(locationId);
+    return r?.enterprise_id || null;
+  }
+  if (assetId) {
+    const r = db.prepare("SELECT enterprise_id FROM assets WHERE id = ?").get(assetId);
+    return r?.enterprise_id || null;
+  }
+  if (bindingId) {
+    const r = db.prepare(`SELECT a.enterprise_id FROM asset_point_bindings b
+                           JOIN assets a ON a.id = b.asset_id WHERE b.id = ?`).get(bindingId);
+    return r?.enterprise_id || null;
+  }
+  return null;
+}
+
+function refreshEnterpriseSubtree(enterpriseId) {
+  // Tear down the existing UAObject (and everything beneath it) if
+  // we have one tracked for this enterprise.
+  const existing = _entNodes.get(enterpriseId);
+  if (existing && _addressSpace.deleteNode) {
+    try { _addressSpace.deleteNode(existing); } catch { /* swallow */ }
+    _entNodes.delete(enterpriseId);
+    pruneTrackedBindingsForEnterprise(enterpriseId);
+  }
+  // Re-seed if the enterprise still exists in the DB. (DELETE
+  // routes call us with the just-removed enterpriseId; the row
+  // is gone so we just stop here, leaving the tracked
+  // UAObject — already removed above — out of the address space.)
+  const ent = db.prepare("SELECT * FROM enterprises WHERE id = ?").get(enterpriseId);
+  if (!ent) return;
+  const idx = buildLookupIndexes();
+  addEnterpriseSubtree(ent, idx);
+}
+
+/**
+ * Slower path. Tears down every tracked enterprise UAObject and
+ * rebuilds from DB. Used when the caller doesn't know which
+ * enterprise was affected (bulk imports, schema migrations).
+ */
+function fullRefresh() {
+  for (const node of _entNodes.values()) {
+    try { _addressSpace.deleteNode(node); } catch { /* swallow */ }
+  }
+  _entNodes.clear();
+  _refreshHooks = new Map();
+  const enterprises = db.prepare("SELECT * FROM enterprises ORDER BY org_id, sort_order, name").all();
+  const idx = buildLookupIndexes();
+  for (const ent of enterprises) addEnterpriseSubtree(ent, idx);
+}
+
+function pruneTrackedBindingsForEnterprise(enterpriseId) {
+  const ids = db.prepare(
+    "SELECT b.id FROM asset_point_bindings b JOIN assets a ON a.id = b.asset_id WHERE a.enterprise_id = ?"
+  ).all(enterpriseId).map(r => r.id);
+  for (const id of ids) _refreshHooks.delete(id);
+}
+
 // Test-harness introspection.
-export const _internals = { state: () => ({ server: _server, hooks: _refreshHooks }), resolveServerSecurity };
+export const _internals = {
+  state: () => ({ server: _server, hooks: _refreshHooks, entNodes: _entNodes }),
+  resolveServerSecurity,
+  resolveEnterpriseId,
+};
