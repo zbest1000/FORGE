@@ -112,10 +112,13 @@ test("ROW_BUTTON_SELECTOR retains coverage for shapes that genuinely cannot be a
     ".uns-tree-item",
     ".dock-item",
   ];
+  // Plain `String.includes` rather than a built RegExp — the
+  // selectors are literal strings already and we don't want CodeQL
+  // (rightly) flagging the partial regex-meta-char escaping in a
+  // dynamically constructed `new RegExp(...)`.
   for (const sel of required) {
-    assert.match(
-      selectorBlock[1],
-      new RegExp(`"${sel.replace(/\./g, "\\.")}"`),
+    assert.ok(
+      selectorBlock[1].includes(`"${sel}"`),
       `ROW_BUTTON_SELECTOR must keep ${sel} (used by something that cannot be a <button>)`,
     );
   }
