@@ -23,9 +23,83 @@ const DRAIN_TIMEOUT_MS = Number(process.env.FORGE_SSE_DRAIN_TIMEOUT_MS || 30_000
 const KEEPALIVE_MS = Number(process.env.FORGE_SSE_KEEPALIVE_MS || 25_000);
 
 const clients = new Set();
+const clientsById = new Map();
 let _shuttingDown = false;
 
 function makeId() { return Math.random().toString(36).slice(2, 8); }
+
+/**
+ * Phase 6: per-client subscription filter.
+ *
+ * A client that has explicitly subscribed (POST
+ * /api/events/subscribe) only receives events whose `topic` /
+ * `data.assetId` / `data.pointId` is in its declared interest set.
+ * A client that has never subscribed sees every event broadcast
+ * to its tenant — preserving back-compat with the Phase 1-5 wire.
+ *
+ * The filter is in-memory only and tied to the SSE socket; there
+ * is no persistence. A client reconnecting must re-subscribe.
+ */
+function eventMatchesSubscription(client, topic, data) {
+  const sub = client.subscriptions;
+  if (!sub) return true; // un-subscribed clients see everything (back-compat)
+  if (sub.topics && sub.topics.size && !sub.topics.has(topic)) {
+    // The per-point fan-out topic name is `historian:point:<id>`;
+    // we let `pointIds` stand in for that without forcing the
+    // client to enumerate the per-point topic strings.
+    if (!(sub.pointIds && sub.pointIds.size && topic.startsWith("historian:point:") && sub.pointIds.has(topic.slice("historian:point:".length)))) {
+      return false;
+    }
+  }
+  if (sub.assetIds && sub.assetIds.size) {
+    const ai = data && data.assetId;
+    if (!ai || !sub.assetIds.has(ai)) {
+      // If the topic is per-point, fall through to pointIds.
+      if (!(sub.pointIds && sub.pointIds.size && data && data.pointId && sub.pointIds.has(data.pointId))) {
+        return false;
+      }
+    }
+  }
+  if (sub.pointIds && sub.pointIds.size) {
+    const pi = data && data.pointId;
+    const fromPerPoint = topic.startsWith("historian:point:") && sub.pointIds.has(topic.slice("historian:point:".length));
+    if (!fromPerPoint && (!pi || !sub.pointIds.has(pi))) return false;
+  }
+  return true;
+}
+
+/**
+ * Update a client's subscription set. Called from the
+ * `/api/events/subscribe` route. Pass `null` to clear and revert
+ * to the all-events default.
+ */
+export function setClientSubscription(clientId, { assetIds, pointIds, topics } = {}) {
+  const client = clientsById.get(clientId);
+  if (!client) return false;
+  if (assetIds == null && pointIds == null && topics == null) {
+    client.subscriptions = null;
+    return true;
+  }
+  client.subscriptions = {
+    assetIds: Array.isArray(assetIds) ? new Set(assetIds.map(String)) : null,
+    pointIds: Array.isArray(pointIds) ? new Set(pointIds.map(String)) : null,
+    topics:   Array.isArray(topics)   ? new Set(topics.map(String))   : null,
+  };
+  return true;
+}
+
+/** Test-only: list current subscriptions for diagnostics. */
+export function _peekSubscriptions() {
+  return Array.from(clients).map(c => ({
+    id: c.id,
+    orgId: c.orgId,
+    subscriptions: c.subscriptions ? {
+      assetIds: c.subscriptions.assetIds ? [...c.subscriptions.assetIds] : null,
+      pointIds: c.subscriptions.pointIds ? [...c.subscriptions.pointIds] : null,
+      topics:   c.subscriptions.topics   ? [...c.subscriptions.topics]   : null,
+    } : null,
+  }));
+}
 
 /**
  * Try to flush the client's queue to the wire. Stops on the first failed
@@ -48,6 +122,7 @@ function flush(client) {
 function close(client, reason) {
   if (!clients.has(client)) return;
   clients.delete(client);
+  if (client.id) clientsById.delete(client.id);
   clearInterval(client.heartbeat);
   if (client.drainTimer) clearTimeout(client.drainTimer);
   try { client.reply.raw.end(); } catch { /* socket already gone */ }
@@ -85,6 +160,10 @@ export function attachSSE(fastify) {
       // connections (req.user is null) get null orgId and only see
       // broadcasts that opt into "send to all" by passing no orgId.
       orgId: req.user?.org_id || null,
+      // Phase 6: optional per-client subscription filter (assetIds /
+      // pointIds / topics). Null = receive every event broadcast to
+      // the tenant (Phase 1-5 wire). Set via POST /api/events/subscribe.
+      subscriptions: null,
       queue: [],
       queuedBytes: 0,
       heartbeat: null,
@@ -92,6 +171,7 @@ export function attachSSE(fastify) {
       reason: null,
     };
     clients.add(client);
+    clientsById.set(client.id, client);
 
     // Hello frame goes through the normal path so it respects buffering.
     enqueue(client, `event: hello\ndata: ${JSON.stringify({ ts: new Date().toISOString(), id: client.id })}\n\n`);
@@ -143,9 +223,41 @@ export function broadcast(topic, data, orgId) {
   const line = `event: ${topic}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const c of clients) {
     if (orgId && c.orgId && c.orgId !== orgId) continue;
+    if (!eventMatchesSubscription(c, topic, data)) continue;
     enqueue(c, line);
     flush(c);
   }
+}
+
+/**
+ * Register the `/api/events/subscribe` route on the given Fastify
+ * instance. Wired from server/main.js alongside attachSSE(). The
+ * route requires a valid SSE clientId (from the `hello` event the
+ * server sends on connect) + an authenticated user — the body's
+ * subscription set is validated and applied.
+ */
+export function registerSubscribeRoute(fastify) {
+  fastify.post("/api/events/subscribe", async (req, reply) => {
+    if (!req.user) return reply.code(401).send({ error: "unauthenticated" });
+    const { clientId, assetIds, pointIds, topics } = req.body || {};
+    if (!clientId) return reply.code(400).send({ error: "clientId required" });
+    const client = clientsById.get(String(clientId));
+    if (!client) return reply.code(404).send({ error: "client not connected" });
+    // Tenant-scope: refuse to update another org's client.
+    if (client.orgId && req.user.org_id && client.orgId !== req.user.org_id) {
+      return reply.code(404).send({ error: "client not connected" });
+    }
+    setClientSubscription(clientId, { assetIds, pointIds, topics });
+    return {
+      ok: true,
+      clientId,
+      subscriptions: client.subscriptions ? {
+        assetIds: client.subscriptions.assetIds ? [...client.subscriptions.assetIds] : null,
+        pointIds: client.subscriptions.pointIds ? [...client.subscriptions.pointIds] : null,
+        topics:   client.subscriptions.topics   ? [...client.subscriptions.topics]   : null,
+      } : null,
+    };
+  });
 }
 
 /**

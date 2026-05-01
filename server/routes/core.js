@@ -395,12 +395,59 @@ export default async function coreRoutes(fastify) {
     if (!requireTenant(req, reply, row, "assets")) return;
     if (!requireAccess(req, reply, row, "edit")) return;
     if (!requireIfMatch(req, reply, row)) return;
+
+    // Phase 6: enumerate the bindings the FK CASCADE is about to take
+    // out so we can write a single auditable record of the impact.
+    // Bindings carry the `system_id` and `point_id` that the connector
+    // registry was subscribing on; once the FK CASCADE fires those
+    // subscriptions need a registry reload too.
+    const cascadeBindings = db.prepare(
+      "SELECT id, source_kind, system_id, point_id FROM asset_point_bindings WHERE asset_id = ?"
+    ).all(row.id);
+    const bindingIds = cascadeBindings.map(b => b.id);
+    const systemIds = [...new Set(cascadeBindings.map(b => b.system_id).filter(Boolean))];
+
     // ON DELETE CASCADE on asset_point_bindings.asset_id removes the
     // binding rows; samples + historian points stay (audit/retention
     // owns their lifecycle).
     db.prepare("DELETE FROM assets WHERE id = ?").run(row.id);
-    audit({ actor: req.user.id, action: "asset.delete", subject: row.id, detail: { name: row.name } });
+
+    audit({
+      actor: req.user.id,
+      action: "asset.delete",
+      subject: row.id,
+      detail: {
+        name: row.name,
+        cascade: {
+          bindings: bindingIds.length,
+          systems: systemIds.length,
+          bindingIds,
+        },
+      },
+    });
+    if (bindingIds.length > 0) {
+      // Belt-and-braces: surface the cascade as its own audit row so
+      // a compliance grep on `binding.cascade_delete` finds every
+      // sweep regardless of how the asset was removed (DELETE vs a
+      // future force-delete admin op).
+      audit({
+        actor: req.user.id,
+        action: "binding.cascade_delete",
+        subject: row.id,
+        detail: { assetId: row.id, bindingIds, systemIds },
+      });
+    }
+
     broadcast("assets", { id: row.id, kind: "delete" }, row.org_id);
+    if (bindingIds.length > 0) broadcast("bindings", { assetId: row.id, kind: "cascade_delete", bindingIds }, row.org_id);
+
+    // Tell the connector orchestrator the bindings are gone so
+    // MQTT/OPC UA subscriptions are unwound. Best-effort —
+    // dispatchSample errors must not break the API contract.
+    try {
+      const { reload } = await import("../connectors/registry.js");
+      reload({ assetId: row.id });
+    } catch { /* registry not available in tests */ }
     return { ok: true };
   });
 

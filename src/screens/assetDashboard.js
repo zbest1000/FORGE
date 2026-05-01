@@ -25,8 +25,21 @@ import { sparkline } from "../core/charts.js";
 import { renderAssetsIndex as legacyAssetsTable } from "./assetDetail.js";
 
 const SS_EXPANDED = "assets.dashboard.expanded";
+const SS_EXPANDED_INIT = "assets.dashboard.expanded.init";
 const SS_FILTER_TEXT = "assets.dashboard.filter";
 const SS_SELECTED_NODE = "assets.dashboard.selected";
+
+// Phase 6: virtualization knobs.
+//   - Cards beyond WINDOW_SIZE stay un-rendered until the user scrolls
+//     toward them (IntersectionObserver-driven append). At WINDOW_SIZE
+//     = 60 a 10k-asset dashboard renders ~60 DOM trees on first paint
+//     instead of 10000, and each subsequent batch lands as the
+//     "load more" sentinel scrolls into view.
+//   - Default-collapse: on the very first dashboard mount per session,
+//     only the first enterprise expands. Subsequent visits respect
+//     whatever the user has clicked since.
+const WINDOW_SIZE = 60;
+const WINDOW_BATCH = 60;
 
 function getExpanded() {
   try {
@@ -40,6 +53,21 @@ function toggleExpanded(key) {
   const s = getExpanded();
   if (s.has(key)) s.delete(key); else s.add(key);
   saveExpanded(s);
+}
+
+/**
+ * Default-collapse rule: on the very first dashboard mount per
+ * session, expand only the first enterprise. After that the user's
+ * own clicks own the state.
+ */
+function ensureDefaultExpansion(tree) {
+  if (sessionStorage.getItem(SS_EXPANDED_INIT) === "1") return;
+  sessionStorage.setItem(SS_EXPANDED_INIT, "1");
+  if (tree.length) {
+    const set = getExpanded();
+    set.add(`ent:${tree[0].id}`);
+    saveExpanded(set);
+  }
 }
 
 export async function renderAssetDashboard() {
@@ -178,6 +206,7 @@ function legacyAssetsTableNote() {
 }
 
 function renderShell({ tree, unassigned, loading = false }, { demo = false } = {}) {
+  ensureDefaultExpansion(tree);
   const filter = (sessionStorage.getItem(SS_FILTER_TEXT) || "").toLowerCase();
   const expanded = getExpanded();
   const selected = sessionStorage.getItem(SS_SELECTED_NODE) || ""; // "ent:..." or "loc:..."
@@ -474,7 +503,51 @@ function cardGrid(assets) {
       "No assets match.",
     ]);
   }
-  return el("div", { class: "card-grid" }, assets.map(assetCard));
+  // Windowed render: emit the first WINDOW_SIZE cards eagerly, then
+  // attach an IntersectionObserver-driven "load more" sentinel so
+  // the rest mount as the user scrolls. At 10k assets this means
+  // ~60 cards on first paint instead of 10000.
+  const grid = el("div", { class: "card-grid" });
+  let cursor = 0;
+  function appendBatch(n) {
+    const slice = assets.slice(cursor, cursor + n);
+    for (const a of slice) grid.append(assetCard(a));
+    cursor += slice.length;
+  }
+  appendBatch(WINDOW_SIZE);
+  if (cursor >= assets.length) return grid;
+
+  const sentinel = el("div", {
+    class: "tiny muted",
+    style: { gridColumn: "1 / -1", padding: "16px", textAlign: "center" },
+  }, [`${cursor} of ${assets.length} cards rendered — scroll to load more`]);
+  grid.append(sentinel);
+
+  // The IntersectionObserver is created lazily; environments without
+  // it (older browsers, Node test harnesses) fall back to "render
+  // everything" so behaviour is correct, just slower.
+  if (typeof IntersectionObserver !== "undefined") {
+    const io = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        sentinel.remove();
+        appendBatch(WINDOW_BATCH);
+        if (cursor < assets.length) {
+          sentinel.textContent = `${cursor} of ${assets.length} cards rendered — scroll to load more`;
+          grid.append(sentinel);
+        } else {
+          io.disconnect();
+        }
+      }
+    }, { rootMargin: "256px" });
+    io.observe(sentinel);
+  } else {
+    // No IO available — render the rest now.
+    appendBatch(assets.length - cursor);
+    sentinel.remove();
+  }
+
+  return grid;
 }
 
 function assetCard(a) {
