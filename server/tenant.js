@@ -46,7 +46,25 @@ export function tenantWhere(req, table, alias = null) {
     case "assets":
     case "incidents":
     case "users":
+    case "enterprises":
+    case "locations":
+    case "asset_profiles":
+    case "asset_point_bindings":
       return { where: `${a}org_id = ?`, params: [orgId] };
+    case "enterprise_systems":
+      // Pre-existing rows (created before v16) have NULL org_id and are
+      // visible to every tenant until reassigned. New rows carry org_id.
+      return { where: `(${a}org_id = ? OR ${a}org_id IS NULL)`, params: [orgId] };
+    case "asset_profile_versions":
+      return {
+        where: `${a}profile_id IN (SELECT id FROM asset_profiles WHERE org_id = ?)`,
+        params: [orgId],
+      };
+    case "asset_profile_points":
+      return {
+        where: `${a}profile_version_id IN (SELECT v.id FROM asset_profile_versions v JOIN asset_profiles p ON p.id = v.profile_id WHERE p.org_id = ?)`,
+        params: [orgId],
+      };
     case "projects":
     case "channels":
     case "documents":
@@ -88,6 +106,11 @@ export function orgForRow(table, row) {
     case "assets":
     case "incidents":
     case "users":
+    case "enterprises":
+    case "locations":
+    case "asset_profiles":
+    case "asset_point_bindings":
+    case "enterprise_systems":
       return row.org_id || null;
     case "projects": return tsOrg.get(row.team_space_id)?.org_id || null;
     case "channels": return tsOrg.get(row.team_space_id)?.org_id || null;

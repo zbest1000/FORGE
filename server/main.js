@@ -39,6 +39,7 @@ import complianceRoutes from "./routes/compliance.js";
 import enterpriseSystemRoutes from "./routes/enterprise-systems.js";
 import licenseRoutes from "./routes/license.js";
 import operationsRoutes from "./routes/operations.js";
+import assetHierarchyRoutes from "./routes/asset-hierarchy.js";
 import { config } from "./config.js";
 import { getLicense, requireFeature, FEATURES, pollLocalLicenseServer, loadPersistedActivation, localLicenseStatus } from "./license.js";
 
@@ -388,6 +389,7 @@ await registerWithFeature(cadRoutes, FEATURES.CAD_VIEWER);
 await registerWithFeature(complianceRoutes, FEATURES.COMPLIANCE_CONSOLE);
 await registerWithFeature(enterpriseSystemRoutes, FEATURES.ENTERPRISE_SYSTEMS);
 await app.register(operationsRoutes);
+await app.register(assetHierarchyRoutes);
 attachSSE(app);
 registerMetrics(app);
 

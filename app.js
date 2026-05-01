@@ -105,7 +105,12 @@ function setupRoutes() {
     lazy(() => import("./src/screens/drawingViewer.js"), "renderDrawingViewer", "Drawing viewer"));
 
   defineRoute("/assets",
-    lazy(() => import("./src/screens/assetDetail.js"), "renderAssetsIndex", "Assets"));
+    lazy(() => import("./src/screens/assetDashboard.js"), "renderAssetDashboard", "Asset dashboard"));
+  // The legacy table view stays reachable for power users while the
+  // dashboard is in phase 1. New routes for nested chains land in
+  // later phases (Profiles admin → /profiles, etc.).
+  defineRoute("/admin/assets",
+    lazy(() => import("./src/screens/assetDetail.js"), "renderAssetsIndex", "Assets (table)"));
   defineRoute("/asset/:id",
     lazy(() => import("./src/screens/assetDetail.js"), "renderAssetDetail", "Asset"));
 

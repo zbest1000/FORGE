@@ -33,6 +33,13 @@ function sniffMime(head) {
   if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
   // GIF
   if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return "image/gif";
+  // BMP (Windows bitmap; "BM" header). Asset dashboard accepts BMP for the
+  // user-uploaded card visual since legacy SCADA/HMI tooling commonly
+  // exports asset thumbnails as uncompressed BMP. Browsers render
+  // image/bmp inline (added to INLINE_SAFE_MIMES below) so the dashboard
+  // <img> tag works directly. A Phase-2 transcode-to-WebP pipeline can
+  // later cut the byte cost without changing the upload contract.
+  if (b[0] === 0x42 && b[1] === 0x4d) return "image/bmp";
   // ZIP / docx/xlsx/pptx (PK\x03\x04)
   if (b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04) return "application/zip";
   // WebP (RIFF....WEBP)
@@ -50,6 +57,7 @@ const INLINE_SAFE_MIMES = new Set([
   "image/jpeg",
   "image/gif",
   "image/webp",
+  "image/bmp",
   "image/svg+xml",
   "text/plain",
   "application/json",
