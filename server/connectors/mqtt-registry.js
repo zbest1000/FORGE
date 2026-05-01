@@ -42,6 +42,17 @@
 //     doesn't need a network broker.
 
 import { db, jsonOrDefault } from "../db.js";
+import {
+  decodePayload as decodeSparkplugPayload,
+  extractMetricSample as extractSparkplugMetric,
+  buildCommandPayload as buildSparkplugCommand,
+  resolveEncoding,
+  resolveProtocolVersion,
+  metricNameForBinding,
+  isSparkplugTopic,
+  sparkplugMessageType,
+  ENCODINGS,
+} from "./sparkplug-codec.js";
 
 export const KIND = "mqtt";
 
@@ -133,13 +144,25 @@ async function realMqttClientFactory(url, opts) {
   return mqtt.connect(url, opts);
 }
 
-async function connectSystem(system) {
+async function connectSystem(system, sysConfig) {
   const url = system.base_url;
   if (!url) {
     _state.logger?.warn?.({ systemId: system.id }, "[mqtt-registry] system has no base_url; skipping");
     return null;
   }
-  const opts = { reconnectPeriod: 5000, connectTimeout: 10_000 };
+  // Phase 7f: per-system protocol version selector.
+  // `mqtt-packet`'s wire-level constant set is { 3 → MQTT 3.1,
+  // 4 → MQTT 3.1.1, 5 → MQTT 5.0 }. We surface only `3.1.1` and
+  // `5.0` from the config UI; resolveProtocolVersion() defaults to
+  // 4 (3.1.1) for back-compat with every previously-registered
+  // broker. MQTT 5 sessions get user-properties + reason codes;
+  // MQTT 3.1.1 keeps the legacy session/will semantics.
+  const protocolVersion = resolveProtocolVersion(sysConfig);
+  const opts = {
+    reconnectPeriod: 5000,
+    connectTimeout: 10_000,
+    protocolVersion,
+  };
   // Future: resolve secret_ref → username/password via crypto.js.
   const factory = _clientFactory || realMqttClientFactory;
   let client;
@@ -175,7 +198,17 @@ function withinBudget(stateForSystem, bindingId) {
 }
 
 async function startSystem(system) {
-  const client = await connectSystem(system);
+  // Phase 7f: parse the system's config JSON once at boot. Encoding
+  // (raw_json | sparkplug_b) drives the per-message parser dispatch;
+  // protocol version (3.1.1 | 5.0) is passed into the mqtt.connect()
+  // call so the broker negotiates the right session shape. Both
+  // values flow through `resolveEncoding` / `resolveProtocolVersion`
+  // which apply the back-compat defaults (raw_json + 3.1.1).
+  const sysConfig = jsonOrDefault(system.config, {});
+  const encoding = resolveEncoding(sysConfig);
+  const protocolVersion = resolveProtocolVersion(sysConfig);
+
+  const client = await connectSystem(system, sysConfig);
   if (!client) return;
   const plan = buildPlanForSystem(system.id);
   const subs = dedupeTopics(plan.subs);
@@ -187,6 +220,8 @@ async function startSystem(system) {
     exact: plan.exact,
     wildcard: plan.wildcard,
     buckets: new Map(),
+    encoding,
+    protocolVersion,
   };
   _state.systems.set(system.id, sysState);
 
@@ -198,14 +233,13 @@ async function startSystem(system) {
           sysState.lastError = String(err?.message || err);
           _state.logger?.warn?.({ err: sysState.lastError, systemId: system.id }, "[mqtt-registry] subscribe failed");
         } else {
-          _state.logger?.info?.({ systemId: system.id, count: subs.length }, "[mqtt-registry] subscribed");
+          _state.logger?.info?.({ systemId: system.id, count: subs.length, encoding, protocolVersion }, "[mqtt-registry] subscribed");
         }
       });
     }
   });
 
   client.on("message", (topic, payload) => {
-    const value = parsePayload(payload);
     // Resolve target bindings: exact-match first, fall back to
     // wildcard scan. Wildcard list is bounded (one entry per pattern)
     // so the scan is cheap even at high message rates.
@@ -217,20 +251,65 @@ async function startSystem(system) {
     const bindingIds = new Set([...(exactBindings || []), ...wildcardBindings]);
     if (!bindingIds.size) return; // unsubscribed message — broker quirk
 
+    // Phase 7f: encoding-aware payload parse. For Sparkplug B we
+    // decode the protobuf once per message and reuse the decoded
+    // payload across every matching binding (each binding extracts
+    // its own metric by name). For raw JSON we keep the legacy
+    // per-binding parse — the body is small enough that re-parsing
+    // the same string twice is cheaper than threading a cache.
+    let sparkplugDecoded = null;
+    let sparkplugMsgType = null;
+    if (sysState.encoding === ENCODINGS.SPARKPLUG_B) {
+      sparkplugMsgType = sparkplugMessageType(topic);
+      // STATE / NDEATH / DDEATH frames carry no metrics we can
+      // dispatch as samples — log for observability and drop.
+      if (sparkplugMsgType === "STATE" || sparkplugMsgType === "NDEATH" || sparkplugMsgType === "DDEATH") {
+        _state.logger?.debug?.({ topic, type: sparkplugMsgType, systemId: system.id }, "[mqtt-registry] sparkplug control frame, no sample dispatch");
+        return;
+      }
+      try {
+        sparkplugDecoded = decodeSparkplugPayload(payload);
+      } catch (err) {
+        _state.logger?.warn?.({ err: String(err?.message || err), topic, systemId: system.id }, "[mqtt-registry] sparkplug decode failed");
+        return;
+      }
+    }
+
     for (const bid of bindingIds) {
       const bRow = db.prepare("SELECT * FROM asset_point_bindings WHERE id = ?").get(bid);
       if (!bRow || !bRow.enabled) continue;
+
+      let parsed;
+      if (sysState.encoding === ENCODINGS.SPARKPLUG_B) {
+        const metricName = metricNameForBinding(bRow);
+        parsed = extractSparkplugMetric(sparkplugDecoded, metricName);
+        if (!parsed) {
+          // The binding's metric name wasn't present in this payload —
+          // legitimate for Sparkplug B (per-metric birth → delta updates),
+          // skip without logging.
+          continue;
+        }
+      } else {
+        parsed = parsePayload(payload);
+      }
+
       // Token-bucket backpressure: each binding gets a bounded TPS
       // and excess samples are coalesced as "Substituted" quality
       // per spec §2.1.
       const ok = withinBudget(sysState, bid);
-      const quality = ok ? (value.quality || "Good") : "Substituted";
+      const quality = ok ? (parsed.quality || "Good") : "Substituted";
       _state.dispatch({
         binding: bRow,
-        value: value.value,
-        ts: value.ts || new Date().toISOString(),
+        value: parsed.value,
+        ts: parsed.ts || new Date().toISOString(),
         quality,
-        raw: { topic, source: "mqtt", coalesced: !ok },
+        raw: {
+          topic,
+          source: "mqtt",
+          coalesced: !ok,
+          encoding: sysState.encoding,
+          ...(sparkplugMsgType ? { sparkplug_type: sparkplugMsgType } : {}),
+        },
       }).catch(err => {
         _state.logger?.warn?.({ err: String(err?.message || err), bindingId: bid }, "[mqtt-registry] dispatch failed");
       });
@@ -343,23 +422,56 @@ export async function publishWriteback({ binding, value, quality = "Good", retai
   if (!sysState || sysState.status !== "connected" || !sysState.client) {
     return { ok: false, code: "broker_unavailable", message: `broker for system ${binding.system_id} is not connected` };
   }
-  const payload = JSON.stringify({
-    value: Number(value),
-    quality,
-    ts: new Date().toISOString(),
-    source: "forge.writeback",
-  });
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return { ok: false, code: "invalid_value", message: `value must be a finite number, got ${value}` };
+  }
+
+  // Phase 7f: encoding-aware writeback. Sparkplug B systems expect a
+  // protobuf-encoded NCMD/DCMD payload; raw_json systems get the
+  // legacy {value, quality, ts, source} JSON object.
+  let payload;
+  if (sysState.encoding === ENCODINGS.SPARKPLUG_B) {
+    try {
+      payload = buildSparkplugCommand({
+        metricName: metricNameForBinding(binding),
+        value: numericValue,
+      });
+    } catch (err) {
+      return { ok: false, code: "encode_failed", message: String(err?.message || err) };
+    }
+  } else {
+    payload = JSON.stringify({
+      value: numericValue,
+      quality,
+      ts: new Date().toISOString(),
+      source: "forge.writeback",
+    });
+  }
+
   return new Promise((resolve) => {
     sysState.client.publish(binding.source_path, payload, { qos: 2, retain: !!retain }, (err) => {
       if (err) {
         _state.logger?.warn?.({ err: String(err?.message || err), bindingId: binding.id }, "[mqtt-registry] writeback publish failed");
         resolve({ ok: false, code: "publish_failed", message: String(err?.message || err) });
       } else {
-        resolve({ ok: true, topic: binding.source_path, qos: 2 });
+        resolve({ ok: true, topic: binding.source_path, qos: 2, encoding: sysState.encoding });
       }
     });
   });
 }
 
 // Test-harness introspection.
-export const _internals = { state: _state, patternToRegex, dedupeTopics, parsePayload, withinBudget };
+export const _internals = {
+  state: _state,
+  patternToRegex,
+  dedupeTopics,
+  parsePayload,
+  withinBudget,
+  // Phase 7f introspection: encoding + protocol resolvers exposed
+  // so unit tests can assert the per-system selector behaviour
+  // without booting an actual broker.
+  resolveEncoding,
+  resolveProtocolVersion,
+  metricNameForBinding,
+};
