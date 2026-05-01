@@ -61,6 +61,16 @@ export function renderAssetDetail({ id }) {
   const site = locationById(a.siteId);
   const loc = locationById(a.locationId);
 
+  // Read the deep-link `?tab=` from the URL hash (set by the dashboard's
+  // "Edit" button). If present, force the tab session-key value so the
+  // user lands on the requested tab. Format expected: `#/asset/AS-1?tab=config`.
+  const hashQuery = (location.hash.split("?")[1] || "");
+  const requested = new URLSearchParams(hashQuery).get("tab");
+  const tabKey = `asset.detail.${a.id}`;
+  if (requested && ["overview", "data", "config"].includes(requested)) {
+    sessionStorage.setItem(tabKey, requested);
+  }
+
   mount(root, [
     el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
       el("div", {}, [
@@ -72,6 +82,7 @@ export function renderAssetDetail({ id }) {
         badge(`Signals ${a.daqStatus || "unknown"}`, dataVariant(a.daqStatus)),
         badge(`Service ${a.maintenanceStatus || "none"}`, maintenanceVariant(a.maintenanceStatus)),
         el("button", { class: "btn sm danger", disabled: !can("incident.respond"), onClick: () => openWarRoom(a) }, ["🚨 War room"]),
+        el("button", { class: "btn sm", onClick: () => navigate("/assets") }, ["← Dashboard"]),
       ]),
     ]),
     el("div", { class: "card-grid" }, [
@@ -82,21 +93,71 @@ export function renderAssetDetail({ id }) {
       kpi("Open incidents", incidents.filter(i => i.status === "active").length, "", incidents.some(i => i.status === "active") ? "down" : "up"),
     ]),
 
-    assetContextTabs(a, {
-      orgName: d.organization?.name || "Enterprise",
-      site,
-      loc,
-      linkedProjects,
-      linkedDocs,
-      dataSources,
-      tasks,
-      maintenance,
-      incidents,
+    // Top-level tabs: Overview (existing context), Data (live + historical
+    // — Phase 4/5 fills the live half), Configuration (Phase 3 wires
+    // profile bindings; Phase 1 surfaces a stub explaining what's coming).
+    tabs({
+      sessionKey: tabKey,
+      defaultId: "overview",
+      ariaLabel: "Asset detail",
+      tabs: [
+        { id: "overview", label: "Overview", content: () => overviewTab(a, {
+          orgName: d.organization?.name || "Enterprise",
+          site, loc,
+          linkedProjects, linkedDocs, dataSources, tasks, maintenance, incidents,
+        }) },
+        { id: "data", label: "Data", content: () => dataTabStub(a, dataSources) },
+        { id: "config", label: "Configuration", content: () => configTabStub(a) },
+      ],
     }),
 
     assignmentCard(a),
 
     assetBriefCard(a, { dataSources, incidents, maintenance }),
+  ]);
+}
+
+function overviewTab(asset, ctx) {
+  // Preserves the original detail-page nested context tabs (Summary,
+  // Docs, Work, Signals, Activity) so engineers don't lose the screen
+  // they already know. The new Data + Configuration tabs sit alongside.
+  return assetContextTabs(asset, ctx);
+}
+
+function dataTabStub(asset, dataSources) {
+  return el("div", { class: "stack" }, [
+    card("Live & Historical Data", el("div", { class: "stack" }, [
+      el("p", { class: "muted" }, [
+        "The Live | Historical toggle, eCharts trend per binding, and rolling SSE buffer ship in Phase 4 (MQTT registry) + Phase 5 (OPC UA registry).",
+      ]),
+      el("p", { class: "tiny muted" }, [
+        "Phase 1 surfaces this tab so the asset card's \"View data\" button has a destination. Today the Overview tab's Signals sub-tab still renders the demo-seeded historian points and trends.",
+      ]),
+      dataSources.length
+        ? el("div", { class: "row wrap" }, dataSources.map(ds =>
+            el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, [ds.integrationId || "src"]), ds.endpoint])
+          ))
+        : el("div", { class: "tiny muted" }, ["No data sources mapped to this asset yet."]),
+    ]), { subtitle: "Phase 4 wires registry-driven MQTT/OPC UA into this view." }),
+  ]);
+}
+
+function configTabStub(asset) {
+  return el("div", { class: "stack" }, [
+    card("Asset Configuration", el("div", { class: "stack" }, [
+      el("p", { class: "muted" }, [
+        "Pick an existing profile or define a one-time custom mapping for this asset's data points (temperature, pressure, …) against a registered MQTT broker, OPC UA endpoint, or SQL data source.",
+      ]),
+      el("p", { class: "tiny muted" }, [
+        "Profiles and the apply-profile flow ship in Phase 2/3. Until then, asset bindings are stored only via direct API access (POST /api/assets/:id/apply-profile), which Phase 3 exposes through this form.",
+      ]),
+      el("div", { class: "row wrap" }, [
+        el("div", { class: "stack", style: { gap: "2px" } }, [
+          el("div", { class: "tiny muted" }, ["Asset id"]),
+          el("code", { class: "mono" }, [asset.id]),
+        ]),
+      ]),
+    ]), { subtitle: "Phase 3 form lands here — see docs/INDUSTRIAL_EDGE_PLATFORM_SPEC.md §4-§9." }),
   ]);
 }
 

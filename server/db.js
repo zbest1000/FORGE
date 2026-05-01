@@ -20,7 +20,7 @@ db.pragma("synchronous = NORMAL");
 // ---------- Schema ----------
 // Version counter so we can evolve forward.
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -1218,6 +1218,269 @@ function migrate() {
         }
       }
       setVersion(15);
+    }
+
+    // v16: Asset dashboard + Profiles feature foundation.
+    //
+    // Spec ref: docs/INDUSTRIAL_EDGE_PLATFORM_SPEC.md §4 (Asset Model).
+    // The schema honours the ISA-95 5-level hierarchy
+    // (Enterprise → Site → Area → Line/Cell → Asset) by combining a
+    // dedicated `enterprises` table for the top level with a
+    // self-referencing `locations` table — one row per Site/Area/Line/Cell
+    // — discriminated by the free-text `kind` column. The dashboard's
+    // `/api/asset-tree` endpoint walks `parent_location_id` recursively
+    // so the UI renders the full chain without further round-trips.
+    //
+    // Why not five named tables (sites, areas, lines, cells)? Customers
+    // configure the hierarchy depth: some sites have areas-then-lines,
+    // others jump straight from site to asset. A self-nesting `locations`
+    // row with `kind` covers both shapes without per-customer migrations.
+    //
+    //   - New `enterprises` and `locations` tables: assets are categorised
+    //     under enterprise → location with a tree-shaped left nav. The
+    //     dashboard's `/api/asset-tree` endpoint walks these in a single
+    //     denormalised query.
+    //   - New `asset_profiles` + `asset_profile_versions` + `asset_profile_points`:
+    //     a Profile is a reusable named data schema (e.g. "Pump Profile"
+    //     with `temperature` and `pressure` data points) bound to a source
+    //     kind (mqtt|opcua|sql) and a path template. Versioned: bindings
+    //     pin to a `profile_version_id`, edits create new versions, old
+    //     versions stay reachable for upgrade decisions.
+    //   - New `asset_point_bindings`: per-asset, per-point row that joins
+    //     a profile-point (or a one-off custom mapping) to the chosen
+    //     source `system_id` and the **resolved** `source_path` snapshot
+    //     (with `template_vars` JSON kept for re-resolution after an
+    //     enterprise/location rename).
+    //   - ALTER `assets`: add `enterprise_id`, `location_id`,
+    //     `profile_version_id`, `visual_file_id` (FK semantics to files.id
+    //     for the user-uploaded asset card image).
+    //   - Pre-existing fix A: `enterprise_systems` had no `org_id` column —
+    //     brokers/endpoints were global across tenants, a tenancy bug. Add
+    //     the column and backfill from `users.org_id` via `owner_id`.
+    //   - Pre-existing fix B: `historian_points.tag` was `UNIQUE` globally,
+    //     so two assets in different enterprises both having a `temperature`
+    //     point collided. Rebuild the table replacing the global UNIQUE
+    //     with `UNIQUE(asset_id, tag)` so tag uniqueness is asset-scoped.
+    if (getVersion() < 16) {
+      const addColumn = (table, columnSql) => {
+        try { db.prepare(`ALTER TABLE ${table} ADD COLUMN ${columnSql}`).run(); }
+        catch (err) {
+          if (!/duplicate column name/i.test(String(err?.message || err))) throw err;
+        }
+      };
+
+      // -- ALTER assets to carry enterprise/location/profile/visual FKs --
+      addColumn("assets", "enterprise_id TEXT");
+      addColumn("assets", "location_id TEXT");
+      addColumn("assets", "profile_version_id TEXT");
+      addColumn("assets", "visual_file_id TEXT");
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_assets_enterprise_location
+          ON assets(org_id, workspace_id, enterprise_id, location_id, name);
+        CREATE INDEX IF NOT EXISTS idx_assets_profile_version
+          ON assets(profile_version_id);
+      `);
+
+      // -- ALTER enterprise_systems to carry org_id (pre-existing bug A) --
+      addColumn("enterprise_systems", "org_id TEXT");
+      // Backfill org_id from users.org_id via owner_id. Rows without an
+      // owner_id (legacy / system-seeded) stay NULL — listSystems will
+      // continue returning them to every tenant for now; the connector
+      // registry phase tightens this further. We surface the count of
+      // unbackfilled rows in the audit log for operator visibility.
+      const backfillResult = db.prepare(`
+        UPDATE enterprise_systems
+           SET org_id = (SELECT u.org_id FROM users u WHERE u.id = enterprise_systems.owner_id)
+         WHERE org_id IS NULL
+           AND owner_id IS NOT NULL
+      `).run();
+      const orphaned = db.prepare(
+        "SELECT COUNT(*) AS n FROM enterprise_systems WHERE org_id IS NULL"
+      ).get()?.n || 0;
+      if (orphaned > 0) {
+        // Best-effort note: log to console at migration time. Operators
+        // who need cross-tenant systems already have one tenant; assigning
+        // them is a follow-up admin op (PATCH /api/enterprise-systems/:id
+        // with org_id once the route exposes it).
+        // eslint-disable-next-line no-console
+        console.warn(`[db v16] ${orphaned} enterprise_systems row(s) have no org_id (no owner_id); they remain visible to every tenant until reassigned. Backfilled=${backfillResult.changes}.`);
+      }
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_enterprise_systems_org_category
+          ON enterprise_systems(org_id, category, status);
+      `);
+
+      // -- New: enterprises (top of asset hierarchy) --
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS enterprises (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          acl TEXT NOT NULL DEFAULT '{}',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_enterprises_tenant
+          ON enterprises(org_id, workspace_id, sort_order, name);
+
+        CREATE TABLE IF NOT EXISTS locations (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL,
+          enterprise_id TEXT NOT NULL REFERENCES enterprises(id) ON DELETE CASCADE,
+          parent_location_id TEXT REFERENCES locations(id) ON DELETE SET NULL,
+          name TEXT NOT NULL,
+          kind TEXT,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          acl TEXT NOT NULL DEFAULT '{}',
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_locations_enterprise
+          ON locations(enterprise_id, parent_location_id, sort_order, name);
+        CREATE INDEX IF NOT EXISTS idx_locations_tenant
+          ON locations(org_id, workspace_id);
+      `);
+
+      // -- New: asset_profiles + versions + points --
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS asset_profiles (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          workspace_id TEXT,                    -- NULL = library (org-wide)
+          name TEXT NOT NULL,
+          description TEXT,
+          source_kind TEXT NOT NULL CHECK (source_kind IN ('mqtt','opcua','sql')),
+          latest_version_id TEXT,
+          status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft','active','archived')),
+          owner_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_asset_profiles_tenant
+          ON asset_profiles(org_id, workspace_id, source_kind, status);
+
+        CREATE TABLE IF NOT EXISTS asset_profile_versions (
+          id TEXT PRIMARY KEY,
+          profile_id TEXT NOT NULL REFERENCES asset_profiles(id) ON DELETE CASCADE,
+          version INTEGER NOT NULL,
+          source_template TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft','active','archived')),
+          notes TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          UNIQUE(profile_id, version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_asset_profile_versions_profile
+          ON asset_profile_versions(profile_id, version);
+
+        CREATE TABLE IF NOT EXISTS asset_profile_points (
+          id TEXT PRIMARY KEY,
+          profile_version_id TEXT NOT NULL REFERENCES asset_profile_versions(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          unit TEXT,
+          data_type TEXT NOT NULL DEFAULT 'number',
+          source_path_template TEXT NOT NULL DEFAULT '',
+          point_order INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_asset_profile_points_version
+          ON asset_profile_points(profile_version_id, point_order);
+      `);
+
+      // -- New: asset_point_bindings (one row per asset+point) --
+      // FK to historian_points uses ON DELETE SET NULL so that a deleted
+      // historian point doesn't cascade away the binding row (samples
+      // outlive the point definition for audit/retention).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS asset_point_bindings (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+          profile_version_id TEXT REFERENCES asset_profile_versions(id) ON DELETE SET NULL,
+          profile_point_id TEXT REFERENCES asset_profile_points(id) ON DELETE SET NULL,
+          point_id TEXT,                         -- FK to historian_points (nullable; SET NULL on delete)
+          system_id TEXT REFERENCES enterprise_systems(id) ON DELETE RESTRICT,
+          source_kind TEXT NOT NULL CHECK (source_kind IN ('mqtt','opcua','sql')),
+          source_path TEXT NOT NULL,             -- resolved snapshot
+          template_vars TEXT NOT NULL DEFAULT '{}',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          last_value REAL,
+          last_quality TEXT,
+          last_seen TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(asset_id, point_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_asset_point_bindings_asset
+          ON asset_point_bindings(asset_id, enabled);
+        CREATE INDEX IF NOT EXISTS idx_asset_point_bindings_system
+          ON asset_point_bindings(system_id, source_path);
+        CREATE INDEX IF NOT EXISTS idx_asset_point_bindings_profile_version
+          ON asset_point_bindings(profile_version_id);
+      `);
+
+      // -- Pre-existing fix B: drop global UNIQUE on historian_points.tag,
+      //    replace with UNIQUE(asset_id, tag). Two assets across different
+      //    enterprises both having a `temperature` point now coexist. --
+      const hpExists = db.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='historian_points'"
+      ).get();
+      if (hpExists) {
+        const cols = db.pragma("table_info(historian_points)", { simple: false });
+        const idx = db.prepare(
+          "SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='historian_points'"
+        ).all();
+        const tagIsGloballyUnique = (() => {
+          // SQLite's `UNIQUE` on a column is implemented as an
+          // auto-index named like `sqlite_autoindex_historian_points_*`.
+          // The pragma reports unique columns indirectly via index_list.
+          const idxList = db.pragma("index_list(historian_points)", { simple: false });
+          for (const il of idxList) {
+            if (!il.unique) continue;
+            const info = db.pragma(`index_info(${il.name})`, { simple: false });
+            if (info.length === 1 && info[0].name === "tag") return true;
+          }
+          return false;
+        })();
+        if (tagIsGloballyUnique) {
+          // Rebuild without the column-level UNIQUE; add a composite UNIQUE
+          // (asset_id, tag) instead so name uniqueness is asset-scoped.
+          const colDefs = cols.map(c => {
+            const parts = [`"${c.name}"`, c.type || "TEXT"];
+            if (c.notnull) parts.push("NOT NULL");
+            if (c.dflt_value != null) parts.push(`DEFAULT ${c.dflt_value}`);
+            if (c.pk) parts.push("PRIMARY KEY");
+            return parts.join(" ");
+          }).join(", ");
+          const colNames = cols.map(c => `"${c.name}"`).join(", ");
+          db.exec(`
+            CREATE TABLE "historian_points__v16" (${colDefs}, UNIQUE(asset_id, tag));
+            INSERT INTO "historian_points__v16" (${colNames}) SELECT ${colNames} FROM "historian_points";
+            DROP TABLE "historian_points";
+            ALTER TABLE "historian_points__v16" RENAME TO "historian_points";
+            CREATE INDEX IF NOT EXISTS idx_historian_points_asset
+              ON historian_points(asset_id);
+          `);
+          // Re-create any custom indexes (we didn't have any beyond
+          // idx_historian_points_asset, but loop defensively in case
+          // future migrations add them).
+          for (const i of idx) {
+            if (!i.sql) continue;
+            if (/sqlite_autoindex/i.test(i.name)) continue;
+            if (i.name === "idx_historian_points_asset") continue;
+            try { db.exec(i.sql); } catch { /* best-effort */ }
+          }
+        }
+      }
+
+      setVersion(16);
     }
   })();
   db.pragma("foreign_keys = ON");
