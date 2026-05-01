@@ -301,5 +301,49 @@ async function createSubscriptionForBucket({ sysState, bucketMs, bucketBindings,
   }
 }
 
+/**
+ * Phase 7c — writeback. Drive a value back to the registered
+ * external OPC UA server through the open Session.write call.
+ * Returns `{ ok }` matching the MQTT registry's writeback shape
+ * so the connector orchestrator's router can fan out uniformly.
+ *
+ * Caller is `server/connectors/registry.js`'s
+ * `writeBindingValue()` orchestrator, invoked by the
+ * `device.write`-gated `POST /api/tags/:pointId/write` route.
+ *
+ * Status code semantics: `result.statusCode.name === "Good"` is
+ * success per OPC UA spec; anything else surfaces as the
+ * structured error.
+ */
+export async function writeBindingValue({ binding, value }) {
+  if (!binding || !binding.system_id || !binding.source_path) {
+    return { ok: false, code: "missing_binding_fields", message: "binding has no system_id or source_path" };
+  }
+  const sysState = _state.systems.get(binding.system_id);
+  if (!sysState || sysState.status !== "connected" || !sysState.session) {
+    return { ok: false, code: "session_unavailable", message: `OPC UA session for system ${binding.system_id} is not connected` };
+  }
+  const m = sysState.node_opcua;
+  try {
+    const numeric = Number(value);
+    const dataValue = {
+      value: { dataType: m.DataType.Double, value: numeric },
+    };
+    const result = await sysState.session.write({
+      nodeId: binding.source_path,
+      attributeId: m.AttributeIds.Value,
+      value: dataValue,
+    });
+    const statusName = result?.name || result?.statusCode?.name || "Good";
+    if (statusName !== "Good") {
+      return { ok: false, code: "bad_status", message: `OPC UA write returned ${statusName}` };
+    }
+    return { ok: true, nodeId: binding.source_path };
+  } catch (err) {
+    _state.logger?.warn?.({ err: String(err?.message || err), bindingId: binding.id }, "[opcua-registry] writeback failed");
+    return { ok: false, code: "write_failed", message: String(err?.message || err) };
+  }
+}
+
 // Test-harness introspection.
 export const _internals = { state: _state, pickBucket, PUBLISHING_BUCKETS_MS };

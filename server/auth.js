@@ -19,22 +19,33 @@ import { audit } from "./audit.js";
 //   - `admin.edit`     gates compliance writes (DSAR, legal-hold,
 //     ROPA, evidence, AI-system inventory). `admin.view` keeps
 //     read-only access.
-// `historian.sql.raw` is an additional, separately-scoped capability for
-// authoring free-form `SELECT` query templates against external SQL
-// historian sources (Phase 3 of the Asset Dashboard plan; see
-// docs/INDUSTRIAL_EDGE_PLATFORM_SPEC.md §6 + §8). It is a deliberately
-// narrow privilege: holding `integration.write` is necessary but not
-// sufficient — the operator must additionally hold `historian.sql.raw`
-// because authored SQL crosses tenant boundaries via the SQL adapter
-// and is therefore higher-risk than a topic / node-id template.
+// Two narrow privileges layered on top of the role grants:
 //
-// Default grant: Workspace Admin only. Organization Owner inherits via
-// the `"*"` wildcard. Integration Admin is intentionally NOT granted —
-// integrations team can wire schema-defined sources without authoring
-// raw SQL.
+// `historian.sql.raw` — authoring free-form SELECT templates
+//   against external SQL historian sources (Phase 3). Workspace
+//   Admin only; Org Owner inherits via "*". Integration Admin
+//   intentionally NOT granted: integration writers can wire
+//   schema-defined sources without authoring raw SQL. Spec ref:
+//   docs/INDUSTRIAL_EDGE_PLATFORM_SPEC.md §6 + §8.
+//
+// `device.write` — Phase 7c. Pushes a value back to a physical
+//   device through the connector orchestrator (publish on MQTT,
+//   Session.write on OPC UA, future Modbus). Per spec §15.2:
+//
+//     "Write operations to devices (tag writeback, OPC UA write,
+//      MQTT command publish) are gated by a separate
+//      CAN_WRITE_DEVICE capability, not just general write
+//      permission. This is the highest-risk operation in the
+//      system."
+//
+//   Granted ONLY to Workspace Admin + Org Owner (via "*"). Every
+//   call audits — see server/routes/tag-writeback.js. Integration
+//   Admin is NOT granted: they configure connectors but don't
+//   push setpoints to running plants. Engineer / Operator can read
+//   + acknowledge incidents but cannot write to a device.
 export const CAPABILITIES = {
   "Organization Owner":   ["*"],
-  "Workspace Admin":      ["view","create","edit","approve","incident.command","integration.read","integration.write","ai.configure","admin.view","admin.edit","webhook.write","historian.sql.raw"],
+  "Workspace Admin":      ["view","create","edit","approve","incident.command","integration.read","integration.write","ai.configure","admin.view","admin.edit","webhook.write","historian.sql.raw","device.write"],
   "Team Space Admin":     ["view","create","edit","approve","integration.read","ai.configure"],
   "Engineer/Contributor": ["view","create","edit"],
   "Reviewer/Approver":    ["view","approve","edit.markup"],
