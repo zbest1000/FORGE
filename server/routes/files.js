@@ -14,6 +14,11 @@ import { allows, requireAccess } from "../acl.js";
 import { require_ } from "../auth.js";
 import { orgForRow, tenantOrgId } from "../tenant.js";
 import { isHeld } from "../compliance.js";
+import {
+  transcodeAssetVisual,
+  isTranscodable,
+  MAX_TRANSCODE_INPUT_BYTES,
+} from "../services/image-transcode.js";
 
 const DATA_DIR = process.env.FORGE_DATA_DIR || path.resolve(process.cwd(), "data");
 const FILES_DIR = path.join(DATA_DIR, "files");
@@ -22,7 +27,11 @@ fs.mkdirSync(FILES_DIR, { recursive: true });
 // Server-side magic-byte sniff. Returns the canonical MIME type or null when
 // the bytes don't match a known signature. The caller decides whether to
 // trust the multipart-supplied MIME if no signature matches.
-function sniffMime(head) {
+//
+// Exported for unit tests and for the asset-upload code path which needs
+// to make routing decisions (transcode vs raw store) before persisting
+// anything to disk.
+export function sniffMime(head) {
   if (!head || head.length < 4) return null;
   const b = head;
   // PDF
@@ -37,9 +46,28 @@ function sniffMime(head) {
   // user-uploaded card visual since legacy SCADA/HMI tooling commonly
   // exports asset thumbnails as uncompressed BMP. Browsers render
   // image/bmp inline (added to INLINE_SAFE_MIMES below) so the dashboard
-  // <img> tag works directly. A Phase-2 transcode-to-WebP pipeline can
-  // later cut the byte cost without changing the upload contract.
+  // <img> tag works directly.
   if (b[0] === 0x42 && b[1] === 0x4d) return "image/bmp";
+  // ISO Base Media File Format containers — bytes 4-7 spell "ftyp" and
+  // bytes 8-11 carry the major brand. We check for HEIC, HEIF and AVIF
+  // here: phones routinely ship images in these formats (iOS defaults to
+  // HEIC, recent Pixels emit AVIF) and the asset-upload route routes
+  // them through the sharp-backed transcoder (Phase 7e).
+  if (
+    b.length >= 12 &&
+    b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70
+  ) {
+    // ASCII "ftyp" matched at offset 4. Read brand (offset 8-11).
+    const brand = String.fromCharCode(b[8], b[9], b[10], b[11]);
+    // HEIC: "heic" / "heix" — single-image HEIC.
+    if (brand === "heic" || brand === "heix") return "image/heic";
+    // HEIF containers ("mif1", "msf1") may carry HEIC payloads; the
+    // transcoder doesn't care, so we tag them as image/heif and let
+    // sharp + libheif sort it out.
+    if (brand === "mif1" || brand === "msf1") return "image/heif";
+    // AVIF.
+    if (brand === "avif") return "image/avif";
+  }
   // ZIP / docx/xlsx/pptx (PK\x03\x04)
   if (b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04) return "application/zip";
   // WebP (RIFF....WEBP)
@@ -103,58 +131,205 @@ function tenantOk(req, kind, parent) {
 export default async function fileRoutes(fastify) {
   // POST /api/files — multipart upload.
   // Fields:  file (required), parent_kind, parent_id, name (optional)
+  //
+  // The handler streams the upload to a temporary file while computing
+  // its SHA-256 (so deduplication still works) and capturing the first
+  // 16 bytes for magic-byte sniffing. The temp file is NOT moved into
+  // its final SHA-addressed slot until after `parent_kind` is known —
+  // this lets the asset-visual transcode path (HEIC / HEIF / AVIF →
+  // WebP + JPEG) discard the original payload without leaving an
+  // orphaned content-addressed blob on disk.
   fastify.post("/api/files", { preHandler: require_("create") }, async (req, reply) => {
     if (!req.isMultipart()) return reply.code(415).send({ error: "multipart required" });
 
     let parentKind = null, parentId = null, name = null;
-    let uploadedId = null, uploadedSize = 0, uploadedMime = null, uploadedHash = null, destPath = null;
+    let tmp = null, head = Buffer.alloc(0);
+    let uploadedSize = 0, uploadedHash = null, declaredMime = null;
 
-    for await (const part of req.parts()) {
-      if (part.type === "field") {
-        if (part.fieldname === "parent_kind") parentKind = String(part.value || "");
-        else if (part.fieldname === "parent_id") parentId = String(part.value || "");
-        else if (part.fieldname === "name") name = String(part.value || "");
-      } else if (part.type === "file") {
-        // Hash while streaming to a temp file, then rename to the sha256 path.
-        const tmp = path.join(FILES_DIR, `.tmp-${uuid("t")}`);
-        const hash = crypto.createHash("sha256");
-        const sink = fs.createWriteStream(tmp);
-        const declaredMime = part.mimetype || "application/octet-stream";
-        name = name || part.filename || "file";
-        let size = 0;
-        let head = Buffer.alloc(0);
-        await pipeline(async function* () {
-          for await (const chunk of part.file) {
-            if (head.length < 16) head = Buffer.concat([head, chunk.subarray(0, 16 - head.length)]);
-            size += chunk.length;
-            hash.update(chunk);
-            yield chunk;
-          }
-        }(), sink);
-        uploadedSize = size;
-        uploadedHash = hash.digest("hex");
-        // Reconcile declared vs sniffed MIME. Sniffed wins when the bytes
-        // contradict the multipart header — a `text/markup` sniff means the
-        // payload starts with `<`, so we tag it as untrusted markup so the
-        // download path forces an `attachment` disposition.
-        const sniffed = sniffMime(head);
-        uploadedMime = sniffed || declaredMime;
-        destPath = pathFor(uploadedHash);
-        if (!fs.existsSync(destPath)) fs.renameSync(tmp, destPath);
-        else fs.unlinkSync(tmp); // dedupe
+    const cleanupTmp = () => {
+      if (tmp) {
+        try { fs.unlinkSync(tmp); } catch { /* swallow — best effort */ }
       }
+    };
+
+    try {
+      for await (const part of req.parts()) {
+        if (part.type === "field") {
+          if (part.fieldname === "parent_kind") parentKind = String(part.value || "");
+          else if (part.fieldname === "parent_id") parentId = String(part.value || "");
+          else if (part.fieldname === "name") name = String(part.value || "");
+        } else if (part.type === "file") {
+          // Stream-to-disk + hash + capture head. The dedup rename is
+          // deferred to after the post-loop validation so we only commit
+          // a SHA-addressed blob for payloads we actually intend to keep.
+          tmp = path.join(FILES_DIR, `.tmp-${uuid("t")}`);
+          const hash = crypto.createHash("sha256");
+          const sink = fs.createWriteStream(tmp);
+          declaredMime = part.mimetype || "application/octet-stream";
+          name = name || part.filename || "file";
+          let size = 0;
+          await pipeline(async function* () {
+            for await (const chunk of part.file) {
+              if (head.length < 16) head = Buffer.concat([head, chunk.subarray(0, 16 - head.length)]);
+              size += chunk.length;
+              hash.update(chunk);
+              yield chunk;
+            }
+          }(), sink);
+          uploadedSize = size;
+          uploadedHash = hash.digest("hex");
+        }
+      }
+    } catch (err) {
+      cleanupTmp();
+      throw err;
     }
 
-    if (!uploadedHash) return reply.code(400).send({ error: "no file provided" });
-    if (!parentKind || !parentId) return reply.code(400).send({ error: "parent_kind and parent_id required" });
+    if (!uploadedHash) {
+      cleanupTmp();
+      return reply.code(400).send({ error: "no file provided" });
+    }
+    if (!parentKind || !parentId) {
+      cleanupTmp();
+      return reply.code(400).send({ error: "parent_kind and parent_id required" });
+    }
+
+    // Reconcile declared vs sniffed MIME. Sniffed wins when the bytes
+    // contradict the multipart header — a `text/markup` sniff means the
+    // payload starts with `<`, so we tag it as untrusted markup so the
+    // download path forces an `attachment` disposition.
+    const sniffed = sniffMime(head);
+    const mimeFinal = sniffed || declaredMime;
+    const isAsset = String(parentKind).toLowerCase() === "asset";
+
     const parent = resolveParent(parentKind, parentId);
-    if (!parent) return reply.code(404).send({ error: "parent not found" });
-    if (!tenantOk(req, parentKind, parent)) return reply.code(404).send({ error: "parent not found" });
+    if (!parent) {
+      cleanupTmp();
+      return reply.code(404).send({ error: "parent not found" });
+    }
+    if (!tenantOk(req, parentKind, parent)) {
+      cleanupTmp();
+      return reply.code(404).send({ error: "parent not found" });
+    }
     if (!allows(req.user, parent.acl, "edit")) {
+      cleanupTmp();
       return reply.code(403).send({ error: "forbidden by ACL" });
     }
 
-    uploadedId = uuid("F");
+    // HEIC / HEIF / AVIF only flow through the transcode pipeline, and
+    // only as asset visuals. Anywhere else the upload is rejected: the
+    // downstream document/incident/work-item viewers don't have a HEIC
+    // decoder and would render a broken thumbnail.
+    if (isTranscodable(mimeFinal) && !isAsset) {
+      cleanupTmp();
+      return reply.code(415).send({
+        error: "HEIC, HEIF and AVIF uploads are only supported for asset visuals — convert to JPEG, PNG or WebP for other contexts",
+      });
+    }
+
+    // Asset visual transcode path: WebP becomes the primary, JPEG the
+    // derivative. The original HEIC/AVIF payload is discarded — there
+    // is no row anywhere that references its SHA, so no audit thread
+    // is broken.
+    if (isAsset && isTranscodable(mimeFinal)) {
+      if (uploadedSize > MAX_TRANSCODE_INPUT_BYTES) {
+        cleanupTmp();
+        return reply.code(413).send({
+          error: `image too large for transcode (${uploadedSize} bytes; max ${MAX_TRANSCODE_INPUT_BYTES})`,
+        });
+      }
+      let buffer;
+      try {
+        buffer = fs.readFileSync(tmp);
+      } catch (err) {
+        cleanupTmp();
+        return reply.code(500).send({ error: "failed to read upload buffer", detail: err.message });
+      }
+
+      let result;
+      try {
+        result = await transcodeAssetVisual(buffer, mimeFinal);
+      } catch (err) {
+        cleanupTmp();
+        if (err.code === "FORGE_TRANSCODE_TOO_LARGE") return reply.code(413).send({ error: err.message });
+        if (err.code === "FORGE_TRANSCODE_UNSUPPORTED") return reply.code(415).send({ error: err.message });
+        if (err.code === "FORGE_TRANSCODE_INVALID") return reply.code(400).send({ error: err.message });
+        return reply.code(500).send({ error: "transcode failed", detail: err.message });
+      }
+      cleanupTmp();
+
+      // Persist the WebP primary + JPEG derivative under their own
+      // SHA-addressed paths. Dedupe is preserved (same input image
+      // resolves to the same outputs, hash-equal).
+      const webpHash = crypto.createHash("sha256").update(result.webp.buffer).digest("hex");
+      const webpPath = pathFor(webpHash);
+      if (!fs.existsSync(webpPath)) fs.writeFileSync(webpPath, result.webp.buffer);
+
+      const jpegHash = crypto.createHash("sha256").update(result.jpeg.buffer).digest("hex");
+      const jpegPath = pathFor(jpegHash);
+      if (!fs.existsSync(jpegPath)) fs.writeFileSync(jpegPath, result.jpeg.buffer);
+
+      const baseName = (path.parse(name || "image").name || "image").trim() || "image";
+      const webpName = `${baseName}.webp`;
+      const jpegName = `${baseName}.jpg`;
+
+      const webpId = uuid("F");
+      const jpegId = uuid("F");
+      const ts = now();
+
+      const insertFile = db.prepare(`INSERT INTO files (id, parent_kind, parent_id, name, mime, size, sha256, path, created_by, created_at)
+                  VALUES (@id, @pk, @pi, @name, @mime, @size, @sha, @path, @by, @ts)`);
+      const writeBoth = db.transaction(() => {
+        insertFile.run({ id: webpId, pk: parentKind, pi: parentId, name: webpName, mime: "image/webp", size: result.webp.size, sha: webpHash, path: webpPath, by: req.user.id, ts });
+        insertFile.run({ id: jpegId, pk: parentKind, pi: parentId, name: jpegName, mime: "image/jpeg", size: result.jpeg.size, sha: jpegHash, path: jpegPath, by: req.user.id, ts });
+      });
+      writeBoth();
+
+      audit({
+        actor: req.user.id,
+        action: "file.upload.transcode",
+        subject: webpId,
+        detail: {
+          parent: `${parentKind}:${parentId}`,
+          sourceMime: result.sourceMime,
+          sourceSize: result.sourceSize,
+          webp: { id: webpId, size: result.webp.size, sha256: webpHash, width: result.webp.width, height: result.webp.height },
+          jpeg: { id: jpegId, size: result.jpeg.size, sha256: jpegHash, width: result.jpeg.width, height: result.jpeg.height },
+        },
+      });
+
+      return {
+        id: webpId,
+        name: webpName,
+        size: result.webp.size,
+        mime: "image/webp",
+        sha256: webpHash,
+        derivative: {
+          id: jpegId,
+          name: jpegName,
+          mime: "image/jpeg",
+          size: result.jpeg.size,
+          sha256: jpegHash,
+        },
+        source: {
+          mime: result.sourceMime,
+          size: result.sourceSize,
+        },
+      };
+    }
+
+    // Default path: store the upload at its SHA-addressed location and
+    // emit a single file row. Dedupe ditches the temp file when another
+    // upload already landed the same content.
+    const destPath = pathFor(uploadedHash);
+    if (!fs.existsSync(destPath)) {
+      fs.renameSync(tmp, destPath);
+    } else {
+      cleanupTmp();
+    }
+
+    const uploadedMime = mimeFinal;
+    const uploadedId = uuid("F");
     db.prepare(`INSERT INTO files (id, parent_kind, parent_id, name, mime, size, sha256, path, created_by, created_at)
                 VALUES (@id, @pk, @pi, @name, @mime, @size, @sha, @path, @by, @ts)`)
       .run({ id: uploadedId, pk: parentKind, pi: parentId, name, mime: uploadedMime, size: uploadedSize, sha: uploadedHash, path: destPath, by: req.user.id, ts: now() });
