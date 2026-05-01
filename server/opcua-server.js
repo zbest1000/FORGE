@@ -7,9 +7,17 @@
 // SCADA and MES systems that cannot consume REST or MQTT" — not
 // optional for industrial deployments.
 //
-// Phase 5 ships a deliberately lightweight implementation:
+// Phases 5 + 7b together ship:
 //   - Browse + Read + Subscribe of the asset hierarchy
 //     (Enterprise → Location → Asset → DataPoint).
+//   - **Historical Read (HistoryRead service, Phase 7b)** — every
+//     binding Variable installs a custom IVariableHistorian whose
+//     `extractDataValues()` delegates to
+//     `server/historians/index.js`'s `readHistorianSamples()`. A
+//     SCADA / MES client doing HA Read pulls real time-series
+//     from whichever backend the binding's historian_point.historian
+//     column points at: sqlite / influxdb / timebase / mssql /
+//     postgresql / mysql.
 //   - Address space derived automatically from `enterprises` /
 //     `locations` / `assets` / `historian_points` / latest values
 //     on `asset_point_bindings.last_value`.
@@ -25,21 +33,21 @@
 //   - Listening port FORGE_OPCUA_SERVER_PORT (default 4840 — the
 //     OPC UA assigned port).
 //   - Start gate: only boots when FORGE_OPCUA_SERVER_ENABLED=1.
-//     Phase 6 may default-on once the address-space refresh
-//     latency is benchmarked.
 //
-// Out of scope for this phase (per plan + spec §15.1):
-//   - Historical Read (HA) — needs InfluxDB historian wiring.
+// Out of scope for these phases (queued):
 //   - Method calls (writeback) — high-risk; gated behind a
-//     dedicated `CAN_WRITE_DEVICE` capability in a later phase.
+//     dedicated `device.write` capability in Phase 7c.
+//   - Live address-space refresh on hierarchy / asset / binding
+//     changes — Phase 7d.
 //   - User-name/password / X.509 user authentication — anonymous
-//     only at v0; SSO + token mapping in Phase 6+.
+//     only at v0; SSO + token mapping later.
 
 import { db, jsonOrDefault } from "./db.js";
 
 let _server = null;
 let _logger = null;
 let _node_opcua = null;
+let _addressSpace = null;
 let _refreshHooks = new Map(); // bindingId → fn(value, ts, quality)
 
 function strictMode(env = process.env) {
@@ -166,6 +174,7 @@ export function refreshOpcuaServerForBinding({ binding, value, ts, quality }) {
 function buildAddressSpace(server) {
   const m = _node_opcua;
   const addressSpace = server.engine.addressSpace;
+  _addressSpace = addressSpace;
   // Custom namespace under `urn:forge:asset-tree`. Every browse
   // path under it derives from the live DB; calling
   // rebuildAddressSpace() (Phase 6) will refresh after big CRUD
@@ -279,7 +288,7 @@ function addBindingVariable(ns, parent, binding) {
   });
 
   const browseName = String(binding.point_name || `binding_${binding.id}`).replace(/[^A-Za-z0-9_\-]/g, "_");
-  ns.addVariable({
+  const variable = ns.addVariable({
     componentOf: parent,
     browseName,
     description: binding.source_path,
@@ -291,6 +300,74 @@ function addBindingVariable(ns, parent, binding) {
       get: () => new m.Variant({ dataType: m.DataType.Double, value: Number(liveValue) }),
     },
   });
+
+  // Phase 7b — install the HistoryRead service on this Variable.
+  // node-opcua's `installHistoricalDataNode(node, { historian })`
+  // accepts a custom IVariableHistorian; we hand it one whose
+  // `extractDataValues()` calls FORGE's `readHistorianSamples()`.
+  // The historian column on the bound `historian_points` row picks
+  // the storage backend (sqlite / influxdb / timebase / mssql /
+  // postgresql / mysql), so a SCADA HA Read query against this
+  // Variable transparently pulls from whichever backend the
+  // operator configured.
+  //
+  // `maxOnlineValues: 0` disables node-opcua's in-memory ring
+  // buffer — we don't want it racing the historian.
+  if (binding.point_id && _addressSpace?.installHistoricalDataNode) {
+    try {
+      const historian = makeForgeHistorian(binding.point_id);
+      _addressSpace.installHistoricalDataNode(variable, { historian, maxOnlineValues: 0 });
+    } catch (err) {
+      _logger?.warn?.({ err: String(err?.message || err), bindingId: binding.id }, "[opcua-server] HA install failed");
+    }
+  }
+}
+
+/**
+ * Custom IVariableHistorian. node-opcua calls `extractDataValues()`
+ * on every HistoryReadRaw request that lands on a Variable we've
+ * installed historizing on. We translate the request into a
+ * FORGE-historian query and return DataValues.
+ *
+ * `push()` is intentionally a no-op: every sample dispatched
+ * through the connector orchestrator already lands in the FORGE
+ * historian (sqlite cache + write-through to the configured
+ * backend) via `dispatchSample()`. Letting node-opcua double-
+ * account in its own ring buffer would cause duplicate samples
+ * on HA Read.
+ */
+function makeForgeHistorian(pointId) {
+  const m = _node_opcua;
+  return {
+    async push(/* dataValue */) { /* see comment above */ },
+    extractDataValues(historyReadRaw, maxNumberToExtract, isReversed, _reverseDataValue, callback) {
+      (async () => {
+        const point = db.prepare("SELECT * FROM historian_points WHERE id = ?").get(pointId);
+        if (!point) return callback(null, []);
+        const since = historyReadRaw.startTime
+          ? new Date(historyReadRaw.startTime).toISOString()
+          : new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const until = historyReadRaw.endTime
+          ? new Date(historyReadRaw.endTime).toISOString()
+          : new Date().toISOString();
+        const limit = Math.max(1, Math.min(Number(maxNumberToExtract) || 1000, 50_000));
+        try {
+          const { readHistorianSamples } = await import("./historians/index.js");
+          const { samples } = await readHistorianSamples(point, { since, until, limit });
+          const out = samples.map(s => new m.DataValue({
+            value: { dataType: m.DataType.Double, value: Number(s.value) },
+            sourceTimestamp: new Date(s.ts),
+            statusCode: m.StatusCodes.Good,
+          }));
+          if (isReversed) out.reverse();
+          callback(null, out);
+        } catch (err) {
+          _logger?.warn?.({ err: String(err?.message || err), pointId }, "[opcua-server] HA extract failed");
+          callback(null, []);
+        }
+      })();
+    },
+  };
 }
 
 // Test-harness introspection.
