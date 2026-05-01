@@ -44,10 +44,31 @@ export function setAttr(elt, name, value) {
 }
 
 // Selectors for "looks like a button but isn't" — applied uniformly via
-// a delegated handler installed by `installRowKeyboardHandlers()`. Keeping
-// this list central means screens don't have to repeat keyboard wiring.
+// a delegated handler installed by `installRowKeyboardHandlers()`.
+// Keeping this list central means screens don't have to repeat keyboard
+// wiring.
+//
+// UX-E note: this is now a SAFETY NET, not a load-bearing default. We
+// removed `.activity-row[onclick]` from the selector because nothing in
+// the codebase sets the inline `onclick` HTML attribute — every
+// click-handler in `el(... { onClick })` goes through `addEventListener`
+// at the JS level, so the `[onclick]` attribute selector never matched.
+// The remaining entries cover the genuinely-can't-be-a-button cases:
+//   * `tr.row-clickable` — `<tr>` can't be a `<button>`, so we keep the
+//     observer for the few clickable table rows.
+//   * `.kanban-card` — the wrapper is `draggable`; using `<button>` for a
+//     drag handle is inconsistent across browsers, so the workBoard
+//     keeps a `<div>`.
+//   * `.activity-row.row-clickable` — explicit opt-in for any row that
+//     can't be a button (e.g. legacy tr-shaped HTML inside templates).
+//   * Tree items + dock items + chips + palette items + revision rows
+//     are progressively migrating to real `<button>` elements; the
+//     observer covers the holdouts.
+//
+// New screens should prefer rendering a real `<button type="button">`
+// rather than relying on this observer. The observer's only job is to
+// catch shapes where a button isn't structurally possible.
 const ROW_BUTTON_SELECTOR = [
-  ".activity-row[onclick]",
   ".activity-row.row-clickable",
   ".tree-item",
   ".dock-item",
