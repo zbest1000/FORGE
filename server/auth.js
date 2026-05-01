@@ -19,9 +19,22 @@ import { audit } from "./audit.js";
 //   - `admin.edit`     gates compliance writes (DSAR, legal-hold,
 //     ROPA, evidence, AI-system inventory). `admin.view` keeps
 //     read-only access.
+// `historian.sql.raw` is an additional, separately-scoped capability for
+// authoring free-form `SELECT` query templates against external SQL
+// historian sources (Phase 3 of the Asset Dashboard plan; see
+// docs/INDUSTRIAL_EDGE_PLATFORM_SPEC.md §6 + §8). It is a deliberately
+// narrow privilege: holding `integration.write` is necessary but not
+// sufficient — the operator must additionally hold `historian.sql.raw`
+// because authored SQL crosses tenant boundaries via the SQL adapter
+// and is therefore higher-risk than a topic / node-id template.
+//
+// Default grant: Workspace Admin only. Organization Owner inherits via
+// the `"*"` wildcard. Integration Admin is intentionally NOT granted —
+// integrations team can wire schema-defined sources without authoring
+// raw SQL.
 export const CAPABILITIES = {
   "Organization Owner":   ["*"],
-  "Workspace Admin":      ["view","create","edit","approve","incident.command","integration.read","integration.write","ai.configure","admin.view","admin.edit","webhook.write"],
+  "Workspace Admin":      ["view","create","edit","approve","incident.command","integration.read","integration.write","ai.configure","admin.view","admin.edit","webhook.write","historian.sql.raw"],
   "Team Space Admin":     ["view","create","edit","approve","integration.read","ai.configure"],
   "Engineer/Contributor": ["view","create","edit"],
   "Reviewer/Approver":    ["view","approve","edit.markup"],

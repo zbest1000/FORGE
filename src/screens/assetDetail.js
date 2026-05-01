@@ -143,22 +143,24 @@ function dataTabStub(asset, dataSources) {
 }
 
 function configTabStub(asset) {
-  return el("div", { class: "stack" }, [
-    card("Asset Configuration", el("div", { class: "stack" }, [
-      el("p", { class: "muted" }, [
-        "Pick an existing profile or define a one-time custom mapping for this asset's data points (temperature, pressure, …) against a registered MQTT broker, OPC UA endpoint, or SQL data source.",
-      ]),
-      el("p", { class: "tiny muted" }, [
-        "Profiles and the apply-profile flow ship in Phase 2/3. Until then, asset bindings are stored only via direct API access (POST /api/assets/:id/apply-profile), which Phase 3 exposes through this form.",
-      ]),
-      el("div", { class: "row wrap" }, [
-        el("div", { class: "stack", style: { gap: "2px" } }, [
-          el("div", { class: "tiny muted" }, ["Asset id"]),
-          el("code", { class: "mono" }, [asset.id]),
-        ]),
-      ]),
-    ]), { subtitle: "Phase 3 form lands here — see docs/INDUSTRIAL_EDGE_PLATFORM_SPEC.md §4-§9." }),
+  // Phase 3: mounts `src/screens/assetConfig.js` which calls
+  // /api/assets/:id/bindings + /api/asset-profiles + /api/me to build
+  // the full configuration UI (apply-profile + custom-mapping + test
+  // + delete). Lazy-imported because the Configuration tab is opened
+  // less often than Overview / Data and the asset-config module pulls
+  // in extra modal helpers.
+  const target = el("div", { id: "asset-config-target", class: "stack" }, [
+    el("div", { class: "muted tiny" }, ["Loading configuration…"]),
   ]);
+  import("./assetConfig.js").then((mod) => {
+    mod.renderAssetConfig({ assetId: asset.id, target });
+  }).catch((err) => {
+    target.innerHTML = "";
+    target.append(el("div", { class: "callout danger" }, [
+      `Failed to load asset config: ${err?.message || err}`,
+    ]));
+  });
+  return target;
 }
 
 function locationById(id) {
