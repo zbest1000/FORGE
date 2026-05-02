@@ -1,4 +1,6 @@
 import { defineConfig } from "vite";
+import fs from "node:fs";
+import path from "node:path";
 
 // Vite plugin: strip the esm.sh import map from index.html in production
 // builds. The map is only used by `python3 -m http.server` source-mode
@@ -13,6 +15,29 @@ function stripDevImportMap() {
       return html
         .replace(/<!--\s*Import map[\s\S]*?-->/g, "")
         .replace(/<script type="importmap">[\s\S]*?<\/script>\s*/g, "");
+    },
+  };
+}
+
+// Vite plugin: copy a small set of root-level static files into dist on
+// build. We don't use Vite's default `public/` directory because dev mode
+// (FORGE_SERVE_SOURCE=1) serves the repo root directly, and moving these
+// files into `public/` would break that path. So the source-of-truth lives
+// at the repo root and we copy on build.
+function copyRootStatics() {
+  const FILES = ["icon.svg", "manifest.webmanifest"];
+  return {
+    name: "forge:copy-root-statics",
+    apply: "build",
+    closeBundle() {
+      for (const name of FILES) {
+        const src = path.resolve(name);
+        const dest = path.resolve("dist", name);
+        if (fs.existsSync(src)) {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.copyFileSync(src, dest);
+        }
+      }
     },
   };
 }
@@ -32,7 +57,7 @@ function stripDevImportMap() {
 
 export default defineConfig({
   appType: "spa",
-  plugins: [stripDevImportMap()],
+  plugins: [stripDevImportMap(), copyRootStatics()],
   build: {
     target: "es2022",
     sourcemap: true,

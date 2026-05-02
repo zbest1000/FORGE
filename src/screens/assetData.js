@@ -26,7 +26,7 @@
 import { el, mount, card, badge, select, toast } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { api, getToken } from "../core/api.js";
-import { historianChart } from "../core/charts.js";
+import { historianChart, sparkline } from "../core/charts.js";
 
 const SS_MODE = (assetId) => `asset.data.mode.${assetId}`;
 const SS_RANGE = (assetId) => `asset.data.range.${assetId}`;
@@ -94,15 +94,85 @@ export async function renderAssetData({ assetId, target }) {
   }
 }
 
-function renderDemoNotice(_assetId) {
-  return card("Live & Historical Data", el("div", { class: "stack" }, [
-    el("p", { class: "muted" }, [
-      "Live charts and historical trends are server-backed. Sign in to a FORGE server to see real-time bindings stream into this view.",
+function renderDemoNotice(assetId) {
+  // Demo mode (no live server) — render the historian points seeded
+  // on this asset directly. Each point gets a sparkline of its
+  // seeded samples plus a status row with last-known VQT. This isn't
+  // SSE-driven (no live updates) but gives the user a real, populated
+  // tab instead of a "sign in to see anything" placeholder.
+  const d = state.data || {};
+  const points = (d.historianPoints || []).filter(p => p.assetId === assetId);
+  const samplesByPoint = (() => {
+    const map = new Map();
+    for (const s of (d.historianSamples || [])) {
+      const arr = map.get(s.pointId) || [];
+      arr.push(s);
+      map.set(s.pointId, arr);
+    }
+    for (const arr of map.values()) arr.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+    return map;
+  })();
+
+  const bindings = (d.dataSources || []).filter(ds => ds.assetId === assetId);
+
+  if (!points.length && !bindings.length) {
+    return card("Live & Historical Data", el("div", { class: "stack" }, [
+      el("p", { class: "muted" }, [
+        "No historian points or data sources are seeded for this asset yet. ",
+        "Apply a profile under the Configuration tab to wire signals from MQTT, OPC UA, or SQL.",
+      ]),
+    ]));
+  }
+
+  const grid = el("div", { class: "card-grid" });
+  for (const p of points) {
+    const samples = samplesByPoint.get(p.id) || [];
+    const last = samples[samples.length - 1];
+    const series = samples.map(s => Number(s.value)).filter(v => Number.isFinite(v));
+    const node = el("div", { class: "stack" }, [
+      el("div", { class: "row wrap" }, [
+        el("span", { class: "kpi-value", style: { fontSize: "24px" } }, [
+          last && Number.isFinite(Number(last.value)) ? Number(last.value).toFixed(2) : "—",
+        ]),
+        el("span", { class: "tiny muted" }, [p.unit || ""]),
+        last ? badge(last.quality || "—", last.quality === "Good" ? "success" : last.quality === "Bad" ? "danger" : "warn") : null,
+      ]),
+      series.length
+        ? sparkline(series, { width: 280, height: 60, label: p.name })
+        : el("div", { class: "tiny muted" }, ["No samples seeded yet."]),
+      el("div", { class: "tiny muted" }, [
+        last ? `Last sample ${new Date(last.ts).toLocaleString()}` : "No samples",
+      ]),
+      el("div", { class: "tiny mono muted" }, [p.tag || ""]),
+    ]);
+    grid.append(card(`${p.name || p.id}`, node, { subtitle: p.tag }));
+  }
+
+  return el("div", { class: "stack" }, [
+    el("div", { class: "row spread" }, [
+      el("div", {}, [
+        el("div", { class: "strong" }, ["Live & Historical (offline)"]),
+        el("div", { class: "tiny muted" }, [
+          `${points.length} historian point${points.length === 1 ? "" : "s"} · ${bindings.length} data source${bindings.length === 1 ? "" : "s"} · seeded values`,
+        ]),
+      ]),
+      el("div", { class: "row" }, [
+        badge("DEMO", "warn", { title: "Connect to a FORGE server for live SSE updates and historical queries." }),
+      ]),
     ]),
-    el("p", { class: "tiny muted" }, [
-      "Phase 1 already surfaces seeded historian points under the Overview → Signals sub-tab; that path remains the offline fallback.",
-    ]),
-  ]));
+    grid,
+    bindings.length
+      ? card("Data sources", el("table", { class: "table" }, [
+          el("thead", {}, [el("tr", {}, ["Connector", "Endpoint", "Last value", "Status"].map(h => el("th", {}, [h])))]),
+          el("tbody", {}, bindings.map(b => el("tr", {}, [
+            el("td", {}, [badge((b.kind || "—").toUpperCase(), "info")]),
+            el("td", { class: "mono tiny" }, [b.endpoint || "—"]),
+            el("td", {}, [b.lastValue || "—"]),
+            el("td", {}, [badge(b.status || "—", b.status === "live" ? "success" : b.status === "stale" ? "warn" : "")]),
+          ]))),
+        ]), { subtitle: "Seeded source bindings — live updates require a server connection." })
+      : null,
+  ]);
 }
 
 function headerRow({ assetId, mode, range }) {

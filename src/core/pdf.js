@@ -1,8 +1,21 @@
-// PDF.js (Apache 2.0) wrapper. Loads on demand, sets the worker URL to the
-// same pinned version that the import map resolves, and renders pages into
-// canvas elements.
+// PDF.js (Apache 2.0) wrapper. Loads on demand, sets the worker URL to a
+// locally-bundled file (Vite emits it into /assets via `?url`), and
+// renders pages into canvas elements.
+//
+// Why local-bundled instead of an esm.sh CDN URL: the CDN dependency
+// breaks under strict CSP, in air-gapped deploys, and any time the CDN
+// itself is slow / down. The `?url` Vite import makes pdfjs's worker
+// part of the bundle the rest of the app already trusts.
 
 import { vendor } from "./vendor.js";
+// Vite resolves this to a hashed asset URL; pdfjs spawns a Worker against
+// it. In source-mode dev (no Vite bundling), the import map maps
+// pdfjs-dist to esm.sh, and we fall back to that worker URL below.
+// `?url` is a Vite suffix; tsc has no first-class understanding of it
+// (no @types/vite asset-suffix declaration ships by default), so we
+// suppress the resolution error here. The runtime behaviour is fine.
+// @ts-ignore — Vite asset-URL import
+import workerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 
 let _pdfjs = null;
 async function ensure() {
@@ -10,9 +23,13 @@ async function ensure() {
   try {
     const lib = await vendor.pdfjs();
     if (!lib) return null;
-    // Worker URL — same pinned version.
     if (lib.GlobalWorkerOptions && !lib.GlobalWorkerOptions.workerSrc) {
-      lib.GlobalWorkerOptions.workerSrc = "https://esm.sh/pdfjs-dist@4.6.82/build/pdf.worker.min.mjs";
+      // Prefer the bundled worker URL. If the import resolves to a falsy
+      // value (e.g. source-mode dev where Vite isn't transforming this
+      // file), fall through to the pinned esm.sh worker so the viewer
+      // still works.
+      lib.GlobalWorkerOptions.workerSrc = workerUrl
+        || "https://esm.sh/pdfjs-dist@4.6.82/build/pdf.worker.min.mjs";
     }
     _pdfjs = lib;
     return lib;
@@ -22,6 +39,25 @@ async function ensure() {
 export async function openPdf(url) {
   const pdfjs = await ensure();
   if (!pdfjs) return null;
+  // PDF.js's worker fetches the URL itself by default. That works for
+  // ordinary HTTP(S) URLs, but `blob:` URLs created by `URL.createObjectURL`
+  // can fail inside the worker context with "Unexpected server response
+  // (0) while retrieving PDF" — the blob was registered against the main
+  // window's URL store and the worker can't see it. Same hazard with
+  // `data:` URLs over a certain size on some browsers.
+  //
+  // Workaround: read the bytes ourselves on the main thread and hand the
+  // ArrayBuffer to pdfjs via `data`, which sidesteps the worker fetch.
+  const isLocal = typeof url === "string" && (url.startsWith("blob:") || url.startsWith("data:"));
+  if (isLocal) {
+    const resp = await fetch(url);
+    if (!resp.ok && resp.status !== 0) {
+      throw new Error(`Failed to fetch local PDF (${resp.status})`);
+    }
+    const buf = await resp.arrayBuffer();
+    const loading = pdfjs.getDocument({ data: new Uint8Array(buf) });
+    return loading.promise;
+  }
   const loading = pdfjs.getDocument({ url });
   return loading.promise;
 }

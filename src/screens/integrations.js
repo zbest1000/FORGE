@@ -15,6 +15,7 @@ import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { recentEvents, listDeadLetters, replay } from "../core/events.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 // Connector kinds the editor offers. Keep in sync with
 // `src/screens/home.js::integrationHealth` and the kind-specific
@@ -47,9 +48,14 @@ export function renderIntegrations() {
   mount(root, [
     el("div", { class: "row wrap", style: { justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" } }, [
       el("div", { class: "stack", style: { gap: "2px" } }, [
-        el("h2", { style: { margin: "0" } }, ["Integrations"]),
+        el("h2", { style: { margin: "0", display: "inline-flex", alignItems: "center" } }, ["Integrations", helpHint("forge.integrations")]),
         el("div", { class: "tiny muted" }, [
           "Connectors that publish into the canonical UNS. Audit at /admin/audit.",
+        ]),
+        el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+          helpLinkChip("forge.mqtt",  "MQTT bridge"),
+          helpLinkChip("forge.opcua", "OPC UA bridge"),
+          helpLinkChip("forge.audit-chain", "Audit chain"),
         ]),
       ]),
       el("button", {

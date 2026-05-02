@@ -20,10 +20,58 @@ const SEED_MAPPINGS = [
   { erp: "CostCenter",    forge: "TeamSpace",        status: "conflict",lastSync: "1 hr ago",   conflicts: 3 },
 ];
 
+// Each conflict carries a full snapshot of both records so the
+// "View differences" modal can show the entire side-by-side diff,
+// not just the single conflicting field. The `field` named on the
+// conflict is the field that triggered the queue entry; other fields
+// may also differ and the diff view surfaces them all.
 const SEED_CONFLICTS = [
-  { id: "ERP-C-1", erp: "WorkOrder", externalId: "WO-99221", field: "assignee",  erpValue: "jsingh", forgeValue: "U-1", resolved: false },
-  { id: "ERP-C-2", erp: "WorkOrder", externalId: "WO-99222", field: "due_date",  erpValue: "2026-05-10", forgeValue: "2026-05-15", resolved: false },
-  { id: "ERP-C-3", erp: "CostCenter",externalId: "CC-210",   field: "name",      erpValue: "Controls East", forgeValue: "Controls Engineering", resolved: false },
+  {
+    id: "ERP-C-1", erp: "WorkOrder", externalId: "WO-99221",
+    field: "assignee", erpValue: "jsingh", forgeValue: "U-1", resolved: false,
+    erpRecord: {
+      id: "WO-99221", subject: "Inspect HX-01 outlet temperature alarm",
+      assignee: "jsingh", priority: 2, status: "open",
+      due_date: "2026-05-08", cost_center: "CC-210",
+      created_at: "2026-04-30T10:12:00Z", updated_at: "2026-05-02T08:55:00Z",
+    },
+    forgeRecord: {
+      id: "WI-101", title: "Verify terminal wiring A01-W",
+      assigneeId: "U-1", severity: "medium", status: "In Progress",
+      due: "2026-05-08", projectId: "PRJ-1",
+      createdAt: "2026-04-30T10:12:00Z", updatedAt: "2026-05-02T07:01:00Z",
+    },
+  },
+  {
+    id: "ERP-C-2", erp: "WorkOrder", externalId: "WO-99222",
+    field: "due_date", erpValue: "2026-05-10", forgeValue: "2026-05-15", resolved: false,
+    erpRecord: {
+      id: "WO-99222", subject: "P&ID Package 3 — utilities revision",
+      assignee: "rokafor", priority: 3, status: "in_progress",
+      due_date: "2026-05-10", cost_center: "CC-210",
+      created_at: "2026-04-22T09:00:00Z", updated_at: "2026-05-01T14:32:00Z",
+    },
+    forgeRecord: {
+      id: "WI-102", title: "Missing terminal strip at TB-3",
+      assigneeId: "U-2", severity: "high", status: "In Review",
+      due: "2026-05-15", projectId: "PRJ-2",
+      createdAt: "2026-04-22T09:00:00Z", updatedAt: "2026-04-30T11:42:00Z",
+    },
+  },
+  {
+    id: "ERP-C-3", erp: "CostCenter", externalId: "CC-210",
+    field: "name", erpValue: "Controls East", forgeValue: "Controls Engineering", resolved: false,
+    erpRecord: {
+      id: "CC-210", code: "CC-210", name: "Controls East",
+      owner: "lpatel", region: "NA-East", active: true,
+      created_at: "2024-01-15T00:00:00Z", updated_at: "2026-04-12T08:00:00Z",
+    },
+    forgeRecord: {
+      id: "TS-1", code: "CC-210", name: "Controls Engineering",
+      ownerId: "U-2", region: "NA-East", active: true,
+      createdAt: "2024-01-15T00:00:00Z", updatedAt: "2026-03-01T08:00:00Z",
+    },
+  },
 ];
 
 export function renderERP() {
@@ -63,9 +111,10 @@ export function renderERP() {
             el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["ERP"]), c.erpValue]),
             el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["FORGE"]), c.forgeValue]),
           ]),
-          c.resolved ? null : el("div", { class: "row" }, [
+          c.resolved ? null : el("div", { class: "row wrap" }, [
             el("button", { class: "btn sm primary", disabled: !can("integration.write"), onClick: () => resolveConflict(c, "erp") }, ["Accept ERP"]),
             el("button", { class: "btn sm", disabled: !can("integration.write"), onClick: () => resolveConflict(c, "forge") }, ["Keep FORGE"]),
+            el("button", { class: "btn sm", onClick: () => viewDifferences(c) }, ["View differences"]),
             el("button", { class: "btn sm ghost", onClick: () => previewWriteback(c) }, ["Preview writeback"]),
           ]),
         ])),
@@ -120,6 +169,103 @@ function resolveConflict(c, direction) {
   }, { source: "erp:s4", source_type: "erp" });
 
   toast(`Conflict ${c.id} resolved (${direction})`, "success");
+}
+
+/**
+ * Side-by-side diff modal. Computes the union of fields across both
+ * records (ERP and FORGE) and renders a row per field, highlighting
+ * rows where the values differ. The conflict's named field is
+ * specifically marked so it stands out in the noise.
+ */
+function viewDifferences(c) {
+  const erpRec   = c.erpRecord   || synthRecord(c, "erp");
+  const forgeRec = c.forgeRecord || synthRecord(c, "forge");
+
+  // Build the union of keys, preserving order: ERP record's keys first
+  // (operators tend to think in the source-of-record's shape) then
+  // anything FORGE has that ERP doesn't.
+  const seen = new Set();
+  /** @type {string[]} */
+  const fields = [];
+  for (const k of Object.keys(erpRec))   { if (!seen.has(k)) { seen.add(k); fields.push(k); } }
+  for (const k of Object.keys(forgeRec)) { if (!seen.has(k)) { seen.add(k); fields.push(k); } }
+
+  const equiv = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+  let differingCount = 0;
+  const rows = fields.map(k => {
+    const ev = erpRec[k];
+    const fv = forgeRec[k];
+    const same = equiv(ev, fv);
+    if (!same) differingCount++;
+    const isFocused = k === c.field;
+    return el("tr", {
+      class: `diff-row ${same ? "diff-same" : "diff-different"} ${isFocused ? "diff-focused" : ""}`,
+    }, [
+      el("td", { class: "mono tiny", style: { whiteSpace: "nowrap", color: same ? "var(--muted)" : "var(--text-strong)" } }, [
+        k, isFocused ? el("span", { class: "tiny", style: { color: "var(--warn)", marginLeft: "4px" } }, ["⚑"]) : null,
+      ]),
+      el("td", { class: "mono tiny", style: { whiteSpace: "pre-wrap", wordBreak: "break-all" } }, [fmt(ev)]),
+      el("td", { class: "mono tiny", style: { whiteSpace: "pre-wrap", wordBreak: "break-all" } }, [fmt(fv)]),
+      el("td", { class: "tiny" }, [
+        same
+          ? el("span", { class: "muted" }, ["="])
+          : el("span", { style: { color: "var(--danger)", fontWeight: 700 } }, ["≠"]),
+      ]),
+    ]);
+  });
+
+  modal({
+    title: `Differences · ${c.erp} ${c.externalId}`,
+    body: el("div", { class: "stack" }, [
+      el("div", { class: "row wrap", style: { gap: "8px" } }, [
+        badge(`${differingCount} differing`, differingCount > 0 ? "warn" : "success"),
+        badge(`${fields.length} field${fields.length === 1 ? "" : "s"} compared`, "info"),
+        c.field ? el("span", { class: "tiny muted" }, [`Triggering field: ${c.field}`]) : null,
+      ]),
+      el("div", { class: "diff-table-wrap", style: { maxHeight: "60vh", overflow: "auto", border: "1px solid var(--border)", borderRadius: "6px" } }, [
+        el("table", { class: "table diff-table" }, [
+          el("thead", {}, [el("tr", {}, [
+            el("th", { style: { width: "20%" } }, ["Field"]),
+            el("th", {}, [el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["ERP"]), c.erp])]),
+            el("th", {}, [el("span", { class: "chip" }, [el("span", { class: "chip-kind" }, ["FORGE"]), forgeRec?.id || "—"])]),
+            el("th", { style: { width: "40px" } }, [""]),
+          ])]),
+          el("tbody", {}, rows),
+        ]),
+      ]),
+      el("div", { class: "tiny muted" }, [
+        "Rows with ≠ differ between systems. The triggering field is marked ⚑. ",
+        "Use ", el("strong", {}, ["Accept ERP"]), " to overwrite FORGE with the ERP value, ",
+        el("strong", {}, ["Keep FORGE"]), " to push FORGE's value back through the writeback queue.",
+      ]),
+    ]),
+    actions: [
+      { label: "Close" },
+      { label: "Accept ERP", variant: "primary", onClick: () => {
+        if (!can("integration.write")) { toast("Requires integration.write", "warn"); return; }
+        resolveConflict(c, "erp");
+      }},
+      { label: "Keep FORGE", onClick: () => {
+        if (!can("integration.write")) { toast("Requires integration.write", "warn"); return; }
+        resolveConflict(c, "forge");
+      }},
+    ],
+  });
+}
+
+// Build a minimal record from a conflict when the seed lacks the
+// full snapshot. Enough to make the diff modal show something
+// meaningful even for newly-arrived conflicts.
+function synthRecord(c, side) {
+  const base = { id: c.externalId, [c.field]: side === "erp" ? c.erpValue : c.forgeValue };
+  return base;
+}
+
+function fmt(v) {
+  if (v == null) return "—";
+  if (typeof v === "object") return JSON.stringify(v, null, 2);
+  return String(v);
 }
 
 function previewWriteback(c) {

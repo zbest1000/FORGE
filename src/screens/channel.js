@@ -17,6 +17,7 @@ import { can } from "../core/permissions.js";
 import { follow, unfollow, isFollowing, fanout } from "../core/subscriptions.js";
 import { renderMarkdown } from "../core/md.js";
 import { notifyMentions, highlightMentions, resolveMention } from "../core/mentions.js";
+import { pickObject } from "../core/objectPicker.js";
 
 export function renderChannel({ id }) {
   const root = document.getElementById("screenContainer");
@@ -204,10 +205,26 @@ function linkifyText(text, d) {
   // tokens for clickable chips. Both stages are XSS-safe (DOMPurify + our
   // own chip renderer).
   const md = renderMarkdown(text || "");
-  // Observe once for the async swap-in; upgrade tokens to chips after render.
-  queueMicrotask(() => upgradeTokens(md, d));
-  new MutationObserver(() => upgradeTokens(md, d)).observe(md, { childList: true, subtree: true, characterData: true });
   md.classList.add("text");
+  // Run the chip-upgrade pass once after the markdown DOM has settled
+  // (marked + DOMPurify can populate the node asynchronously when the
+  // vendor bundle is imported lazily on first use).
+  queueMicrotask(() => upgradeTokens(md, d));
+  // Safety fallback: if markdown content streams in after our microtask,
+  // upgrade ONCE more on the first observed mutation and then disconnect.
+  //
+  // The previous implementation kept the observer alive for the lifetime
+  // of the message and re-ran upgradeTokens on every DOM mutation. But
+  // upgradeTokens itself mutates the DOM (replaceChild for chips), which
+  // re-triggered the observer, which re-ran upgradeTokens — a feedback
+  // loop that froze the channel screen as soon as a busy thread had a
+  // few messages with object tokens. Disconnecting BEFORE running the
+  // upgrade prevents the chip-replacement writes from feeding back in.
+  const obs = new MutationObserver(() => {
+    obs.disconnect();
+    upgradeTokens(md, d);
+  });
+  obs.observe(md, { childList: true, subtree: true });
   return md;
 }
 
@@ -253,9 +270,16 @@ function jumpById(id, d) {
 }
 
 async function linkObject(composer) {
-  const val = await prompt({ title: "Link an object", message: "Enter ID (DOC-1, AS-1, WI-101, REV-2-C, INC-4412):", placeholder: "DOC-1" });
-  if (!val) return;
-  composer.value += (composer.value ? " " : "") + `[${val.trim()}]`;
+  // Replace the type-the-ID prompt with the searchable picker. Operators
+  // shouldn't have to memorise IDs to link a doc / asset / work item /
+  // revision / incident / channel into a message.
+  const obj = await pickObject({
+    title: "Link an object",
+    placeholder: "Search docs, assets, work items, revisions, incidents…",
+    kinds: ["doc", "drawing", "asset", "workItem", "revision", "incident", "channel", "teamSpace", "project"],
+  });
+  if (!obj) return;
+  composer.value += (composer.value ? " " : "") + `[${obj.id}]`;
   composer.focus();
 }
 

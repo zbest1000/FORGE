@@ -18,6 +18,13 @@ export function renderUNSIndex() {
 
   const root = document.getElementById("screenContainer");
 
+  // Wrap the live-value card in a stable host element so the live-tick
+  // refresher (driven from app.js) can swap its contents without tearing
+  // down the surrounding DOM. Without this, the entire screen used to be
+  // re-rendered every 1.5s, which reset scroll position so users couldn't
+  // browse the namespace tree on long pages.
+  const liveHost = el("div", { id: "uns-live-host", class: "uns-live-host" }, [renderLiveCard(selectedId)]);
+
   mount(root, [
     headerRow(info),
     el("div", { class: "three-col" }, [
@@ -26,9 +33,27 @@ export function renderUNSIndex() {
         renderUNSIndex();
       }), { subtitle: "ISA-95 hierarchy · i3X composition graph" }),
       renderDetailCard(selectedId, objects),
-      renderLiveCard(selectedId),
+      liveHost,
     ]),
   ]);
+}
+
+/**
+ * Refresh ONLY the live-value card without touching the rest of the DOM.
+ * Driven by the slow-cadence interval in app.js — keeps VQT values fresh
+ * while leaving scroll position, focus, and tree expand-state intact.
+ *
+ * Returns true if anything was updated (so the caller knows whether the
+ * screen is still on /uns).
+ */
+export function refreshUNSLive() {
+  const host = document.getElementById("uns-live-host");
+  if (!host) return false;
+  const selectedKey = "uns.selected";
+  const selectedId = sessionStorage.getItem(selectedKey);
+  if (!selectedId) return false;
+  host.replaceChildren(renderLiveCard(selectedId));
+  return true;
 }
 
 function headerRow(info) {
@@ -200,18 +225,9 @@ function renderLiveCard(elementId) {
     );
   }
 
-  // Keep live card fresh while the user stays on the screen.
-  if (state.route && state.route.startsWith("/uns")) {
-    setTimeout(() => {
-      if (state.route && state.route.startsWith("/uns")) {
-        const container = document.getElementById("screenContainer");
-        // Only re-render the live card in place by scheduling a cheap rebuild.
-        if (container && container.isConnected) {
-          // no-op debounce; full re-render handled by store subscriber when ticks fire.
-        }
-      }
-    }, 1200);
-  }
+  // The dead setTimeout block previously here was a no-op; the actual
+  // refresh now happens via `refreshUNSLive()` driven from app.js. Leaving
+  // the function pure makes that surgical update path simpler.
 
   return card("Live value / VQT", body, { subtitle: "i3X /objects/value + /history" });
 }

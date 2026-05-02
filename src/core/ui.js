@@ -548,6 +548,31 @@ export function textarea(props = {}) {
   return el("textarea", { class: "textarea", ...props });
 }
 
+// Free-form input backed by a `<datalist>` for autocomplete suggestions.
+// Returns a wrapper element (`<span class="input-wrap">`) containing the
+// `<input>` + the `<datalist>`; access the `<input>` via `.input`.
+//
+// Pattern: callers want users to be able to TYPE a new value (datalist
+// allows that — unlike `<select>`) but also browse / pick from values
+// that already exist in the workspace. Uses native browser autocomplete
+// so it stays accessible and lightweight (no popover machinery).
+let _datalistSeq = 0;
+export function inputWithSuggestions(suggestions = [], props = {}) {
+  const id = `dl-${++_datalistSeq}`;
+  const dedup = Array.from(new Set((suggestions || []).filter(s => s != null && String(s).trim() !== "")));
+  dedup.sort((a, b) => String(a).localeCompare(String(b)));
+  const inp = el("input", { class: "input", list: id, ...props });
+  const dl = el("datalist", { id });
+  for (const s of dedup) {
+    const opt = document.createElement("option");
+    opt.value = String(s);
+    dl.append(opt);
+  }
+  const wrap = el("span", { class: "input-wrap", style: { display: "block", position: "relative" } }, [inp, dl]);
+  /** @type {any} */ (wrap).input = inp;
+  return wrap;
+}
+
 // Tabs primitive — single source of truth for tab strips. Persists the
 // active tab in sessionStorage when `sessionKey` is provided.
 //

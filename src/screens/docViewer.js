@@ -10,7 +10,7 @@
 //   * Revision timeline with supersede chain markers
 //   * Approval banner + request-approval flow (delegated to /approvals)
 
-import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea, prompt, loadingState } from "../core/ui.js";
+import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea, prompt, loadingState, inputWithSuggestions } from "../core/ui.js";
 import { idle } from "../core/idle.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
@@ -22,6 +22,8 @@ import { openPdf, renderPage } from "../core/pdf.js";
 import { parseCSV } from "../core/csv.js";
 import { detectCad, supportedExtensions } from "../core/cad.js";
 import { renderCad } from "../core/cad-viewer.js";
+import { currentUserId, currentUser, currentRole } from "../core/groups.js";
+import { buildAnnotationOverlay, listAnnotations } from "../core/pdfAnnotations.js";
 
 export function renderDocsIndex() {
   const root = document.getElementById("screenContainer");
@@ -145,6 +147,19 @@ async function ingestFiles(files) {
     const ext = (f.name.split(".").pop() || "").toLowerCase();
     const discipline = ext === "dwg" || ext === "dxf" || ext === "ifc" ? "Mechanical"
       : ext === "pdf" ? "Process" : ext === "csv" ? "Data" : "General";
+    // Capture WHO uploaded so the metadata editor can grant edit
+    // privileges back to the original uploader without requiring the
+    // wider `edit` capability — matches the spec where the operator
+    // who attached the file can keep tweaking discipline / package /
+    // sensitivity until someone else takes over the document.
+    const uid = currentUserId();
+    const u = currentUser();
+    const uploaderCtx = {
+      userId: uid,
+      name: u?.name || null,
+      role: currentRole() || null,
+      ts,
+    };
     const doc = {
       id: docId,
       name: f.name,
@@ -156,8 +171,14 @@ async function ingestFiles(files) {
       projectId: null,
       acl: {},
       labels: ["uploaded"],
-      created_at: ts,
-      updated_at: ts,
+      uploaderId: uid,
+      uploaderContext: uploaderCtx,
+      // Use camelCase consistently — the doc viewer reads `createdAt`
+      // / `updatedAt` everywhere (matches the seed shape). Snake_case
+      // here would surface as `Invalid Date` in metadata + revision
+      // banner + transmittal templates.
+      createdAt: ts,
+      updatedAt: ts,
     };
     const rev = {
       id: revId,
@@ -170,8 +191,14 @@ async function ingestFiles(files) {
       blobName: f.name,
       blobType: f.type,
       blobSize: f.size,
-      created_at: ts,
-      updated_at: ts,
+      // Mirror the file's MIME type into `assetMime` so the PDF / image
+      // / CSV detector picks it up — the renderer keys off `assetMime`,
+      // and a blob: URL has no extension to fall back on.
+      assetMime: f.type || guessMime(f.name) || "",
+      uploaderId: uid,
+      uploaderContext: uploaderCtx,
+      createdAt: ts,
+      updatedAt: ts,
     };
     newDocs.push({ doc, rev });
   }
@@ -266,7 +293,7 @@ function metadataBar(doc, rev) {
       badge(`Rev ${rev.label}`, `rev-${rev.status.toLowerCase()}`),
       badge(rev.status, revVariant(rev.status)),
       badge(doc.sensitivity || "—", "warn"),
-      el("span", { class: "tiny muted" }, [`Effective ${new Date(rev.createdAt).toLocaleDateString()}`]),
+      el("span", { class: "tiny muted" }, [`Effective ${new Date(rev.createdAt || rev.created_at || Date.now()).toLocaleDateString()}`]),
     ]),
     el("div", { class: "row" }, [
       el("button", { class: "btn sm", onClick: () => followToggle(doc.id) }, [isFollowing(doc.id) ? "Unfollow" : "Follow"]),
@@ -291,48 +318,255 @@ function pickOther(doc, rev) {
   return ids[idx - 1] || ids[idx + 1] || rev.id;
 }
 
+// Rich viewer chrome — modeled after the EmbedPDF / Adobe Acrobat layout
+// the operator team asked for. Top row carries page nav + zoom controls
+// + persistent doc actions; the mode bar switches the viewer between
+// View / Annotate / Shapes / Insert / Form / Redact; when Annotate is
+// active a sub-toolbar exposes the actual annotation tools.
+//
+// State that survives a re-render lives in sessionStorage keyed by
+// doc id (same convention used for active page / active revision).
+
+const VIEWER_MODES = [
+  { id: "view",     label: "View" },
+  { id: "annotate", label: "Annotate" },
+  { id: "shapes",   label: "Shapes" },
+  { id: "insert",   label: "Insert" },
+  { id: "form",     label: "Form" },
+  { id: "redact",   label: "Redact" },
+];
+
+const ANNOTATE_TOOLS = [
+  { id: "comment",   label: "Sticky note", icon: "🗨", impl: true },
+  { id: "highlight", label: "Highlight",   icon: "🖍", impl: true },
+  { id: "underline", label: "Underline",   icon: "U̲", impl: true },
+  { id: "strike",    label: "Strikethrough", icon: "S̶", impl: true },
+  { id: "draw",      label: "Free draw",   icon: "✎", impl: true },
+];
+
+const SHAPE_TOOLS = [
+  { id: "rect",    label: "Rectangle", icon: "▭" },
+  { id: "ellipse", label: "Ellipse",   icon: "◯" },
+  { id: "line",    label: "Line",      icon: "—" },
+  { id: "arrow",   label: "Arrow",     icon: "→" },
+];
+
+const ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
+
+function getMode(docId)  { return sessionStorage.getItem(SK(docId, "mode")) || "view"; }
+function getZoom(docId)  { return parseFloat(sessionStorage.getItem(SK(docId, "zoom")) || "1.25"); }
+function getTool(docId)  { return sessionStorage.getItem(SK(docId, "tool")) || "comment"; }
+function setMode(docId, m) { sessionStorage.setItem(SK(docId, "mode"), m); renderDocViewer({ id: docId }); }
+function setZoom(docId, z) { sessionStorage.setItem(SK(docId, "zoom"), String(z)); renderDocViewer({ id: docId }); }
+function setTool(docId, t) { sessionStorage.setItem(SK(docId, "tool"), t); renderDocViewer({ id: docId }); }
+
 function canvasArea(doc, rev, activePage) {
+  const mode = getMode(doc.id);
+  const zoom = getZoom(doc.id);
   return el("div", { class: "viewer-canvas" }, [
-    el("div", { class: "viewer-toolbar" }, [
-      el("button", { class: "btn sm", disabled: activePage <= 1, onClick: () => goPage(doc.id, activePage - 1) }, ["← Prev"]),
-      el("span", { class: "tiny muted" }, [`Page ${activePage} of ${PAGES}`]),
-      el("button", { class: "btn sm", disabled: activePage >= PAGES, onClick: () => goPage(doc.id, activePage + 1) }, ["Next →"]),
-      el("span", { style: { flex: 1 } }),
-      el("button", { class: "btn sm primary", disabled: !can("create"), onClick: () => addCommentPin(doc.id, rev.id, activePage) }, ["+ Regional comment"]),
-      el("button", { class: "btn sm", onClick: () => draftTransmittal(doc, rev) }, ["Draft transmittal"]),
-      el("button", { class: "btn sm", onClick: () => attachPdf(doc, rev) }, [rev.pdfUrl ? "Change PDF" : "Attach PDF"]),
-    ]),
-    el("div", { class: "viewer-page", id: `paper-${doc.id}` }, [
-      paperPage(doc, rev, activePage),
+    viewerTopBar(doc, rev, activePage, zoom),
+    viewerModeBar(doc, mode),
+    mode === "annotate" ? viewerAnnotateBar(doc) : null,
+    mode === "shapes"   ? viewerShapesBar(doc)   : null,
+    mode === "redact"   ? viewerRedactBar(doc)   : null,
+    mode === "insert"   ? viewerInsertBar(doc)   : null,
+    mode === "form"     ? viewerFormBar(doc)     : null,
+    el("div", { class: `viewer-page mode-${mode}`, id: `paper-${doc.id}` }, [
+      paperPage(doc, rev, activePage, { zoom, mode }),
     ]),
     pageStrip(doc, activePage),
   ]);
 }
 
-function paperPage(doc, rev, page) {
+function viewerTopBar(doc, rev, activePage, zoom) {
+  const pct = Math.round(zoom * 100);
+  return el("div", { class: "viewer-toolbar" }, [
+    // Page navigation
+    el("button", {
+      class: "btn sm icon-btn",
+      title: "Previous page",
+      "aria-label": "Previous page",
+      disabled: activePage <= 1,
+      onClick: () => goPage(doc.id, activePage - 1),
+    }, ["◀"]),
+    el("span", { class: "tiny mono", style: { minWidth: "60px", textAlign: "center" } }, [`${activePage} / ${PAGES}`]),
+    el("button", {
+      class: "btn sm icon-btn",
+      title: "Next page",
+      "aria-label": "Next page",
+      disabled: activePage >= PAGES,
+      onClick: () => goPage(doc.id, activePage + 1),
+    }, ["▶"]),
+    el("span", { class: "viewer-toolbar-divider", "aria-hidden": "true" }),
+    // Zoom
+    el("button", {
+      class: "btn sm icon-btn",
+      title: "Zoom out",
+      "aria-label": "Zoom out",
+      disabled: zoom <= ZOOM_LEVELS[0],
+      onClick: () => setZoom(doc.id, prevZoom(zoom)),
+    }, ["−"]),
+    el("span", { class: "tiny mono", style: { minWidth: "52px", textAlign: "center" } }, [`${pct}%`]),
+    el("button", {
+      class: "btn sm icon-btn",
+      title: "Zoom in",
+      "aria-label": "Zoom in",
+      disabled: zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1],
+      onClick: () => setZoom(doc.id, nextZoom(zoom)),
+    }, ["+"]),
+    el("button", {
+      class: "btn sm",
+      title: "Fit width",
+      onClick: () => setZoom(doc.id, 1.5),
+    }, ["Fit width"]),
+    el("button", {
+      class: "btn sm",
+      title: "Fit page",
+      onClick: () => setZoom(doc.id, 0.85),
+    }, ["Fit page"]),
+    el("span", { style: { flex: 1 } }),
+    // Persistent doc actions on the right
+    el("button", { class: "btn sm", onClick: () => draftTransmittal(doc, rev) }, ["Transmittal"]),
+    el("button", { class: "btn sm", onClick: () => attachPdf(doc, rev) }, [rev.pdfUrl ? "Change PDF" : "Attach PDF"]),
+  ]);
+}
+
+function viewerModeBar(doc, activeMode) {
+  return el("div", { class: "viewer-modebar", role: "tablist", "aria-label": "Viewer mode" },
+    VIEWER_MODES.map(m => el("button", {
+      class: `viewer-mode-btn ${activeMode === m.id ? "active" : ""}`,
+      role: "tab",
+      "aria-selected": activeMode === m.id ? "true" : "false",
+      onClick: () => setMode(doc.id, m.id),
+    }, [m.label]))
+  );
+}
+
+function viewerAnnotateBar(doc) {
+  const tool = getTool(doc.id);
+  return el("div", { class: "viewer-annotate-bar", role: "toolbar", "aria-label": "Annotation tools" }, [
+    ...ANNOTATE_TOOLS.map(t => el("button", {
+      class: `viewer-tool-btn ${tool === t.id ? "active" : ""}`,
+      title: t.label,
+      "aria-label": t.label,
+      onClick: () => setTool(doc.id, t.id),
+    }, [
+      el("span", { class: "viewer-tool-icon", "aria-hidden": "true" }, [t.icon]),
+      el("span", { class: "viewer-tool-label" }, [t.label]),
+    ])),
+    el("span", { class: "tiny muted ml-2" }, [
+      tool === "comment" ? "Click on the page to drop a sticky note."
+      : tool === "draw"  ? "Click + drag to draw freehand."
+      : "Click + drag across the text to mark.",
+    ]),
+  ]);
+}
+
+function viewerShapesBar(doc) {
+  const tool = getShapeTool(doc.id);
+  return el("div", { class: "viewer-annotate-bar", role: "toolbar", "aria-label": "Shape tools" }, [
+    ...SHAPE_TOOLS.map(t => el("button", {
+      class: `viewer-tool-btn ${tool === t.id ? "active" : ""}`,
+      title: t.label,
+      "aria-label": t.label,
+      onClick: () => setShapeTool(doc.id, t.id),
+    }, [
+      el("span", { class: "viewer-tool-icon", "aria-hidden": "true" }, [t.icon]),
+      el("span", { class: "viewer-tool-label" }, [t.label]),
+    ])),
+    el("span", { class: "tiny muted ml-2" }, ["Click + drag to draw the shape. Double-click any shape to delete."]),
+  ]);
+}
+
+function viewerRedactBar(doc) {
+  return el("div", { class: "viewer-annotate-bar", role: "toolbar", "aria-label": "Redaction" }, [
+    el("span", { class: "tiny" }, [
+      "Click + drag to mark a region for redaction. The reason you provide is recorded in the audit ledger. ",
+      "Visual redaction in the viewer; bake-into-PDF on export is a separate slice.",
+    ]),
+  ]);
+}
+
+function viewerInsertBar(doc) {
+  return el("div", { class: "viewer-annotate-bar", role: "toolbar", "aria-label": "Insert" }, [
+    el("span", { class: "tiny" }, ["Click anywhere on the page to drop a text annotation. Double-click any annotation to delete."]),
+  ]);
+}
+
+function viewerFormBar(doc) {
+  return el("div", { class: "viewer-annotate-bar", role: "toolbar", "aria-label": "Form fields" }, [
+    el("span", { class: "tiny" }, ["Click + drag to place a fillable field. You'll be prompted for a label and a default value."]),
+  ]);
+}
+
+function getShapeTool(docId) { return sessionStorage.getItem(SK(docId, "shapeTool")) || "rect"; }
+function setShapeTool(docId, t) { sessionStorage.setItem(SK(docId, "shapeTool"), t); renderDocViewer({ id: docId }); }
+
+/**
+ * Drop the annotation SVG overlay on top of a rendered PDF / image
+ * canvas. Sized to match the host so coordinates [0..1] line up with
+ * the rendered page. Re-mounts cleanly whenever the page is re-
+ * rendered (zoom change, mode change, page nav).
+ */
+function mountAnnotationOverlay(host, doc, rev, page, mode) {
+  const tool = mode === "shapes" ? getShapeTool(doc.id) : getTool(doc.id);
+  const author = currentUser()?.name || currentUser()?.id || currentRole() || "anonymous";
+  // Make the host a positioning context so the absolute-positioned
+  // overlay aligns to the rendered canvas/image.
+  if (getComputedStyle(host).position === "static") host.style.position = "relative";
+  const overlay = buildAnnotationOverlay({
+    docId: doc.id, revId: rev.id, page,
+    mode, tool, author,
+    onChanged: () => renderDocViewer({ id: doc.id }),
+  });
+  host.append(overlay);
+}
+
+function prevZoom(z) {
+  const i = ZOOM_LEVELS.findIndex(l => l >= z);
+  return i <= 0 ? ZOOM_LEVELS[0] : ZOOM_LEVELS[i - 1];
+}
+function nextZoom(z) {
+  const i = ZOOM_LEVELS.findIndex(l => l > z);
+  return i === -1 ? ZOOM_LEVELS[ZOOM_LEVELS.length - 1] : ZOOM_LEVELS[i];
+}
+
+function paperPage(doc, rev, page, opts = {}) {
+  const zoom = opts.zoom || 1.25;
+  const mode = opts.mode || "view";
   const comments = (state.data.comments || []).filter(c => c.docId === doc.id && c.revId === rev.id && c.page === page);
-  const container = el("div", { class: "paper" }, [
+  const container = el("div", { class: `paper paper-mode-${mode}` }, [
     el("h2", {}, [`${doc.name} — page ${page}`]),
-    el("div", { class: "paper-meta" }, [`${doc.id}  ·  Rev ${rev.label} ${rev.status}  ·  ${new Date(rev.createdAt).toLocaleDateString()}`]),
+    el("div", { class: "paper-meta" }, [`${doc.id}  ·  Rev ${rev.label} ${rev.status}  ·  ${new Date(rev.createdAt || rev.created_at || Date.now()).toLocaleDateString()}`]),
     paperContent(doc, rev, page),
     ...comments.map(c => commentPin(c)),
   ]);
+
+  // Every mode now renders the underlying PDF + an SVG annotation
+  // overlay sized 1:1 with the canvas. The overlay's pointer wiring
+  // is mode-specific (handled in `pdfAnnotations.js`), so the PDF
+  // doesn't need to be re-rendered when switching modes.
 
   // If the revision has an attached URL, pick the renderer by content kind.
   // CAD formats (DWG/DXF/STEP/IGES/STL/OBJ/glTF/3DM/3DS/3MF/FBX/DAE/PLY/IFC/...)
   // are routed to the unified CAD viewer; PDF/image/CSV stay on their
   // existing renderers.
   const url = rev.pdfUrl || rev.assetUrl || null;
-  const cadKind = detectCad(url, rev.assetMime);
+  // Fall through `assetMime || blobType || blobName-derived` so blob URLs
+  // (which have no extension to sniff) still get routed to the right
+  // renderer. The blobName-derived fallback covers older docs uploaded
+  // before we started populating `assetMime`.
+  const effectiveMime = rev.assetMime || rev.blobType || guessMime(rev.blobName || "");
+  const cadKind = detectCad(url, effectiveMime);
   if (url && cadKind && cadKind.viewer !== "image" && cadKind.viewer !== "pdf" && cadKind.viewer !== "csv") {
     const host = document.createElement("div");
     host.style.minHeight = "70vh";
     container.replaceChildren(host);
-    renderCad(host, { url, name: url, mime: rev.assetMime }).catch(() => {});
+    renderCad(host, { url, name: rev.blobName || url, mime: effectiveMime }).catch(() => {});
     for (const c of comments) container.append(commentPin(c));
     return container;
   }
-  const kind = detectKind(url, rev.assetMime);
+  const kind = detectKind(url, effectiveMime);
   if (url && kind) {
     const host = document.createElement("div");
     host.className = "asset-host";
@@ -353,9 +587,15 @@ function paperPage(doc, rev, page) {
         if (kind === "pdf") {
           const pdf = await openPdf(url);
           if (!pdf) { host.textContent = "PDF.js unavailable — showing placeholder."; return; }
-          await renderPage(pdf, Math.min(page, pdf.numPages), host);
+          // Zoom is the user's chosen scale from the toolbar. Pages are
+          // capped at the PDF's actual page count so stale page indices
+          // (after switching from a 5-page doc to a 2-page doc) still
+          // render the last available page instead of erroring.
+          await renderPage(pdf, Math.min(page, pdf.numPages), host, { scale: zoom });
+          mountAnnotationOverlay(host, doc, rev, page, mode);
         } else if (kind === "image") {
           host.replaceChildren(el("img", { src: url, alt: doc.name + " — page " + page, style: { maxWidth: "100%", border: "1px solid var(--border)", borderRadius: "6px", background: "#fff" } }));
+          mountAnnotationOverlay(host, doc, rev, page, mode);
         } else if (kind === "csv") {
           const text = await fetch(url).then(r => r.text()).catch(() => null);
           if (!text) { host.textContent = "Failed to load CSV."; return; }
@@ -381,7 +621,12 @@ function paperPage(doc, rev, page) {
 
   container.addEventListener("click", (e) => {
     if (!can("create")) return;
-    if (!e.altKey) return; // hold Alt to drop a pin; otherwise clicks do nothing
+    // In Annotate mode with the sticky-note tool active, a plain click
+    // drops a pin (no modifier required). In every other mode hold
+    // Alt to drop one — same as before, so existing muscle memory
+    // keeps working from the View tab.
+    const annotateClick = mode === "annotate" && getTool(doc.id) === "comment";
+    if (!annotateClick && !e.altKey) return;
     const rect = container.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
     const y = (e.clientY - rect.top) / rect.height;
@@ -454,9 +699,12 @@ function sidePane(doc, rev) {
 }
 
 function metadataCard(doc, rev) {
+  const projects = state.data?.projects || [];
+  const projectName = projects.find(p => p.id === doc.projectId)?.name || doc.projectId || "—";
+  const effective = rev.createdAt ? new Date(rev.createdAt || rev.created_at || Date.now()).toLocaleDateString() : "—";
   const meta = [
     ["Discipline", doc.discipline],
-    ["Project", doc.projectId],
+    ["Project", projectName],
     ["Package", doc.package || "—"],
     ["Area", doc.area || "—"],
     ["Line", doc.line || "—"],
@@ -465,14 +713,196 @@ function metadataCard(doc, rev) {
     ["Sensitivity", doc.sensitivity],
     ["Revision", `${rev.label} · ${rev.status}`],
     ["Approver", rev.approverId || "—"],
-    ["Effective", new Date(rev.createdAt).toLocaleDateString()],
+    ["Effective", effective],
   ];
-  return card("Metadata", el("div", { class: "stack" }, meta.map(([k, v]) =>
-    el("div", { class: "row" }, [
-      el("span", { class: "tiny muted", style: { width: "90px" } }, [k]),
-      el("span", { class: "small" }, [String(v || "—")]),
-    ])
-  )));
+  // Permission: anyone with the `edit` capability OR the original
+  // uploader of this doc. The latter avoids forcing an admin pass to
+  // correct e.g. discipline tags right after a drag-drop upload.
+  const uid = currentUserId();
+  const canEdit = can("edit") || (doc.uploaderId && doc.uploaderId === uid);
+  return card("Metadata", el("div", { class: "stack" }, [
+    ...meta.map(([k, v]) =>
+      el("div", { class: "row" }, [
+        el("span", { class: "tiny muted", style: { width: "90px" } }, [k]),
+        el("span", { class: "small" }, [String(v || "—")]),
+      ])
+    ),
+    el("div", { class: "row mt-2" }, [
+      el("button", {
+        class: "btn sm",
+        disabled: !canEdit,
+        title: canEdit ? "Edit document metadata" : "You need edit permission or to be the uploader",
+        onClick: () => openMetadataEditor(doc, rev),
+      }, ["Edit metadata"]),
+    ]),
+  ]));
+}
+
+// Metadata editor — modal form scoped to the editable doc-level fields.
+// Revision-level fields (`label`, `status`, `approverId`) are deliberately
+// NOT here: they belong to the approval / revision-bump flow and editing
+// them ad-hoc would bypass the audit chain that controlled-document
+// regimes (ISO 9001, PED, ASME) require.
+function openMetadataEditor(doc, rev) {
+  const uid = currentUserId();
+  const canEdit = can("edit") || (doc.uploaderId && doc.uploaderId === uid);
+  if (!canEdit) {
+    toast("Only the uploader or someone with edit permission can change metadata", "warn");
+    return;
+  }
+
+  const projects = state.data?.projects || [];
+  const projectOptions = [
+    { value: "", label: "— (none) —" },
+    ...projects.map(p => ({ value: p.id, label: p.name })),
+  ];
+  const sensitivityOptions = [
+    { value: "public",       label: "Public" },
+    { value: "internal",     label: "Internal" },
+    { value: "restricted",   label: "Restricted" },
+    { value: "confidential", label: "Confidential" },
+  ];
+  const disciplineOptions = [
+    { value: "Process",     label: "Process" },
+    { value: "Mechanical",  label: "Mechanical" },
+    { value: "Electrical",  label: "Electrical" },
+    { value: "Instrumentation", label: "Instrumentation" },
+    { value: "Civil",       label: "Civil" },
+    { value: "Structural",  label: "Structural" },
+    { value: "Controls",    label: "Controls" },
+    { value: "Data",        label: "Data" },
+    { value: "General",     label: "General" },
+  ];
+
+  // Autocomplete suggestion sets — collected from values already in the
+  // workspace so operators don't have to retype "Line A" 200 times. The
+  // user can still type a new value (datalist preserves free entry); the
+  // suggestion list just makes the common case one click. Sources:
+  //  - existing `documents.{package, area, line, system, vendor}` fields
+  //  - tokens parsed from `assets.hierarchy` strings
+  //    (e.g. "North Plant > Line A > Cell-3 > HX-01")
+  //  - asset `name` segments split on "/" (older naming convention)
+  const suggestions = collectMetadataSuggestions(state.data || {});
+
+  const nameInput        = input({ value: doc.name || "" });
+  const disciplineSelect = select(disciplineOptions, { value: doc.discipline || "General" });
+  const projectSelect    = select(projectOptions,   { value: doc.projectId || "" });
+  const packageWrap      = inputWithSuggestions(suggestions.package, { value: doc.package || "", placeholder: "e.g. Package 3" });
+  const areaWrap         = inputWithSuggestions(suggestions.area,    { value: doc.area    || "", placeholder: "e.g. Area 200, North Plant" });
+  const lineWrap         = inputWithSuggestions(suggestions.line,    { value: doc.line    || "", placeholder: "e.g. Line A, Line B" });
+  const systemWrap       = inputWithSuggestions(suggestions.system,  { value: doc.system  || "", placeholder: "e.g. Cooling, Steam, Feeder" });
+  const vendorWrap       = inputWithSuggestions(suggestions.vendor,  { value: doc.vendor  || "", placeholder: "e.g. Siemens, ABB" });
+  const sensitivitySel   = select(sensitivityOptions, { value: doc.sensitivity || "internal" });
+
+  /** @type {(w: any) => string} */
+  const wrapVal = (w) => String((w?.input?.value) || "").trim();
+
+  const save = () => {
+    const next = {
+      name:        String(/** @type {HTMLInputElement} */ (nameInput).value || "").trim() || doc.name,
+      discipline:  String(/** @type {HTMLSelectElement} */ (disciplineSelect).value || ""),
+      projectId:   String(/** @type {HTMLSelectElement} */ (projectSelect).value || "") || null,
+      package:     wrapVal(packageWrap),
+      area:        wrapVal(areaWrap),
+      line:        wrapVal(lineWrap),
+      system:      wrapVal(systemWrap),
+      vendor:      wrapVal(vendorWrap),
+      sensitivity: String(/** @type {HTMLSelectElement} */ (sensitivitySel).value || "internal"),
+    };
+    update(s => {
+      const target = (s.data.documents || []).find(x => x.id === doc.id);
+      if (!target) return;
+      Object.assign(target, next);
+      target.updatedAt = new Date().toISOString();
+    });
+    audit("document.metadata.edit", doc.id, { changedTo: next });
+    toast("Metadata saved", "success");
+    renderDocViewer({ id: doc.id });
+    return true;
+  };
+
+  modal({
+    title: `Edit metadata · ${doc.name}`,
+    body: el("div", { class: "stack" }, [
+      formRow("Name",        nameInput),
+      formRow("Discipline",  disciplineSelect),
+      formRow("Project",     projectSelect),
+      formRow("Package",     packageWrap),
+      formRow("Area",        areaWrap),
+      formRow("Line",        lineWrap),
+      formRow("System",      systemWrap),
+      formRow("Vendor",      vendorWrap),
+      formRow("Sensitivity", sensitivitySel),
+      el("div", { class: "tiny muted" }, [
+        "Package / Area / Line / System / Vendor autocomplete from existing assets and documents in this workspace — type to filter, or enter a new value.",
+      ]),
+      el("div", { class: "tiny muted" }, [
+        "Revision label, status, and approver are managed via the approval flow — not here. ",
+        "All edits are recorded in the audit ledger.",
+      ]),
+    ]),
+    actions: [
+      { label: "Cancel" },
+      { label: "Save", variant: "primary", onClick: save },
+    ],
+  });
+}
+
+/**
+ * Build autocomplete suggestion lists for metadata fields, sourced from
+ * what's already in the workspace.
+ *
+ * @param {any} d state.data
+ * @returns {{ package: string[], area: string[], line: string[], system: string[], vendor: string[] }}
+ */
+function collectMetadataSuggestions(d) {
+  /** @type {{ package: Set<string>, area: Set<string>, line: Set<string>, system: Set<string>, vendor: Set<string> }} */
+  const buckets = {
+    package: new Set(),
+    area:    new Set(),
+    line:    new Set(),
+    system:  new Set(),
+    vendor:  new Set(),
+  };
+  // Pull from existing documents — values that someone has already used.
+  for (const x of (d.documents || [])) {
+    if (x.package) buckets.package.add(String(x.package));
+    if (x.area)    buckets.area.add(String(x.area));
+    if (x.line)    buckets.line.add(String(x.line));
+    if (x.system)  buckets.system.add(String(x.system));
+    if (x.vendor)  buckets.vendor.add(String(x.vendor));
+  }
+  // Parse asset hierarchy strings (e.g. "North Plant > Line A > Cell-3
+  // > HX-01") and asset names (e.g. "Line A / Cell-1 / Feeder A1") to
+  // surface plausible Area/Line/System candidates. Heuristic: tokens
+  // starting with "Line", "Area", "Cell", "Site", "Building" go to
+  // their matching bucket; everything else gets offered as Area too,
+  // since real-world hierarchies vary.
+  for (const a of (d.assets || [])) {
+    const tokens = [];
+    if (a.hierarchy) tokens.push(...String(a.hierarchy).split(/\s*[>\\/]\s*/));
+    if (a.name)      tokens.push(...String(a.name).split(/\s*[>\\/]\s*/));
+    for (const t0 of tokens) {
+      const t = t0.trim();
+      if (!t || t.length < 2) continue;
+      if (/^line\b/i.test(t))     buckets.line.add(t);
+      else if (/^area\b/i.test(t)) buckets.area.add(t);
+      else if (/^(cell|unit|skid)\b/i.test(t)) buckets.system.add(t);
+      else if (/^(site|plant|building|hq)\b/i.test(t)) buckets.area.add(t);
+      // Don't pollute the suggestions with tag IDs like "HX-01" /
+      // "Feeder A1" — those are asset-specific, not Area/Line/System.
+    }
+    if (a.vendor)  buckets.vendor.add(String(a.vendor));
+    if (a.system)  buckets.system.add(String(a.system));
+    if (a.package) buckets.package.add(String(a.package));
+  }
+  return {
+    package: Array.from(buckets.package),
+    area:    Array.from(buckets.area),
+    line:    Array.from(buckets.line),
+    system:  Array.from(buckets.system),
+    vendor:  Array.from(buckets.vendor),
+  };
 }
 
 function revisionTimelineCard(doc, rev) {
@@ -711,7 +1141,7 @@ function renderCsvTable(parsed) {
 function draftTransmittal(doc, rev) {
   const subject = input({ value: `${doc.name} — ${rev.label} ${rev.status}` });
   const recipients = input({ value: "package-3-team@atlas.example" });
-  const note = textarea({ value: `Please find attached ${doc.name} revision ${rev.label} (${rev.status}). Effective ${new Date(rev.createdAt).toLocaleDateString()}.` });
+  const note = textarea({ value: `Please find attached ${doc.name} revision ${rev.label} (${rev.status}). Effective ${new Date(rev.createdAt || rev.created_at || Date.now()).toLocaleDateString()}.` });
   modal({
     title: "Draft transmittal",
     body: el("div", { class: "stack" }, [

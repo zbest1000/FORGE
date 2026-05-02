@@ -7,6 +7,7 @@ import { el, mount, card, badge, table, input, select } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { relative } from "../core/time.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 const PAGE_SIZE = 100;
 
@@ -107,11 +108,17 @@ export function renderAudit() {
   mount(root, [
     el("div", { class: "stack", style: { gap: "12px" } }, [
       el("div", {}, [
-        el("h1", { class: "page-title" }, ["Audit ledger"]),
+        el("h1", { class: "page-title", style: { display: "inline-flex", alignItems: "center" } }, [
+          "Audit ledger", helpHint("forge.audit-chain"),
+        ]),
         el("div", { class: "tiny muted" }, [
           "Hash-chained, HMAC-signed event log. Every authentication, authz decision, mutation, ",
           "lifecycle transition, retention sweep, and worker action lands here. Filters narrow the view; ",
           "the underlying chain is never modified.",
+        ]),
+        el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+          helpLinkChip("forge.audit-chain", "How chaining works"),
+          helpLinkChip("forge.permissions", "Capability model"),
         ]),
       ]),
       filterCard,
