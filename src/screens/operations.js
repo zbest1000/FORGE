@@ -4,6 +4,7 @@ import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { historianChart, sparkline } from "../core/charts.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 export function renderOperationsData() {
   const root = document.getElementById("screenContainer");
@@ -17,8 +18,15 @@ export function renderOperationsData() {
   mount(root, [
     el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
       el("div", {}, [
-        el("div", { class: "strong" }, ["Operations data"]),
+        el("div", { class: "strong", style: { display: "inline-flex", alignItems: "center" } }, [
+          "Operations data", helpHint("forge.operations"),
+        ]),
         el("div", { class: "tiny muted" }, ["Asset historians, time-series trends, recipes, and Modbus TCP register maps/writes."]),
+        el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+          helpLinkChip("forge.operations", "Live VQT model"),
+          helpLinkChip("forge.mqtt", "MQTT bridge"),
+          helpLinkChip("forge.opcua", "OPC UA bridge"),
+        ]),
       ]),
       el("div", { class: "row wrap" }, [
         badge("SQLite historian", "accent"),

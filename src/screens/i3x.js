@@ -4,23 +4,24 @@
 import { el, mount, card, badge, toast, input, textarea, select, formRow } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { i3x, getServer } from "../core/i3x/client.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 const ENDPOINTS = [
-  { id: "info",             method: "GET",  path: "/info",             tag: "Info" },
-  { id: "namespaces",       method: "GET",  path: "/namespaces",       tag: "Explore" },
-  { id: "objectTypes",      method: "GET",  path: "/objecttypes",      tag: "Explore", params: [{ name: "namespaceUri", kind: "query" }] },
-  { id: "relationshipTypes",method: "GET",  path: "/relationshiptypes",tag: "Explore", params: [{ name: "namespaceUri", kind: "query" }] },
-  { id: "objects",          method: "GET",  path: "/objects",          tag: "Explore", params: [{ name: "typeElementId", kind: "query" }, { name: "root", kind: "query" }, { name: "includeMetadata", kind: "query", type: "bool" }] },
-  { id: "listObjects",      method: "POST", path: "/objects/list",     tag: "Explore", body: { elementIds: [] } },
-  { id: "relatedObjects",   method: "POST", path: "/objects/related",  tag: "Explore", body: { elementIds: [], relationshipType: null } },
-  { id: "value",            method: "POST", path: "/objects/value",    tag: "Query",   body: { elementIds: [], maxDepth: 1 } },
-  { id: "history",          method: "POST", path: "/objects/history",  tag: "Query",   body: { elementIds: [], maxDepth: 1 } },
-  { id: "putValue",         method: "PUT",  path: "/objects/{id}/value", tag: "Update", params: [{ name: "elementId", kind: "path" }], body: { value: 0, quality: "Good" } },
-  { id: "createSubscription", method: "POST", path: "/subscriptions",            tag: "Subscribe", body: { clientId: "forge-ui", displayName: "UI session" } },
-  { id: "registerItems",      method: "POST", path: "/subscriptions/register",   tag: "Subscribe", body: { subscriptionId: "", elementIds: [] } },
-  { id: "sync",               method: "POST", path: "/subscriptions/sync",       tag: "Subscribe", body: { subscriptionId: "", lastSequenceNumber: null } },
-  { id: "listSubscriptions",  method: "POST", path: "/subscriptions/list",       tag: "Subscribe", body: { subscriptionIds: [] } },
-  { id: "deleteSubscriptions",method: "POST", path: "/subscriptions/delete",     tag: "Subscribe", body: { subscriptionIds: [] } },
+  { id: "info",             method: "GET",  path: "/info",             tag: "Info",      help: "i3x.endpoint.info" },
+  { id: "namespaces",       method: "GET",  path: "/namespaces",       tag: "Explore",   help: "i3x.endpoint.namespaces" },
+  { id: "objectTypes",      method: "GET",  path: "/objecttypes",      tag: "Explore",   help: "i3x.endpoint.objecttypes",       params: [{ name: "namespaceUri", kind: "query" }] },
+  { id: "relationshipTypes",method: "GET",  path: "/relationshiptypes",tag: "Explore",   help: "i3x.endpoint.relationshiptypes", params: [{ name: "namespaceUri", kind: "query" }] },
+  { id: "objects",          method: "GET",  path: "/objects",          tag: "Explore",   help: "i3x.endpoint.objects",           params: [{ name: "typeElementId", kind: "query" }, { name: "root", kind: "query" }, { name: "includeMetadata", kind: "query", type: "bool" }] },
+  { id: "listObjects",      method: "POST", path: "/objects/list",     tag: "Explore",   help: "i3x.endpoint.objects.list",      body: { elementIds: [] } },
+  { id: "relatedObjects",   method: "POST", path: "/objects/related",  tag: "Explore",   help: "i3x.endpoint.objects.related",   body: { elementIds: [], relationshipType: null } },
+  { id: "value",            method: "POST", path: "/objects/value",    tag: "Query",     help: "i3x.endpoint.objects.value",     body: { elementIds: [], maxDepth: 1 } },
+  { id: "history",          method: "POST", path: "/objects/history",  tag: "Query",     help: "i3x.endpoint.objects.history",   body: { elementIds: [], maxDepth: 1 } },
+  { id: "putValue",         method: "PUT",  path: "/objects/{id}/value", tag: "Update",  help: "i3x.endpoint.objects.id.value",  params: [{ name: "elementId", kind: "path" }], body: { value: 0, quality: "Good" } },
+  { id: "createSubscription", method: "POST", path: "/subscriptions",            tag: "Subscribe", help: "i3x.endpoint.subscriptions",         body: { clientId: "forge-ui", displayName: "UI session" } },
+  { id: "registerItems",      method: "POST", path: "/subscriptions/register",   tag: "Subscribe", help: "i3x.endpoint.subscriptions.register",body: { subscriptionId: "", elementIds: [] } },
+  { id: "sync",               method: "POST", path: "/subscriptions/sync",       tag: "Subscribe", help: "i3x.endpoint.subscriptions.sync",    body: { subscriptionId: "", lastSequenceNumber: null } },
+  { id: "listSubscriptions",  method: "POST", path: "/subscriptions/list",       tag: "Subscribe", help: "i3x.endpoint.subscriptions.list",    body: { subscriptionIds: [] } },
+  { id: "deleteSubscriptions",method: "POST", path: "/subscriptions/delete",     tag: "Subscribe", help: "i3x.endpoint.subscriptions.delete",  body: { subscriptionIds: [] } },
 ];
 
 const _session = {
@@ -177,14 +178,18 @@ function endpointList(activeId) {
     // Keyboard activation is intrinsic; the
     // `installRowKeyboardHandlers()` observer no longer needs to
     // retro-fit role + tabindex.
-    list.forEach(ep => wrap.append(el("button", {
-      type: "button",
-      class: `tree-item ${ep.id === activeId ? "active" : ""}`,
-      onClick: () => { window.location.hash = `#/i3x?ep=${ep.id}`; },
-    }, [
-      el("span", { class: "tree-dot" }),
-      el("span", { class: "mono tiny", style: { minWidth: "40px" } }, [ep.method]),
-      el("span", { class: "small" }, [ep.path]),
+    list.forEach(ep => wrap.append(el("div", { class: "row", style: { gap: "4px", alignItems: "center" } }, [
+      el("button", {
+        type: "button",
+        class: `tree-item ${ep.id === activeId ? "active" : ""}`,
+        onClick: () => { window.location.hash = `#/i3x?ep=${ep.id}`; },
+        style: { flex: 1 },
+      }, [
+        el("span", { class: "tree-dot" }),
+        el("span", { class: "mono tiny", style: { minWidth: "40px" } }, [ep.method]),
+        el("span", { class: "small" }, [ep.path]),
+      ]),
+      ep.help ? helpHint(ep.help) : null,
     ])));
   }
   return wrap;
@@ -258,17 +263,25 @@ function renderStreamPanel() {
 }
 
 function renderSpecCard() {
+  // Each badge here is now a real help link — hover for the topic
+  // summary, click to open the matching documentation section in a
+  // new tab. Always opens a fresh tab (unique window name) so two
+  // concepts can be compared side-by-side.
   return card("Spec conformance", el("div", { class: "stack" }, [
     el("div", { class: "small" }, [
       "This engine implements the CESMII i3X 1.0-Beta primitive set end-to-end in-process (no network). ",
       "Endpoints return the exact success/bulk envelopes and VQT shapes of the official OpenAPI.",
     ]),
     el("div", { class: "row wrap" }, [
-      badge("Explore", "info"), badge("Query", "info"), badge("Update", "info"),
-      badge("Subscribe + Stream", "info"), badge("Bulk responses", "accent"),
-      badge("Composition (instance-only)", ""), badge("ISA-95 types", "purple"),
+      helpLinkChip("i3x.explore",     "Explore"),
+      helpLinkChip("i3x.query",       "Query"),
+      helpLinkChip("i3x.update",      "Update"),
+      helpLinkChip("i3x.subscribe",   "Subscribe + Stream"),
+      helpLinkChip("i3x.bulk",        "Bulk responses"),
+      helpLinkChip("i3x.composition", "Composition (instance-only)"),
+      helpLinkChip("i3x.isa95",       "ISA-95 types"),
     ]),
-    el("div", { class: "tiny muted" }, ["Swap this client for an HTTP fetch() against any compliant i3X server — the UI stays identical."]),
+    el("div", { class: "tiny muted" }, ["Swap this client for an HTTP fetch() against any compliant i3X server — the UI stays identical. Hover any chip for a summary, click to open the docs in a new tab."]),
   ]));
 }
 

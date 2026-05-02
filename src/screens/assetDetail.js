@@ -19,17 +19,19 @@ export function renderAssetsIndex() {
       el("table", { class: "table" }, [
         el("thead", {}, [el("tr", {}, ["Asset","Hierarchy","Type","Status","Assigned",""].map(h => el("th", {}, [h])))]),
         el("tbody", {}, visible.map(a => {
-          const owner = a.assignedUserId ? userById[a.assignedUserId]?.name || a.assignedUserId : null;
-          const grp = a.assignedGroupId ? getGroup(a.assignedGroupId)?.name || a.assignedGroupId : null;
+          const userIds = collectAssignedUserIds(a);
+          const groupIds = collectAssignedGroupIds(a);
+          const owners = userIds.map(id => userById[id]?.name || id);
+          const grps = groupIds.map(id => getGroup(id)?.name || id);
           return el("tr", { class: "row-clickable", onClick: () => navigate(`/asset/${a.id}`) }, [
             el("td", {}, [a.name, el("div", { class: "tiny muted" }, [a.id])]),
             el("td", { class: "tiny muted" }, [a.hierarchy]),
             el("td", {}, [badge(a.type, "info")]),
             el("td", {}, [badge(a.status.toUpperCase(), statusVariant(a.status))]),
             el("td", { class: "tiny" }, [
-              owner ? el("div", {}, [owner]) : null,
-              grp ? el("div", { class: "muted" }, [grp]) : null,
-              !owner && !grp ? el("span", { class: "muted" }, ["—"]) : null,
+              owners.length ? el("div", {}, [owners.join(", ")]) : null,
+              grps.length ? el("div", { class: "muted" }, [grps.join(", ")]) : null,
+              !owners.length && !grps.length ? el("span", { class: "muted" }, ["—"]) : null,
             ]),
             el("td", {}, [el("button", { class: "btn sm", onClick: (e) => { e.stopPropagation(); navigate(`/asset/${a.id}`); } }, ["Open"])]),
           ]);
@@ -319,59 +321,128 @@ function revisionTs(revId) {
 function assignmentCard(a) {
   const users = state.data?.users || [];
   const userById = Object.fromEntries(users.map(u => [u.id, u]));
-  const owner = a.assignedUserId ? userById[a.assignedUserId] : null;
-  const grp = a.assignedGroupId ? getGroup(a.assignedGroupId) : null;
+  const userIds = collectAssignedUserIds(a);
+  const groupIds = collectAssignedGroupIds(a);
+  const owners = userIds.map(id => userById[id]).filter(Boolean);
+  const grps = groupIds.map(id => getGroup(id)).filter(Boolean);
   return card("Assignment", el("div", { class: "stack" }, [
-    el("div", { class: "row wrap" }, [
-      el("div", { class: "stack", style: { gap: "2px" } }, [
-        el("div", { class: "tiny muted" }, ["Owner (user)"]),
-        owner
-          ? el("div", { class: "row" }, [badge(owner.name, "accent"), el("span", { class: "tiny muted" }, [owner.role])])
+    el("div", { class: "row wrap", style: { gap: "16px" } }, [
+      el("div", { class: "stack", style: { gap: "4px", minWidth: "240px" } }, [
+        el("div", { class: "tiny muted" }, [`Assigned users (${owners.length})`]),
+        owners.length
+          ? el("div", { class: "row wrap" }, owners.map(u =>
+              el("span", { class: "row", style: { gap: "4px", marginRight: "6px" } }, [
+                badge(u.name, "accent"),
+                el("span", { class: "tiny muted" }, [u.role || ""]),
+              ])))
           : el("span", { class: "muted small" }, ["Unassigned"]),
       ]),
-      el("div", { class: "stack", style: { gap: "2px" } }, [
-        el("div", { class: "tiny muted" }, ["Owner (group)"]),
-        grp
-          ? el("div", { class: "row" }, [badge(grp.name, "purple"), el("span", { class: "tiny muted" }, [grp.id])])
+      el("div", { class: "stack", style: { gap: "4px", minWidth: "240px" } }, [
+        el("div", { class: "tiny muted" }, [`Assigned groups (${grps.length})`]),
+        grps.length
+          ? el("div", { class: "row wrap" }, grps.map(g =>
+              el("span", { class: "row", style: { gap: "4px", marginRight: "6px" } }, [
+                badge(g.name, "purple"),
+                el("span", { class: "tiny muted" }, [g.id]),
+              ])))
           : el("span", { class: "muted small" }, ["Unassigned"]),
       ]),
     ]),
     el("button", { class: "btn sm", onClick: () => editAssignment(a) }, ["Edit assignment"]),
-    el("div", { class: "tiny muted" }, ["When set, only the assigned user or members of the assigned group (and Organization Owners) can see this asset."]),
-  ]), { subtitle: "Assets can be assigned to a specific engineer or to a whole group." });
+    el("div", { class: "tiny muted" }, [
+      "Pick any number of users and/or groups. With no assignment the asset is visible to everyone in the workspace. ",
+      "Organization Owners always see every asset.",
+    ]),
+  ]), { subtitle: "Assets can be assigned to multiple engineers and/or groups." });
+}
+
+// Helpers — read assignment from either the legacy single-id shape OR
+// the new multi-id arrays. Centralised so existing seed data and
+// freshly-saved data both work without callers caring.
+function collectAssignedUserIds(a) {
+  const set = new Set();
+  if (Array.isArray(a.assignedUserIds)) for (const id of a.assignedUserIds) if (id) set.add(id);
+  if (a.assignedUserId) set.add(a.assignedUserId);
+  return Array.from(set);
+}
+function collectAssignedGroupIds(a) {
+  const set = new Set();
+  if (Array.isArray(a.assignedGroupIds)) for (const id of a.assignedGroupIds) if (id) set.add(id);
+  if (a.assignedGroupId) set.add(a.assignedGroupId);
+  return Array.from(set);
 }
 
 function editAssignment(a) {
   const users = state.data?.users || [];
   const groups = listGroups();
-  const userSel = select([{ value: "", label: "(unassigned)" }, ...users.map(u => ({ value: u.id, label: `${u.name} — ${u.role}` }))], { value: a.assignedUserId || "" });
-  const groupSel = select([{ value: "", label: "(unassigned)" }, ...groups.map(g => ({ value: g.id, label: g.name }))], { value: a.assignedGroupId || "" });
+
+  // Read current assignments. Accepts legacy single-id shape (`assignedUserId`,
+  // `assignedGroupId`) AND the new array shape (`assignedUserIds`,
+  // `assignedGroupIds`) so existing data still highlights correctly.
+  const currentUserIds = new Set(
+    Array.isArray(a.assignedUserIds) ? a.assignedUserIds : (a.assignedUserId ? [a.assignedUserId] : [])
+  );
+  const currentGroupIds = new Set(
+    Array.isArray(a.assignedGroupIds) ? a.assignedGroupIds : (a.assignedGroupId ? [a.assignedGroupId] : [])
+  );
+
+  // Build checkbox rows. Checkboxes are clearer for "any number of users
+  // and/or groups" than a multi-`<select>` (which on most platforms
+  // requires Cmd-click and isn't discoverable).
+  const userBoxes = users.map(u => {
+    const cb = el("input", { type: "checkbox", checked: currentUserIds.has(u.id) });
+    /** @type {any} */ (cb).dataset.id = u.id;
+    return { id: u.id, cb, row: el("label", { class: "row", style: { gap: "8px", padding: "4px 0" } }, [
+      cb,
+      el("span", {}, [`${u.name}`]),
+      el("span", { class: "tiny muted" }, [u.role || ""]),
+    ])};
+  });
+  const groupBoxes = groups.map(g => {
+    const cb = el("input", { type: "checkbox", checked: currentGroupIds.has(g.id) });
+    /** @type {any} */ (cb).dataset.id = g.id;
+    return { id: g.id, cb, row: el("label", { class: "row", style: { gap: "8px", padding: "4px 0" } }, [
+      cb,
+      el("span", {}, [g.name]),
+      el("span", { class: "tiny muted" }, [g.description || ""]),
+    ])};
+  });
+
   modal({
     title: `Assign ${a.name}`,
     body: el("div", { class: "stack" }, [
-      formRow("Assigned user", userSel),
-      formRow("Assigned group", groupSel),
-      el("div", { class: "tiny muted" }, ["Either, both, or neither. A user-only assignment makes the asset private to that user; a group makes it visible to all members of that group (and any sub-group descendant)."]),
+      formRow("Assigned users", el("div", { class: "stack assign-list", style: { maxHeight: "30vh", overflow: "auto", border: "1px solid var(--border)", borderRadius: "6px", padding: "6px 10px" } },
+        userBoxes.length ? userBoxes.map(b => b.row) : [el("div", { class: "tiny muted" }, ["No users."])])),
+      formRow("Assigned groups", el("div", { class: "stack assign-list", style: { maxHeight: "30vh", overflow: "auto", border: "1px solid var(--border)", borderRadius: "6px", padding: "6px 10px" } },
+        groupBoxes.length ? groupBoxes.map(b => b.row) : [el("div", { class: "tiny muted" }, ["No groups."])])),
+      el("div", { class: "tiny muted" }, [
+        "Pick any number of users and/or groups. Leave both empty to make the asset visible to everyone. ",
+        "A user assignment makes the asset visible to that specific person; a group assignment makes it visible to all members of that group (and any sub-group descendant). ",
+        "Organization Owners always see every asset.",
+      ]),
     ]),
     actions: [
       { label: "Cancel" },
       { label: "Save", variant: "primary", onClick: () => {
-        const userId = userSel.value || null;
-        const groupId = groupSel.value || null;
-        const userName = userId ? users.find(u => u.id === userId)?.name : null;
-        const groupName = groupId ? groups.find(g => g.id === groupId)?.name : null;
-        const prevUserId = a.assignedUserId || null;
-        const prevGroupId = a.assignedGroupId || null;
+        const newUserIds = userBoxes.filter(b => /** @type {HTMLInputElement} */ (b.cb).checked).map(b => b.id);
+        const newGroupIds = groupBoxes.filter(b => /** @type {HTMLInputElement} */ (b.cb).checked).map(b => b.id);
+        const prevUserIds = Array.isArray(a.assignedUserIds) ? a.assignedUserIds.slice() : (a.assignedUserId ? [a.assignedUserId] : []);
+        const prevGroupIds = Array.isArray(a.assignedGroupIds) ? a.assignedGroupIds.slice() : (a.assignedGroupId ? [a.assignedGroupId] : []);
         update(s => {
           const x = s.data.assets.find(y => y.id === a.id);
           if (!x) return;
-          x.assignedUserId = userId;
-          x.assignedGroupId = groupId;
+          x.assignedUserIds = newUserIds;
+          x.assignedGroupIds = newGroupIds;
+          // Mirror the first entry into the legacy single-id fields so
+          // any reader that hasn't migrated yet still resolves a sane
+          // assignment (and existing seed data keeps working).
+          x.assignedUserId = newUserIds[0] || null;
+          x.assignedGroupId = newGroupIds[0] || null;
         });
         audit("asset.assign", a.id, {
           asset: a.name,
-          userId, userName, groupId, groupName,
-          previousUserId: prevUserId, previousGroupId: prevGroupId,
+          userIds: newUserIds, groupIds: newGroupIds,
+          previousUserIds: prevUserIds, previousGroupIds: prevGroupIds,
         });
         toast("Assignment saved", "success");
       }},

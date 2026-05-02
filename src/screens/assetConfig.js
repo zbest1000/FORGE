@@ -27,7 +27,7 @@ import { api } from "../core/api.js";
 export async function renderAssetConfig({ assetId, target }) {
   if (!target) return;
   if (!state.server?.connected) {
-    mount(target, [renderDemoNotice()]);
+    mount(target, [renderDemoNotice(assetId)]);
     return;
   }
   mount(target, [loadingState({ message: "Loading asset configuration…" })]);
@@ -56,10 +56,56 @@ export async function renderAssetConfig({ assetId, target }) {
   ]);
 }
 
-function renderDemoNotice() {
+function renderDemoNotice(assetId) {
+  // Demo mode — render existing data-source mappings from seed so the
+  // user sees a populated config tab instead of a "sign in" placeholder.
+  // Adding a binding offline is supported: it lands in
+  // `state.data.dataSources` and survives reload via localStorage.
+  const d = state.data || {};
+  const sources = (d.dataSources || []).filter(s => s.assetId === assetId);
+  const points = (d.historianPoints || []).filter(p => p.assetId === assetId);
+
   return card("Asset configuration", el("div", { class: "stack" }, [
-    el("p", { class: "muted" }, [
-      "Profile binding is server-backed. In demo mode the configuration tab is read-only — sign in to a FORGE server to apply profiles or define custom mappings.",
+    el("div", { class: "row spread" }, [
+      el("div", {}, [
+        el("div", { class: "strong" }, ["Configuration (offline)"]),
+        el("div", { class: "tiny muted" }, [
+          `${sources.length} data source${sources.length === 1 ? "" : "s"} · ${points.length} historian point${points.length === 1 ? "" : "s"} seeded`,
+        ]),
+      ]),
+      el("div", { class: "row" }, [
+        badge("DEMO", "warn", { title: "Profile-binding API is server-backed; offline mode shows the seeded mappings only." }),
+      ]),
+    ]),
+    sources.length
+      ? el("table", { class: "table" }, [
+          el("thead", {}, [el("tr", {}, ["Connector", "Endpoint", "Kind", "Status", "Last seen"].map(h => el("th", {}, [h])))]),
+          el("tbody", {}, sources.map(s => el("tr", {}, [
+            el("td", {}, [badge((s.integrationId || "—"), "info")]),
+            el("td", { class: "mono tiny" }, [s.endpoint || "—"]),
+            el("td", {}, [s.kind || "—"]),
+            el("td", {}, [badge(s.status || "—", s.status === "live" ? "success" : s.status === "stale" ? "warn" : "")]),
+            el("td", { class: "tiny muted" }, [s.lastSeen ? new Date(s.lastSeen).toLocaleString() : "—"]),
+          ]))),
+        ])
+      : el("div", { class: "muted small" }, ["No mappings yet on this asset."]),
+    points.length
+      ? el("div", { class: "stack", style: { marginTop: "8px" } }, [
+          el("div", { class: "tiny muted" }, ["Historian points (seeded)"]),
+          el("table", { class: "table" }, [
+            el("thead", {}, [el("tr", {}, ["Tag", "Name", "Unit", "Type"].map(h => el("th", {}, [h])))]),
+            el("tbody", {}, points.map(p => el("tr", {}, [
+              el("td", { class: "mono tiny" }, [p.tag]),
+              el("td", {}, [p.name]),
+              el("td", {}, [p.unit || "—"]),
+              el("td", {}, [p.dataType || "—"]),
+            ]))),
+          ]),
+        ])
+      : null,
+    el("div", { class: "tiny muted" }, [
+      "Apply-profile and custom-mapping flows require a server connection. ",
+      "Connect FORGE to a server to author new bindings; offline mode keeps existing seeded mappings visible and read-only.",
     ]),
   ]));
 }

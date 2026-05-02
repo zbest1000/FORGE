@@ -61,11 +61,34 @@ function lazy(loader, exportName, label) {
       fn(params);
     }).catch((err) => {
       console.error(`[lazy] failed to load ${label}`, err);
+      // A failed dynamic import on a hashed chunk filename almost
+      // always means the build was redeployed under us — the URL
+      // referenced by the loaded entry chunk no longer exists in
+      // /assets/. Treat this as "stale tab" rather than a generic
+      // network error, and offer a one-click reload.
+      const msg = String(err?.message || err || "");
+      const isStaleChunk =
+        /Failed to fetch dynamically imported module/i.test(msg) ||
+        /\bimport\(\)\b.*failed/i.test(msg) ||
+        /ChunkLoadError/i.test(msg) ||
+        /Loading chunk \d+ failed/i.test(msg) ||
+        /Importing a module script failed/i.test(msg);
       if (root) {
         mount(root, [
-          el("div", { class: "stack", style: { padding: "24px" } }, [
-            el("div", { class: "callout danger" }, [
-              `Failed to load the ${label} screen. Check your network connection and try again.`,
+          el("div", { class: "stack", style: { padding: "24px", "max-width": "640px", margin: "32px auto", gap: "12px" } }, [
+            el("div", { class: "callout " + (isStaleChunk ? "warn" : "danger") }, [
+              isStaleChunk
+                ? "A newer version of FORGE is available. Reload to continue."
+                : `Failed to load the ${label} screen. Check your network connection and try again.`,
+            ]),
+            el("div", { class: "row", style: { gap: "8px" } }, [
+              el("button", {
+                class: "btn primary",
+                onClick: () => { try { location.reload(); } catch { /* no-op */ } },
+              }, [isStaleChunk ? "Reload now" : "Retry"]),
+              !isStaleChunk
+                ? el("button", { class: "btn", onClick: () => { try { location.reload(); } catch {} } }, ["Reload page"])
+                : null,
             ]),
             el("div", { class: "tiny muted" }, [String(err?.message || err)]),
           ]),
@@ -142,6 +165,9 @@ function setupRoutes() {
     lazy(() => import("./src/screens/admin.js"), "renderAdmin", "Admin"));
   defineRoute("/audit",
     lazy(() => import("./src/screens/audit.js"), "renderAudit", "Audit"));
+  defineRoute("/help",
+    lazy(() => import("./src/screens/helpSite.js"), "renderHelpSite", "Documentation"));
+
   defineRoute("/spec",
     lazy(() => import("./src/screens/spec.js"), "renderSpec", "Spec Reference"));
 
@@ -288,15 +314,24 @@ async function boot() {
     });
   });
 
-  // Re-render the UNS browser at a slow cadence so VQT values refresh live.
+  // Refresh the UNS live-value card on a slow cadence so VQT updates show
+  // through. We used to call `rerenderCurrent()` here, which replaced the
+  // entire screen DOM every 1.5s — that reset scroll position, focus, and
+  // tree expand-state, making the page unusable while values ticked. The
+  // surgical alternative imports lazily so the bundle for `/uns` stays
+  // out of the entry chunk.
+  //
   // The i3X explorer is NOT auto-refreshed because the user edits request
   // bodies there and we must not wipe input focus.
   setInterval(() => {
-    if ((state.route || "").startsWith("/uns")) {
-      // Skip refresh when a modal or palette is open.
-      if (document.querySelector(".modal-backdrop, .palette-backdrop")) return;
-      rerenderCurrent();
-    }
+    if (!(state.route || "").startsWith("/uns")) return;
+    // Skip when a modal/palette is open or the user is interacting.
+    if (document.querySelector(".modal-backdrop, .palette-backdrop")) return;
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT")) return;
+    import("./src/screens/uns.js").then(mod => {
+      if (typeof mod.refreshUNSLive === "function") mod.refreshUNSLive();
+    }).catch(() => { /* if the module isn't loaded yet, the next tick will retry */ });
   }, 1500);
 
   // Route-level group gating — if a user navigates to a route their groups

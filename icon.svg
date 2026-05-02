@@ -1,4 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <rect width="64" height="64" rx="12" fill="#0b1220"/>
-  <text x="50%" y="55%" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-weight="800" font-size="22" fill="#0ea5e9" letter-spacing="0.04em">FORGE</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="FORGE">
+  <title>FORGE</title>
+  <defs>
+    <linearGradient id="forge-fg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7dd3fc"/>
+      <stop offset="50%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+    <linearGradient id="forge-fs" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#0c4a6e"/>
+    </linearGradient>
+    <radialGradient id="forge-sp" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fef9c3" stop-opacity="1"/>
+      <stop offset="45%" stop-color="#fde047" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="13" fill="#0b1220"/>
+  <path d="M 12 12 L 52 12 L 52 23 L 25 23 L 25 28 L 42 28 L 42 36 L 25 36 L 25 50 L 30 50 L 30 56 L 6 56 L 6 50 L 12 50 Z" fill="url(#forge-fg)"/>
+  <path d="M 6 56 L 30 56 L 28 60 L 8 60 Z" fill="url(#forge-fs)"/>
+  <path d="M 14 14 L 50 14 L 50 16 L 14 16 Z" fill="#bae6fd" opacity="0.55"/>
+  <g transform="translate(54 14)">
+    <circle r="8" fill="url(#forge-sp)"/>
+    <path d="M 0 -5.5 L 0 5.5 M -5.5 0 L 5.5 0" stroke="#fef9c3" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M -3.5 -3.5 L 3.5 3.5 M -3.5 3.5 L 3.5 -3.5" stroke="#fde047" stroke-width="1" stroke-linecap="round" opacity="0.9"/>
+  </g>
 </svg>

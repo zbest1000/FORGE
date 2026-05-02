@@ -9,6 +9,7 @@ import { el, mount, badge } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { visiblePortals, currentUser, currentRole, effectiveGroupIds, listGroups } from "../core/groups.js";
+import { forgeMark } from "../core/forgeLogo.js";
 
 export function renderHub() {
   const root = document.getElementById("screenContainer");
@@ -21,7 +22,7 @@ export function renderHub() {
     el("section", { class: "hub" }, [
       el("div", { class: "hub-hero" }, [
         el("div", { class: "hub-hero-row" }, [
-          el("div", { class: "hub-logo", "aria-hidden": "true" }, ["FORGE"]),
+          el("div", { class: "hub-logo", "aria-hidden": "true" }, [forgeMark()]),
           el("div", { class: "stack", style: { gap: "4px" } }, [
             // Use h2 here — the page-level h1 lives in the shell header
             // (WCAG 2.4.6: avoid duplicate h1s on a single page).

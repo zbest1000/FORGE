@@ -3,6 +3,7 @@ import { state, update } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { audit } from "../core/audit.js";
 import { portalById, canAccessRoute, isOrgOwner } from "../core/groups.js";
+import { forgeMark } from "../core/forgeLogo.js";
 
 const DEFAULT_ITEMS = [
   { icon: "🏛", label: "Hub",      route: "/hub" },
@@ -41,11 +42,11 @@ export function renderRail() {
   root.setAttribute("aria-label", "Primary navigation");
   mount(root, [
     el("div", {
-      class: "rail-logo",
+      class: `rail-logo${portal ? "" : " rail-logo-mark"}`,
       title: portal ? `${portal.label} portal` : "FORGE",
       "aria-hidden": "true",
       style: portal ? { background: portal.accent, color: "#0b1220" } : null,
-    }, [portal ? portal.icon : "FORGE"]),
+    }, [portal ? portal.icon : forgeMark()]),
     workspaceSwitcher(),
     ...items.map(item =>
       el("button", {

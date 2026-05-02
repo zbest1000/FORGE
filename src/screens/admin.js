@@ -18,6 +18,7 @@ import { mode as apiMode, api } from "../core/api.js";
 import { listGroups, currentUserId, effectiveGroupIds, isOrgOwner } from "../core/groups.js";
 import { navigate } from "../core/router.js";
 import { license as currentLicense, refreshLicense, installLicense as installLic, uninstallLicense as uninstallLic, reactivateLicense, releaseActivation as releaseAct, FEATURES } from "../core/license.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 const ADMIN_SECTIONS = new Set(["identity", "access", "integrations", "audit", "retention", "health", "license"]);
 
@@ -43,6 +44,19 @@ export function renderAdmin(params = {}) {
   ];
 
   mount(root, [
+    el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
+      el("div", {}, [
+        el("h2", { style: { margin: "0", display: "inline-flex", alignItems: "center" } }, [
+          "Governance & Admin", helpHint("forge.permissions"),
+        ]),
+        el("div", { class: "tiny muted" }, ["Identity, RBAC, integrations, audit retention, license, and health."]),
+        el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+          helpLinkChip("forge.permissions",  "Capability model"),
+          helpLinkChip("forge.audit-chain",  "Audit chain"),
+          helpLinkChip("forge.integrations", "Integrations"),
+        ]),
+      ]),
+    ]),
     tabs({
       tabs: sections,
       sessionKey,

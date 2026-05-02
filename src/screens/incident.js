@@ -65,7 +65,31 @@ const COMMAND_CHECKLIST = {
   ],
 };
 
-const ROSTER_ROLES = ["Commander", "Scribe", "Ops lead", "Comms lead", "Engineering lead"];
+// Default incident command roster — modeled after FEMA / NIMS Incident
+// Command System but every business uses different titles ("Incident
+// Lead", "Site Manager", "Major-Incident Manager" in ITIL, "Crisis
+// Coordinator", etc.). The list below is only the seed default; the
+// actual labels render from `state.data.config.incidentRoster` when
+// set, which is editable from the Command-roster card.
+//
+// Convention: the FIRST role in the list is the "Incident Commander"
+// equivalent — assigning it also fills `inc.commanderId` for backward
+// compatibility with the rest of the data model. Reordering the list
+// from the editor changes which role is treated as IC.
+const DEFAULT_ROSTER_ROLES = ["Commander", "Scribe", "Ops lead", "Comms lead", "Engineering lead"];
+
+function getRosterRoles() {
+  const cfg = /** @type {any} */ (state.data || {})?.config?.incidentRoster;
+  if (Array.isArray(cfg) && cfg.length) {
+    return cfg.map(s => String(s).trim()).filter(Boolean);
+  }
+  return DEFAULT_ROSTER_ROLES.slice();
+}
+
+function getIncidentLeadRole() {
+  const roles = getRosterRoles();
+  return roles[0] || DEFAULT_ROSTER_ROLES[0];
+}
 
 export function renderIncident({ id }) {
   const root = document.getElementById("screenContainer");
@@ -147,7 +171,7 @@ function incidentCommandHeader(inc, asset) {
     : "Maintain command record";
   return card("Incident command", el("div", { class: "stack" }, [
     el("div", { class: "card-grid" }, [
-      commandMetric("Commander", roster.Commander || inc.commanderId || "Unassigned", !roster.Commander && !inc.commanderId ? "warn" : "success"),
+      commandMetric(getIncidentLeadRole(), roster[getIncidentLeadRole()] || inc.commanderId || "Unassigned", !roster[getIncidentLeadRole()] && !inc.commanderId ? "warn" : "success"),
       commandMetric("Current objective", objective, inc.status === "active" ? "danger" : "info"),
       commandMetric("Active actions", `${done}/${checklist.length} complete`, done === checklist.length ? "success" : "warn"),
       commandMetric("Linked asset", asset ? asset.name : "None", asset?.status === "alarm" ? "danger" : "info"),
@@ -229,13 +253,83 @@ function toggleChecklist(id, i, checked) {
 
 function rosterCard(inc) {
   const roster = inc.roster || {};
+  const roles = getRosterRoles();
   return card("Command roster", el("div", { class: "stack" }, [
-    ...ROSTER_ROLES.map(r => el("div", { class: "activity-row" }, [
-      el("span", { class: "tiny muted", style: { width: "100px" } }, [r]),
+    ...roles.map(r => el("div", { class: "activity-row" }, [
+      el("span", { class: "tiny muted", style: { width: "120px" } }, [r]),
       el("span", { class: "small mono" }, [roster[r] || "(unassigned)"]),
       el("button", { class: "btn sm", disabled: !can("incident.command"), onClick: () => assignRole(inc.id, r) }, ["Assign"]),
     ])),
+    el("div", { class: "row spread", style: { marginTop: "8px" } }, [
+      el("span", { class: "tiny muted" }, [
+        `First role (${roles[0] || "—"}) acts as Incident Commander.`,
+      ]),
+      el("button", {
+        class: "btn sm ghost",
+        title: "Customise role names for this workspace (admin only)",
+        disabled: !can("edit"),
+        onClick: () => openRosterEditor(),
+      }, ["Edit roles…"]),
+    ]),
   ]));
+}
+
+function openRosterEditor() {
+  if (!can("edit")) { toast("Admin permission required to edit roster roles", "warn"); return; }
+  const current = getRosterRoles().join("\n");
+  const ta = textarea({
+    rows: 8,
+    placeholder: "One role per line. The first role acts as Incident Commander.",
+    value: current,
+  });
+  modal({
+    title: "Incident roster roles",
+    body: el("div", { class: "stack" }, [
+      el("div", { class: "small muted" }, [
+        "Define the role titles your organisation uses. Examples: ",
+        el("strong", {}, ["Incident Lead"]),
+        ", ",
+        el("strong", {}, ["Site Manager"]),
+        ", ",
+        el("strong", {}, ["Major-Incident Manager"]),
+        ", ",
+        el("strong", {}, ["Crisis Coordinator"]),
+        ".",
+      ]),
+      formRow("Roles (one per line)", ta),
+      el("div", { class: "tiny muted" }, [
+        "The first role is treated as the Incident Commander throughout the app. ",
+        "Assignments already made under removed role names are preserved on the incident record but no longer visible in the roster.",
+      ]),
+      el("div", { class: "row" }, [
+        el("button", {
+          class: "btn sm ghost",
+          onClick: () => {
+            /** @type {HTMLTextAreaElement} */ (ta).value = DEFAULT_ROSTER_ROLES.join("\n");
+          },
+        }, ["Reset to defaults"]),
+      ]),
+    ]),
+    actions: [
+      { label: "Cancel" },
+      { label: "Save", variant: "primary", onClick: () => {
+        const next = String(/** @type {HTMLTextAreaElement} */ (ta).value || "")
+          .split(/\r?\n/)
+          .map(s => s.trim())
+          .filter(Boolean);
+        if (!next.length) {
+          toast("At least one role is required", "warn");
+          return false;
+        }
+        update(s => {
+          s.data.config = s.data.config || {};
+          /** @type {any} */ (s.data.config).incidentRoster = next;
+        });
+        audit("config.incidentRoster.update", "config", { roles: next });
+        toast("Roster roles saved", "success");
+      }},
+    ],
+  });
 }
 
 function assignRole(incId, role) {
@@ -251,7 +345,10 @@ function assignRole(incId, role) {
           const inc = s.data.incidents.find(x => x.id === incId);
           inc.roster = inc.roster || {};
           inc.roster[role] = pick.value;
-          if (role === "Commander") inc.commanderId = pick.value;
+          // First role in the configured roster = Incident Commander.
+          // Only sync inc.commanderId when assigning that role, so renaming
+          // it from "Commander" → "Incident Lead" still wires up correctly.
+          if (role === getIncidentLeadRole()) inc.commanderId = pick.value;
           inc.timeline = inc.timeline || [];
           inc.timeline.push({ ts: new Date().toISOString(), actor: s.ui.role, text: `${role} = ${pick.value}` });
         });

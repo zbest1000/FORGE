@@ -1,4 +1,5 @@
 import { el, mount, card, badge } from "../core/ui.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 // Preserves the screen-by-screen spec reference from the original prototype.
 
@@ -25,7 +26,19 @@ export function renderSpec() {
   const root = document.getElementById("screenContainer");
   mount(root, [
     card("Product spec reference", el("div", { class: "stack" }, [
-      el("div", { class: "muted" }, ["Read-only summary of each required screen. The full spec lives in PRODUCT_SPEC.md."]),
+      el("div", { class: "muted" }, [
+        "Read-only summary of each required screen. The full spec lives in ",
+        el("code", {}, ["docs/INDUSTRIAL_EDGE_PLATFORM_SPEC.md"]),
+        ". For deeper concepts, open the documentation site:",
+      ]),
+      el("div", { class: "row wrap", style: { gap: "6px" } }, [
+        helpLinkChip("forge.spec",         "FORGE spec overview"),
+        helpLinkChip("forge.audit-chain",  "Audit chain"),
+        helpLinkChip("forge.permissions",  "Capabilities"),
+        helpLinkChip("forge.integrations", "Integrations"),
+        helpLinkChip("forge.operations",   "Operations"),
+        helpLinkChip("i3x.explore",        "i3X concepts"),
+      ]),
     ])),
     el("div", { class: "card-grid", style: { marginTop: "12px" } }, Object.entries(SCREENS).map(([name, s]) => card(name, el("div", { class: "stack" }, [
       block("Layout", s.layout),
