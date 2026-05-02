@@ -38,6 +38,27 @@ export function renderWorkBoard({ id }) {
   const project = getById("projects", id);
   if (!project) return mount(root, el("div", { class: "muted" }, ["Project not found."]));
 
+  // Deep-link support (added with the cross-project /work view).
+  // When the URL is `/work-board/PRJ-1?wi=WI-105` the requested item
+  // is opened in its drawer once the board has rendered. The query
+  // is consumed immediately so a re-render or refresh doesn't keep
+  // popping the drawer.
+  const queryString = (state.route || "").split("?")[1] || "";
+  const params = new URLSearchParams(queryString);
+  const wiParam = params.get("wi");
+  if (wiParam) {
+    // Drop the query from the URL so a refresh doesn't re-open.
+    setTimeout(() => {
+      try {
+        const newHash = `#/work-board/${id}`;
+        if (location.hash !== newHash) {
+          history.replaceState(null, "", newHash);
+        }
+        if (d.workItems?.some(w => w.id === wiParam)) openItem(wiParam);
+      } catch { /* swallow — non-essential */ }
+    }, 0);
+  }
+
   const viewKey = `board.view.${id}`;
   const view = sessionStorage.getItem(viewKey) || "kanban";
   const filterKey = `board.filter.${id}`;
@@ -75,6 +96,20 @@ function projectContext(project, items) {
   const tabKey = `project.context.tab.${project.id}`;
   const ctx = { orgName, site, loc, projectAssets, projectDocs, dataSources, maintenance, incidents, items };
   return el("div", { class: "stack project-context mb-4" }, [
+    // Inverse-navigation hint. The `/work` view aggregates across
+    // every project and lets the operator filter down — this banner
+    // surfaces it from the per-project drill-down so users who came
+    // in here first can pivot back out.
+    el("div", { class: "row spread tiny muted" }, [
+      el("span", {}, [
+        "This board scopes to one project. Want every work item you can access? ",
+      ]),
+      el("button", {
+        class: "btn sm ghost",
+        type: "button",
+        onClick: () => navigate("/work"),
+      }, ["Open Activity →"]),
+    ]),
     tabs({
       sessionKey: tabKey,
       ariaLabel: "Project context",

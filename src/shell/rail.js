@@ -81,7 +81,7 @@ function matches(path, route) {
   if (route === "/hub")  return p === "/hub";
   if (route === "/docs") return p === "/docs" || p.startsWith("/doc/") || p.startsWith("/compare/");
   if (route === "/drawings") return p === "/drawings" || p.startsWith("/drawing/");
-  if (route === "/projects") return p === "/projects" || p.startsWith("/work-board/") || p === "/approvals";
+  if (route === "/projects") return p === "/projects" || p.startsWith("/work-board/") || p === "/approvals" || p === "/work";
   if (route === "/assets") return p === "/assets" || p.startsWith("/asset/") || p === "/uns" || p === "/i3x" || p === "/profiles";
   if (route === "/operations") return p === "/operations";
   if (route === "/incidents") return p === "/incidents" || p.startsWith("/incident/");

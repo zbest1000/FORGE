@@ -6,6 +6,9 @@ export const SCREEN_ROUTES = {
   "Search": "/search",
   "Team Spaces": "/team-spaces",
   "Projects": "/projects",
+  "Activity": "/work",
+  // Alias for discoverability — operators may search either term.
+  "All work": "/work",
   "Docs": "/docs",
   "Drawings": "/drawings",
   "Assets": "/assets",

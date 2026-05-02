@@ -409,6 +409,64 @@ button.tree-item:focus-visible {
   border-color: var(--border-strong);
 }
 
+/* Row + adjacent pin star (UX). The row button is `flex: 1` so the
+   star floats at the right edge without truncating the label. The
+   star only appears on hover unless the item is pinned (then it
+   stays visible to indicate state). */
+.tree-item-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+}
+.tree-item-row > .tree-item {
+  flex: 1;
+  min-width: 0;
+}
+.pin-star {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted-soft);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  opacity: 0;
+  transition: opacity var(--timing-fast) var(--ease-standard),
+              color var(--timing-fast) var(--ease-standard);
+  /* Min target — the star is the smallest button in the panel; keep
+     it within tap-friendly bounds. */
+  min-width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tree-item-row:hover .pin-star,
+.pin-star:focus-visible,
+.pin-star.is-pinned {
+  opacity: 1;
+}
+.pin-star:hover {
+  color: var(--accent);
+  background: var(--panel);
+}
+.pin-star.is-pinned {
+  color: var(--accent);
+}
+
+/* Glyph next to a pinned row (project / asset / etc.). Decorative —
+   gives a visual hint about the pinned item's kind without taking
+   the kind chip's full width. */
+.tree-pin-kind {
+  width: 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
 .tree-item .tree-dot {
   width: 6px;
   height: 6px;

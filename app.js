@@ -88,6 +88,11 @@ function setupRoutes() {
 
   defineRoute("/projects", renderProjectsIndex);
   defineRoute("/work-board/:id", renderWorkBoard);
+  // Cross-project work view — every work item in the workspace, filterable
+  // by project / status / severity / assignee / type / due / mine. Cards
+  // link back into the per-project board's drawer.
+  defineRoute("/work",
+    lazy(() => import("./src/screens/allWork.js"), "renderAllWork", "All work"));
 
   defineRoute("/docs",
     lazy(() => import("./src/screens/docViewer.js"), "renderDocsIndex", "Documents"));

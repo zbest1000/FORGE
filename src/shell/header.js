@@ -19,6 +19,7 @@ const TITLES = {
   "/search":      { title: "Search",           crumb: "Search" },
   "/team-spaces": { title: "Team Spaces",      crumb: "Team Spaces" },
   "/projects":    { title: "Projects",         crumb: "Projects" },
+  "/work":        { title: "Activity",         crumb: "Activity" },
   "/docs":        { title: "Documents",        crumb: "Docs" },
   "/drawings":    { title: "Drawings",         crumb: "Drawings" },
   "/assets":      { title: "Assets",           crumb: "Assets" },
