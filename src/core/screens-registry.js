@@ -9,6 +9,8 @@ export const SCREEN_ROUTES = {
   "Activity": "/work",
   // Alias for discoverability — operators may search either term.
   "All work": "/work",
+  "Formula reference": "/formulas",
+  "Formulas": "/formulas",
   "Docs": "/docs",
   "Drawings": "/drawings",
   "Assets": "/assets",

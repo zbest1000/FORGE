@@ -92,7 +92,9 @@ function setupRoutes() {
   // by project / status / severity / assignee / type / due / mine. Cards
   // link back into the per-project board's drawer.
   defineRoute("/work",
-    lazy(() => import("./src/screens/allWork.js"), "renderAllWork", "All work"));
+    lazy(() => import("./src/screens/allWork.js"), "renderAllWork", "Activity"));
+  defineRoute("/formulas",
+    lazy(() => import("./src/screens/formulasReference.js"), "renderFormulasReference", "Formulas"));
 
   defineRoute("/docs",
     lazy(() => import("./src/screens/docViewer.js"), "renderDocsIndex", "Documents"));

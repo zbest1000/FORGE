@@ -7,6 +7,7 @@
 import { state, update } from "./store.js";
 import { audit } from "./audit.js";
 import { fanout } from "./subscriptions.js";
+import { currentIdentityContext as _resolveIdentity } from "./identity.js";
 
 const seenDedupeKeys = new Set();
 let _seq = 0;
@@ -39,6 +40,17 @@ export function ingest(raw, { source = "unknown", source_type = "generic" } = {}
   return envelope;
 }
 
+// Resolve the rich actor shape. Wrapped in a try/catch so a missing
+// helper or a transient store/state hiccup never crashes event
+// ingestion — the legacy `{ actor: role }` shape is the fallback.
+function _identityCtx() {
+  try {
+    return _resolveIdentity();
+  } catch {
+    return { actor: state.ui?.role || "system" };
+  }
+}
+
 function normalize(raw, { source, source_type }) {
   _seq += 1;
   const event_id = raw.event_id || `EVT-${Date.now().toString(36)}-${_seq}`;
@@ -57,7 +69,11 @@ function normalize(raw, { source, source_type }) {
     trace_id,
     routing_policy: raw.routing_policy || "default",
     dedupe_key: raw.dedupe_key || null,
-    auth_context: raw.auth_context || { actor: state.ui?.role || "system" },
+    // Rich identity attribution. Operators investigating an incident
+    // need to know WHO acted, not just what role they held. The
+    // identity helper resolves the full shape (userId, name, email,
+    // role, orgId, workspaceId, groups) once per event.
+    auth_context: raw.auth_context || _identityCtx(),
   };
 }
 

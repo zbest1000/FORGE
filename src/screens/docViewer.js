@@ -16,6 +16,8 @@ import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
+import { currentUserId } from "../core/groups.js";
+import { currentIdentityContext, identityLabel } from "../core/identity.js";
 import { follow, unfollow, isFollowing } from "../core/subscriptions.js";
 import { impactOfRevision } from "../core/revisions.js";
 import { openPdf, renderPage } from "../core/pdf.js";
@@ -145,6 +147,11 @@ async function ingestFiles(files) {
     const ext = (f.name.split(".").pop() || "").toLowerCase();
     const discipline = ext === "dwg" || ext === "dxf" || ext === "ifc" ? "Mechanical"
       : ext === "pdf" ? "Process" : ext === "csv" ? "Data" : "General";
+    // Capture the uploader's identity at upload time. The metadata
+    // editor uses `uploaderId` to gate the Edit affordance — the
+    // person who added the doc can always edit; non-owners need the
+    // `edit` capability.
+    const uploaderCtx = currentIdentityContext();
     const doc = {
       id: docId,
       name: f.name,
@@ -156,6 +163,8 @@ async function ingestFiles(files) {
       projectId: null,
       acl: {},
       labels: ["uploaded"],
+      uploaderId: uploaderCtx.userId || null,
+      uploaderContext: uploaderCtx,
       created_at: ts,
       updated_at: ts,
     };
@@ -184,7 +193,11 @@ async function ingestFiles(files) {
     }
   });
   for (const { doc } of newDocs) {
-    audit("document.upload", doc.id, { name: doc.name, via: "file-picker" });
+    audit("document.upload", doc.id, {
+      name: doc.name,
+      via: "file-picker",
+      uploader: doc.uploaderContext ? identityLabel(doc.uploaderContext) : null,
+    });
   }
   toast(`${newDocs.length} document${newDocs.length === 1 ? "" : "s"} added`, "success");
   navigate(`/doc/${newDocs[0].doc.id}`);
@@ -392,8 +405,49 @@ function paperPage(doc, rev, page) {
 }
 
 function paperContent(doc, rev, page) {
+  // PDF rendering diagnostic. The renderer (paperPage) only kicks
+  // PDF.js / image / CSV pipelines when `rev.pdfUrl` or
+  // `rev.assetUrl` is set. Demo-mode uploads use `URL.createObjectURL()`,
+  // which produces a blob URL that DIES on page reload — so a user
+  // who uploaded a PDF, navigated, and came back sees this fallback
+  // text instead of their PDF. Surface that loudly so they know
+  // why + how to recover (re-upload OR move to server mode where
+  // /api/files persists the bytes).
+  const hasContent = !!(rev.pdfUrl || rev.assetUrl);
+  const isDemoBlobUrl = (rev.pdfUrl || rev.assetUrl || "").startsWith("blob:");
+  const blobIsValid = isDemoBlobUrl && (() => {
+    // A reload invalidates blob URLs but they still LOOK valid.
+    // We can't synchronously test the URL — kick a fetch in the
+    // background and the renderer's catch block will surface the
+    // failure inline. Just flag the case for the diagnostic.
+    return true;
+  })();
+  const diagnostic = !hasContent
+    ? el("div", { class: "callout warn", style: { padding: "var(--space-3)", border: "1px solid var(--warn)", borderRadius: "var(--radius-md)", background: "color-mix(in srgb, var(--warn) 10%, var(--surface))", marginBottom: "var(--space-3)" } }, [
+        el("strong", {}, ["No file attached to this revision."]),
+        el("div", { class: "small mt-1" }, [
+          "This revision was created without an uploaded file, so the page below shows the seeded description text. ",
+          "Use ",
+          el("button", { class: "btn sm primary", style: { display: "inline-flex" }, onClick: () => {
+            const fi = /** @type {HTMLInputElement | null} */ (document.querySelector('input[type="file"]'));
+            fi?.click?.();
+          } }, ["Change PDF"]),
+          " in the toolbar above to attach a file.",
+        ]),
+      ])
+    : (isDemoBlobUrl
+      ? el("div", { class: "callout", style: { padding: "var(--space-3)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-md)", background: "var(--panel)", marginBottom: "var(--space-3)" } }, [
+          el("strong", {}, ["Demo-mode upload"]),
+          el("div", { class: "small mt-1" }, [
+            "Files uploaded in demo mode are stored as in-memory blob URLs that don't survive a page reload. ",
+            "If the PDF below isn't rendering, re-upload the file via Change PDF, or run FORGE in server mode where /api/files persists the bytes.",
+          ]),
+        ])
+      : null);
+
   const body = ({
     1: [
+      diagnostic,
       el("p", {}, [rev.summary || "This revision introduces engineering changes summarized in the metadata panel."]),
       el("p", {}, [
         "The FORGE document viewer anchors regional comments to normalized (page, x, y) coordinates so ",
@@ -467,12 +521,97 @@ function metadataCard(doc, rev) {
     ["Approver", rev.approverId || "—"],
     ["Effective", new Date(rev.createdAt).toLocaleDateString()],
   ];
+  // Metadata is editable by the doc's uploader OR any user with the
+  // `edit` capability — matches the user's stated rule. Read-only
+  // viewers see the values as plain text without a CTA.
+  const me = currentUserId();
+  const canEditMeta = (doc.uploaderId && doc.uploaderId === me) || can("edit");
   return card("Metadata", el("div", { class: "stack" }, meta.map(([k, v]) =>
     el("div", { class: "row" }, [
       el("span", { class: "tiny muted", style: { width: "90px" } }, [k]),
       el("span", { class: "small" }, [String(v || "—")]),
     ])
-  )));
+  )), {
+    actions: canEditMeta ? [
+      el("button", {
+        class: "btn sm",
+        type: "button",
+        onClick: () => openMetadataEditor(doc, rev),
+      }, ["Edit"]),
+    ] : [],
+  });
+}
+
+function openMetadataEditor(doc, rev) {
+  // The fields the operator can edit. Revision-bound facts
+  // (label, status, approver, createdAt) live on the revision and
+  // change via the revision flow — they're shown for context but
+  // not editable here.
+  const fields = [
+    ["discipline", "Discipline"],
+    ["projectId", "Project"],
+    ["package", "Package"],
+    ["area", "Area"],
+    ["line", "Line"],
+    ["system", "System"],
+    ["vendor", "Vendor"],
+  ];
+  const inputs = {};
+  for (const [key] of fields) {
+    inputs[key] = input({ value: doc[key] || "" });
+  }
+  const sensitivitySelect = select(
+    [
+      { value: "public", label: "Public" },
+      { value: "internal", label: "Internal" },
+      { value: "confidential", label: "Confidential" },
+      { value: "restricted", label: "Restricted" },
+    ],
+    { value: doc.sensitivity || "internal" },
+  );
+
+  modal({
+    title: `Edit metadata — ${doc.name}`,
+    body: el("div", { class: "stack" }, [
+      ...fields.map(([key, label]) => formRow(label, inputs[key])),
+      formRow("Sensitivity", sensitivitySelect),
+      el("div", { class: "tiny muted" }, [
+        "Revision label, status, approver, and effective date are managed by the revision workflow — see the Revision timeline card.",
+      ]),
+    ]),
+    actions: [
+      { label: "Cancel" },
+      { label: "Save", variant: "primary", onClick: () => {
+        update(s => {
+          const d = s.data.documents.find(x => x.id === doc.id);
+          if (!d) return;
+          const before = { ...d };
+          for (const [key] of fields) d[key] = inputs[key].value.trim() || null;
+          d.sensitivity = sensitivitySelect.value;
+          d.updated_at = new Date().toISOString();
+          // Stamp the editor in the audit log with their full
+          // identity (name + email + role + org), not just the role
+          // string. Reviewers reading the trail need WHO acted.
+          audit("document.metadata.update", doc.id, {
+            changes: diffMeta(before, d),
+            editor: identityLabel(currentIdentityContext()),
+          });
+        });
+        toast("Metadata saved", "success");
+        renderDocViewer({ id: doc.id });
+      }},
+    ],
+  });
+}
+
+function diffMeta(before, after) {
+  const out = {};
+  for (const k of Object.keys(after)) {
+    if (before[k] !== after[k] && k !== "updated_at") {
+      out[k] = { from: before[k] || null, to: after[k] || null };
+    }
+  }
+  return out;
 }
 
 function revisionTimelineCard(doc, rev) {

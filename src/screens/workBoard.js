@@ -12,6 +12,9 @@ import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
 import { renderMermaid } from "../core/mermaid.js";
 import { simulation } from "../core/simulation.js";
+import { evaluate as evalFormula, BUILTINS as FORMULA_BUILTINS } from "../core/formulas.js";
+import { currentUserId } from "../core/groups.js";
+import { currentIdentityContext, identityLabel } from "../core/identity.js";
 
 const COLUMNS = ["Backlog", "Open", "In Progress", "In Review", "Approved", "Done"];
 
@@ -1025,6 +1028,9 @@ function openItem(itemId) {
       formRow("Due date", dueInput),
       formRow("Description", descTextarea),
       formRow("Blocked by (comma-separated IDs)", blockersInput),
+      formulaFieldsSection(w),
+      linkedItemsSection(w),
+      commentsThread(w),
       historyDrawer(w),
     ]),
     actions: [
@@ -1114,4 +1120,394 @@ function openNewItem(projectId) {
       }},
     ],
   });
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Drawer extensions: comments, linked items, formula fields.
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Comment thread for a work item. Multi-author — every user with
+ * `create` capability can post; the seed has multiple users so the
+ * demo shows the multi-voice thread immediately. Each comment row
+ * shows author + timestamp + body. The composer pins to the bottom
+ * of the section so a long thread doesn't push the input off-screen.
+ *
+ * Comments are persisted on `state.data.comments` with shape:
+ *   { id, workItemId, author, ts, text, replyTo? }
+ *
+ * The same `comments` collection backs document regional comments
+ * (`docId` + `revId` + `page` + x/y) — adding `workItemId` is
+ * additive; existing rows ignore it. New rows include `workItemId`
+ * but no doc fields, so the docViewer's filter still excludes them.
+ */
+function commentsThread(w) {
+  const wrap = el("div", { class: "stack mt-3" });
+  const composer = textarea({
+    rows: 2,
+    placeholder: "Add a comment — Cmd+Enter / Ctrl+Enter to post",
+  });
+
+  const renderList = () => {
+    const all = (state.data.comments || []).filter(c => c.workItemId === w.id);
+    const list = el("div", { class: "stack" });
+    if (all.length === 0) {
+      list.append(el("div", { class: "muted tiny" }, ["No comments yet — start the thread below."]));
+    } else {
+      const users = state.data.users || [];
+      for (const c of all) {
+        // Comments now carry a full author identity snapshot
+        // (`c.authorContext` — see post() below). Older comments
+        // that pre-date the change still carry just `c.author`
+        // (a user id). Render either shape.
+        const ctx = c.authorContext || null;
+        const u = users.find(x => x.id === c.author);
+        const name = ctx?.name || u?.name || c.author || "Unknown";
+        const email = ctx?.email || null;
+        const role = ctx?.role || u?.role || null;
+        const orgName = ctx?.orgName || null;
+        list.append(el("div", { class: "activity-row", style: { alignItems: "flex-start" } }, [
+          el("div", { class: "stack", style: { gap: "2px", flex: 1 } }, [
+            el("div", { class: "row gap-2 wrap", style: { alignItems: "baseline" } }, [
+              el("span", { class: "strong small" }, [name]),
+              email ? el("span", { class: "tiny muted" }, [email]) : null,
+              role ? badge(role, "info") : null,
+              orgName ? el("span", { class: "tiny muted" }, [`· ${orgName}`]) : null,
+              el("span", { class: "tiny muted" }, [new Date(c.ts).toLocaleString()]),
+            ]),
+            el("div", { class: "small" }, [c.text]),
+          ]),
+        ]));
+      }
+    }
+    wrap.replaceChildren(
+      el("div", { class: "row spread" }, [
+        el("div", { class: "strong small" }, [`Comments (${all.length})`]),
+      ]),
+      list,
+      el("div", { class: "stack mt-2" }, [
+        composer,
+        el("div", { class: "row gap-2" }, [
+          el("button", {
+            class: "btn sm primary",
+            type: "button",
+            disabled: !can("create"),
+            onClick: () => post(),
+          }, ["Post"]),
+        ]),
+      ]),
+    );
+  };
+
+  function post() {
+    const text = composer.value.trim();
+    if (!text) { toast("Comment is empty", "warn"); return; }
+    if (!can("create")) { toast("No permission to comment", "warn"); return; }
+    // Snapshot the author's identity AT POST TIME so renames or
+    // role-rotations don't rewrite history. The audit trail keeps
+    // pointing at who-actually-posted-this even years later.
+    const authorCtx = currentIdentityContext();
+    const c = {
+      id: simulation.demoId("CMT", state.data.comments || []),
+      workItemId: w.id,
+      author: authorCtx.userId || currentUserId() || "U-1",
+      authorContext: authorCtx,
+      ts: new Date().toISOString(),
+      text,
+    };
+    update(s => { s.data.comments = s.data.comments || []; s.data.comments.push(c); });
+    audit("workitem.comment", w.id, { commentId: c.id, author: identityLabel(authorCtx) });
+    composer.value = "";
+    renderList();
+    toast("Comment posted", "success");
+  }
+
+  composer.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      post();
+    }
+  });
+
+  renderList();
+  return wrap;
+}
+
+/**
+ * Linked items section — cross-references to other work items, assets,
+ * or documents. Stored on `w.references` as an array of
+ * `{ kind, id }` where kind ∈ ("workItem", "asset", "doc").
+ *
+ * UI: chip per reference with a remove button, plus an "Add link"
+ * picker. Clicking a chip navigates to the linked target. The
+ * blocker chain (`w.blockers`) is presented separately because it's
+ * a graph relationship with semantics (status / state-machine
+ * implications); cross-references are softer.
+ */
+function linkedItemsSection(w) {
+  const wrap = el("div", { class: "stack mt-3" });
+  const refs = Array.isArray(w.references) ? [...w.references] : [];
+
+  const route = (r) => {
+    if (r.kind === "workItem") {
+      const t = (state.data.workItems || []).find(x => x.id === r.id);
+      return t ? `/work-board/${t.projectId}?wi=${r.id}` : null;
+    }
+    if (r.kind === "asset") return `/asset/${r.id}`;
+    if (r.kind === "doc") return `/doc/${r.id}`;
+    return null;
+  };
+  const label = (r) => {
+    if (r.kind === "workItem") {
+      const t = (state.data.workItems || []).find(x => x.id === r.id);
+      return t ? `${t.id} · ${t.title}` : r.id;
+    }
+    if (r.kind === "asset") {
+      const a = (state.data.assets || []).find(x => x.id === r.id);
+      return a ? a.name : r.id;
+    }
+    if (r.kind === "doc") {
+      const d = (state.data.documents || []).find(x => x.id === r.id);
+      return d ? d.name : r.id;
+    }
+    return r.id;
+  };
+
+  const persist = () => {
+    update(s => {
+      const i = s.data.workItems.find(x => x.id === w.id);
+      if (i) i.references = refs;
+    });
+    audit("workitem.references.update", w.id, { count: refs.length });
+  };
+
+  const render = () => {
+    const chips = refs.length === 0
+      ? [el("span", { class: "muted tiny" }, ["No references yet."])]
+      : refs.map((r, idx) => el("span", { class: "chip clickable" }, [
+          el("span", { class: "chip-kind" }, [r.kind]),
+          el("button", {
+            class: "btn ghost sm",
+            type: "button",
+            style: { padding: "0 4px" },
+            onClick: (e) => { e.stopPropagation(); const target = route(r); if (target) navigate(target); },
+          }, [label(r)]),
+          el("button", {
+            class: "btn ghost sm",
+            type: "button",
+            title: "Remove link",
+            "aria-label": `Remove link to ${r.id}`,
+            style: { padding: "0 4px" },
+            onClick: (e) => { e.stopPropagation(); refs.splice(idx, 1); persist(); render(); },
+          }, ["✕"]),
+        ]));
+
+    wrap.replaceChildren(
+      el("div", { class: "row spread" }, [
+        el("div", { class: "strong small" }, [`References (${refs.length})`]),
+        el("button", {
+          class: "btn sm",
+          type: "button",
+          disabled: !can("edit"),
+          onClick: () => openAddRefModal(),
+        }, ["+ Link"]),
+      ]),
+      el("div", { class: "row wrap gap-2" }, chips),
+    );
+  };
+
+  function openAddRefModal() {
+    const kindSel = select(
+      [
+        { value: "workItem", label: "Work item" },
+        { value: "asset", label: "Asset" },
+        { value: "doc", label: "Document" },
+      ],
+      { value: "workItem" },
+    );
+    // Build the candidate list dynamically from kindSel's value at
+    // submit time — switching the dropdown re-rerenders the picker.
+    const idSel = el("select", { class: "select" });
+    const repop = () => {
+      idSel.innerHTML = "";
+      const items = kindSel.value === "asset"
+        ? (state.data.assets || []).map(a => ({ value: a.id, label: `${a.id} · ${a.name}` }))
+        : kindSel.value === "doc"
+          ? (state.data.documents || []).map(d => ({ value: d.id, label: `${d.id} · ${d.name}` }))
+          : (state.data.workItems || []).filter(x => x.id !== w.id).map(x => ({ value: x.id, label: `${x.id} · ${x.title}` }));
+      for (const it of items) {
+        const opt = document.createElement("option");
+        opt.value = it.value;
+        opt.textContent = it.label;
+        idSel.append(opt);
+      }
+    };
+    repop();
+    kindSel.addEventListener("change", repop);
+
+    modal({
+      title: "Add reference",
+      body: el("div", { class: "stack" }, [
+        formRow("Kind", kindSel),
+        formRow("Target", idSel),
+      ]),
+      actions: [
+        { label: "Cancel" },
+        { label: "Add", variant: "primary", onClick: () => {
+          const kind = kindSel.value;
+          const id = idSel.value;
+          if (!id) { toast("Pick a target first", "warn"); return false; }
+          if (refs.some(r => r.kind === kind && r.id === id)) {
+            toast("Already linked", "info");
+            return;
+          }
+          refs.push({ kind, id });
+          persist();
+          render();
+          toast("Linked", "success");
+        }},
+      ],
+    });
+  }
+
+  render();
+  return wrap;
+}
+
+/**
+ * Formula fields section — operator-authored computed values that
+ * recompute on every drawer render. Stored on `w.formulas` as
+ * `{ name: expression }`. Each row shows: name + expression input
+ * + live result + remove button.
+ *
+ * The "Add formula" button opens an inline composer; "Browse
+ * functions" opens the /formulas reference in a new tab so the
+ * operator can read the docs without losing their place.
+ */
+function formulaFieldsSection(w) {
+  const wrap = el("div", { class: "stack mt-3" });
+  const formulas = w.formulas && typeof w.formulas === "object" ? { ...w.formulas } : {};
+  // Identifiers the formula sees at evaluation time. Keeping these
+  // in sync with the work-item shape is what the formula engine
+  // resolves against.
+  const buildScope = () => ({
+    id: w.id,
+    title: w.title,
+    type: w.type,
+    status: w.status,
+    severity: w.severity,
+    due: w.due,
+    assignee: w.assigneeId,
+    assignedAt: w.assignedAt,
+    description: w.description,
+    blockers: (w.blockers || []).length,
+    labels: (w.labels || []).join(","),
+    project: w.projectId,
+  });
+
+  const persist = () => {
+    update(s => {
+      const i = s.data.workItems.find(x => x.id === w.id);
+      if (i) i.formulas = { ...formulas };
+    });
+    audit("workitem.formulas.update", w.id, { count: Object.keys(formulas).length });
+  };
+
+  const render = () => {
+    const scope = buildScope();
+    const rows = Object.entries(formulas).map(([name, expr]) => {
+      const exprInput = input({ value: expr, style: { fontFamily: "var(--font-mono)" } });
+      const out = el("span", { class: "mono small" }, ["—"]);
+      const recompute = () => {
+        const r = evalFormula(exprInput.value, scope);
+        out.replaceChildren(r.ok
+          ? el("span", { class: "success-text" }, [String(r.value)])
+          : el("span", { class: "danger-text" }, [`✕ ${r.error}`]));
+      };
+      exprInput.addEventListener("input", () => {
+        formulas[name] = exprInput.value;
+        recompute();
+      });
+      exprInput.addEventListener("change", () => persist());
+      recompute();
+      return el("div", { class: "row gap-2", style: { alignItems: "center" } }, [
+        el("span", { class: "tiny muted", style: { minWidth: "120px" } }, [name]),
+        exprInput,
+        out,
+        el("button", {
+          class: "btn ghost sm",
+          type: "button",
+          title: "Remove",
+          "aria-label": `Remove formula ${name}`,
+          onClick: () => { delete formulas[name]; persist(); render(); },
+        }, ["✕"]),
+      ]);
+    });
+
+    wrap.replaceChildren(
+      el("div", { class: "row spread" }, [
+        el("div", { class: "strong small" }, [`Formulas (${Object.keys(formulas).length})`]),
+        el("div", { class: "row gap-2" }, [
+          el("button", {
+            class: "btn sm",
+            type: "button",
+            onClick: () => window.open("#/formulas", "_blank", "noopener,noreferrer"),
+            title: "Open the formula reference in a new tab",
+          }, ["Browse functions ↗"]),
+          el("button", {
+            class: "btn sm",
+            type: "button",
+            disabled: !can("edit"),
+            onClick: () => addFormula(),
+          }, ["+ Formula"]),
+        ]),
+      ]),
+      rows.length === 0
+        ? el("div", { class: "muted tiny" }, [
+            "No formulas yet. Add one to compute a value from this row's fields. ",
+            "Try ",
+            el("code", {}, ["daysUntilDue(due)"]),
+            " — see ",
+            el("a", { href: "#/formulas", target: "_blank" }, ["Formula reference"]),
+            " for every function.",
+          ])
+        : el("div", { class: "stack" }, rows),
+    );
+  };
+
+  function addFormula() {
+    const nameInput = input({ placeholder: "e.g. Days left", value: "" });
+    const exprInput = input({ placeholder: "e.g. daysUntilDue(due)", style: { fontFamily: "var(--font-mono)" } });
+    modal({
+      title: "Add formula",
+      body: el("div", { class: "stack" }, [
+        formRow("Name", nameInput),
+        formRow("Expression", exprInput),
+        el("div", { class: "tiny muted" }, [
+          "Reference fields by name: ",
+          el("code", {}, ["due, severity, status, assignee, title, blockers"]),
+          ". Open the ",
+          el("a", { href: "#/formulas", target: "_blank" }, ["Formula reference ↗"]),
+          " for every function.",
+        ]),
+      ]),
+      actions: [
+        { label: "Cancel" },
+        { label: "Add", variant: "primary", onClick: () => {
+          const name = nameInput.value.trim();
+          const expr = exprInput.value.trim();
+          if (!name) { toast("Name required", "warn"); return false; }
+          if (!expr) { toast("Expression required", "warn"); return false; }
+          if (formulas[name]) { toast(`Formula "${name}" already exists`, "warn"); return false; }
+          formulas[name] = expr;
+          persist();
+          render();
+          toast("Formula added", "success");
+        }},
+      ],
+    });
+  }
+
+  render();
+  return wrap;
 }

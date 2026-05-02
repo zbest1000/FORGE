@@ -2396,6 +2396,10 @@ body.dock-hidden .screen-container,
 .success-text { color: var(--success); }
 .danger-text { color: var(--danger); }
 .warn-text { color: var(--warn); }
+.accent-text { color: var(--accent); }
+/* Used by the formula sandbox + other places that show source code
+   inline. Not interactive — purely a colour cue. */
+.m-0 { margin: 0; }
 
 .md p { margin: 0 0 8px; }
 .md ul, .md ol { margin: 0 0 8px 20px; padding: 0; }
