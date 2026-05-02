@@ -7,6 +7,7 @@ import { el, mount, card, badge, toast, input, prompt } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { query, saveSearch, listSavedSearches, deleteSavedSearch } from "../core/search.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 const FACETS = [
   { key: "kind",      label: "Object type" },
@@ -39,8 +40,14 @@ export function renderSearch() {
   mount(root, [
     el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
       el("div", {}, [
-        el("div", { class: "strong" }, ["Search"]),
+        el("h2", { style: { display: "inline-flex", alignItems: "center", margin: 0, fontSize: "18px" } }, [
+          "Search", helpHint("forge.search"),
+        ]),
         el("div", { class: "tiny muted" }, [`${result.total} results · BM25 + facet filter`]),
+        el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+          helpLinkChip("forge.search", "Workspace search"),
+          helpLinkChip("forge.permissions", "Permissions"),
+        ]),
       ]),
       el("div", { class: "row" }, [
         el("button", { class: "btn sm", onClick: () => doSave(q, selected) }, ["Save search"]),

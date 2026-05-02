@@ -10,7 +10,7 @@
 //   * Revision timeline with supersede chain markers
 //   * Approval banner + request-approval flow (delegated to /approvals)
 
-import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea, prompt, loadingState, inputWithSuggestions } from "../core/ui.js";
+import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea, prompt, loadingState, inputWithSuggestions, confirm } from "../core/ui.js";
 import { idle } from "../core/idle.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
@@ -24,18 +24,32 @@ import { detectCad, supportedExtensions } from "../core/cad.js";
 import { renderCad } from "../core/cad-viewer.js";
 import { currentUserId, currentUser, currentRole } from "../core/groups.js";
 import { buildAnnotationOverlay, listAnnotations } from "../core/pdfAnnotations.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 export function renderDocsIndex() {
   const root = document.getElementById("screenContainer");
   const d = state.data;
+  // Toolbar persists its search query in sessionStorage so navigating away
+  // and back keeps the user's filter.
+  const filter = (sessionStorage.getItem("docs.index.filter") || "").toLowerCase();
+  const docs = (d.documents || []).filter(doc =>
+    !filter
+    || (doc.name || "").toLowerCase().includes(filter)
+    || (doc.id || "").toLowerCase().includes(filter)
+    || (doc.discipline || "").toLowerCase().includes(filter)
+    || (doc.area || "").toLowerCase().includes(filter)
+    || (doc.line || "").toLowerCase().includes(filter)
+  );
+  const uid = currentUserId();
   mount(root, [
-    docsToolbar(),
-    card("Documents", el("table", { class: "table" }, [
+    docsToolbar(filter),
+    card(`Documents (${docs.length}${filter ? ` of ${(d.documents || []).length}` : ""})`, el("table", { class: "table" }, [
       el("thead", {}, [el("tr", {}, ["Name","Discipline","Sensitivity","Current Rev","Revisions",""].map(h => el("th", {}, [h])))]),
-      el("tbody", {}, (d.documents || []).map(doc => {
+      el("tbody", {}, docs.map(doc => {
         const rev = getById("revisions", doc.currentRevisionId);
         const ext = (doc.name?.split(".").pop() || rev?.blobName?.split(".").pop() || "").toLowerCase();
         const editable = ext === "xlsx" || ext === "xls";
+        const canDelete = can("edit") || (doc.uploaderId && doc.uploaderId === uid);
         return el("tr", { class: "row-clickable", onClick: () => navigate(`/doc/${doc.id}`) }, [
           el("td", {}, [doc.name, el("div", { class: "tiny muted" }, [doc.id])]),
           el("td", {}, [badge(doc.discipline, "info")]),
@@ -53,11 +67,18 @@ export function renderDocsIndex() {
                 title: "Open in the in-browser editor (Univer)",
                 onClick: (e) => { e.stopPropagation(); navigate(`/edit/${doc.id}`); },
               }, ["Edit"]) : null,
+              el("button", {
+                class: "btn sm danger",
+                disabled: !canDelete,
+                title: canDelete ? "Delete document" : "Only the uploader or a user with edit permission can delete",
+                onClick: (e) => { e.stopPropagation(); deleteDocument(doc); },
+              }, ["Delete"]),
             ]),
           ]),
         ]);
       })),
     ])),
+    docs.length === 0 && filter ? el("div", { class: "muted small mt-2" }, [`No documents match "${filter}".`]) : null,
     docsDropZone(),
   ]);
 }
@@ -66,7 +87,7 @@ export function renderDocsIndex() {
 // type="file"> element is the standard browser primitive that drives
 // the OS file dialog (Finder on macOS, Files on Windows, Nautilus etc.
 // on Linux). Clicking the visible button triggers the input.
-function docsToolbar() {
+function docsToolbar(currentFilter = "") {
   const fileInput = el("input", {
     type: "file",
     multiple: true,
@@ -76,6 +97,34 @@ function docsToolbar() {
   fileInput.addEventListener("change", () => {
     if (fileInput.files?.length) ingestFiles(Array.from(fileInput.files));
     fileInput.value = ""; // reset so re-selecting the same file fires
+  });
+  // Search box — filters docs by name / id / discipline / area / line in
+  // real time. Persists in sessionStorage so the filter survives nav.
+  const searchInput = el("input", {
+    type: "search",
+    class: "input",
+    placeholder: "Search documents by name, id, discipline, area, line…",
+    value: currentFilter,
+    "aria-label": "Search documents",
+    style: { minWidth: "320px" },
+  });
+  let debounceTimer = null;
+  searchInput.addEventListener("input", () => {
+    clearTimeout(debounceTimer);
+    const v = /** @type {HTMLInputElement} */ (searchInput).value;
+    debounceTimer = setTimeout(() => {
+      if (v) sessionStorage.setItem("docs.index.filter", v);
+      else sessionStorage.removeItem("docs.index.filter");
+      renderDocsIndex();
+      // Restore focus + cursor after re-render.
+      setTimeout(() => {
+        const fresh = document.querySelector('input[type="search"][aria-label="Search documents"]');
+        if (fresh instanceof HTMLInputElement) {
+          fresh.focus();
+          try { fresh.setSelectionRange(v.length, v.length); } catch {}
+        }
+      }, 0);
+    }, 120);
   });
   return el("div", { class: "row spread mb-3 gap-2" }, [
     el("div", {}, [
@@ -266,9 +315,15 @@ function revisionSafetyBanner(doc, rev) {
   return el("section", { class: `revision-safety-banner ${variant}`, "aria-live": "polite" }, [
     el("div", { class: "revision-safety-main" }, [
       el("div", { class: "revision-safety-kicker" }, ["Document control"]),
-      el("div", { class: "revision-safety-title" }, [doc.name]),
+      el("div", { class: "revision-safety-title", style: { display: "inline-flex", alignItems: "center" } }, [doc.name, helpHint("forge.document")]),
       el("div", { class: "revision-safety-state" }, [stateLabel]),
       el("div", { class: "revision-safety-guidance" }, [guidance]),
+      el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+        helpLinkChip("forge.doc.revisions", "Revision lifecycle"),
+        helpLinkChip("forge.doc.transmittal", "Transmittals"),
+        helpLinkChip("forge.doc.regional-comments", "Regional comments"),
+        helpLinkChip("forge.doc.metadata", "Metadata fields"),
+      ]),
     ]),
     el("div", { class: "revision-safety-actions" }, [
       badge(status, revVariant(status)),
@@ -286,6 +341,14 @@ function revisionSafetyBanner(doc, rev) {
 }
 
 function metadataBar(doc, rev) {
+  // Delete is gated to either the original uploader OR anyone with the
+  // `edit` capability — same model as the metadata editor. Genuine
+  // controlled-document regimes would route this through an Archive
+  // workflow instead of a hard delete; the demo model uses
+  // soft-deletion (the doc is removed from state.data.documents and
+  // its revisions are no longer referenced) and audits the action.
+  const uid = currentUserId();
+  const canDelete = can("edit") || (doc.uploaderId && doc.uploaderId === uid);
   return el("div", { class: "row spread mb-3" }, [
     el("div", { class: "row wrap" }, [
       badge(doc.id, "info"),
@@ -297,6 +360,12 @@ function metadataBar(doc, rev) {
     ]),
     el("div", { class: "row" }, [
       el("button", { class: "btn sm", onClick: () => followToggle(doc.id) }, [isFollowing(doc.id) ? "Unfollow" : "Follow"]),
+      el("button", {
+        class: "btn sm danger",
+        disabled: !canDelete,
+        title: canDelete ? "Delete this document" : "Only the uploader or a user with edit permission can delete",
+        onClick: () => deleteDocument(doc),
+      }, ["Delete"]),
     ]),
   ]);
 }
@@ -304,6 +373,32 @@ function metadataBar(doc, rev) {
 function followToggle(docId) {
   if (isFollowing(docId)) unfollow(docId); else follow(docId);
   renderDocViewer({ id: docId });
+}
+
+async function deleteDocument(doc) {
+  const uid = currentUserId();
+  const canDelete = can("edit") || (doc.uploaderId && doc.uploaderId === uid);
+  if (!canDelete) {
+    toast("Only the uploader or a user with edit permission can delete this document", "warn");
+    return;
+  }
+  const ok = await confirm({
+    title: `Delete ${doc.name}?`,
+    message: `Permanently remove "${doc.name}" and all its revisions? This is recorded in the audit ledger and cannot be undone from the UI.`,
+    confirmLabel: "Delete",
+    variant: "danger",
+  });
+  if (!ok) return;
+  const revIds = (doc.revisionIds || []).slice();
+  update(s => {
+    s.data.documents = (s.data.documents || []).filter(x => x.id !== doc.id);
+    s.data.revisions = (s.data.revisions || []).filter(r => !revIds.includes(r.id));
+    s.data.comments  = (s.data.comments  || []).filter(c => c.docId !== doc.id);
+    s.data.docAnnotations = (s.data.docAnnotations || []).filter(a => a.docId !== doc.id);
+  });
+  audit("document.delete", doc.id, { name: doc.name, revisionCount: revIds.length });
+  toast(`${doc.name} deleted`, "success");
+  navigate("/docs");
 }
 
 function revVariant(status) {

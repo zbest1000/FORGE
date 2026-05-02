@@ -26,6 +26,7 @@ import {
 import { state } from "../core/store.js";
 import { api } from "../core/api.js";
 import { navigate } from "../core/router.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 const SS_SELECTED = "profiles.admin.selected";
 const SS_FILTER_KIND = "profiles.admin.filter.kind";
@@ -88,9 +89,16 @@ function renderShell({ profiles, demo = false, loading = false }) {
 function headerRow(total, demo, loading) {
   return el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
     el("div", {}, [
-      el("div", { class: "strong" }, ["Asset profiles"]),
+      el("h2", { style: { display: "inline-flex", alignItems: "center", margin: 0, fontSize: "18px" } }, [
+        "Asset profiles", helpHint("forge.profile"),
+      ]),
       el("div", { class: "tiny muted" }, [
         loading ? "Loading…" : `${total} profile${total === 1 ? "" : "s"} · versioned, immutable history, capability-gated`,
+      ]),
+      el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+        helpLinkChip("forge.profile", "Asset profiles"),
+        helpLinkChip("forge.profile.versions", "Profile versions"),
+        helpLinkChip("forge.profile.binding", "Asset point bindings"),
       ]),
     ]),
     el("div", { class: "row wrap" }, [

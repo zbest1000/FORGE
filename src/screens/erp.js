@@ -12,6 +12,7 @@ import { state, update } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { can } from "../core/permissions.js";
 import { ingest } from "../core/events.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 const SEED_MAPPINGS = [
   { erp: "PurchaseOrder", forge: "WorkItem(RFI)",    status: "in-sync", lastSync: "2 min ago",  conflicts: 0 },
@@ -83,6 +84,17 @@ export function renderERP() {
   const conflicts = d.erpConflicts || SEED_CONFLICTS;
 
   mount(root, [
+    el("div", { style: { marginBottom: "12px" } }, [
+      el("h2", { style: { display: "inline-flex", alignItems: "center", margin: 0, fontSize: "18px" } }, [
+        "ERP integration", helpHint("forge.erp.mapping"),
+      ]),
+      el("div", { class: "tiny muted" }, ["Bidirectional ERP↔FORGE entity map with conflict resolution and backfill."]),
+      el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+        helpLinkChip("forge.erp.mapping", "Mapping matrix"),
+        helpLinkChip("forge.erp.drift", "Drift vs conflict"),
+        helpLinkChip("forge.erp.backfill", "Backfill"),
+      ]),
+    ]),
     card("Mapping matrix", el("table", { class: "table" }, [
       el("thead", {}, [el("tr", {}, ["ERP entity","FORGE entity","Status","Last sync","Conflicts",""].map(h => el("th", {}, [h])))]),
       el("tbody", {}, mappings.map(m =>

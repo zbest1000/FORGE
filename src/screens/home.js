@@ -3,6 +3,7 @@ import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { effectiveGroupIds, currentUserId, isOrgOwner } from "../core/groups.js";
 import { workspaceIncidentBrief } from "../core/simulation.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 function viewerInGroups(...ids) {
   if (isOrgOwner()) return true;
@@ -23,6 +24,17 @@ export function renderHome() {
   const aiBrief = buildAIBrief(d);
 
   mount(root, [
+    el("div", { style: { marginBottom: "12px" } }, [
+      el("h2", { style: { display: "inline-flex", alignItems: "center", margin: 0, fontSize: "18px" } }, [
+        "Workspace home", helpHint("forge.audit-chain"),
+      ]),
+      el("div", { class: "tiny muted" }, ["Tamper-evident audit ledger, capability-based RBAC, and connector health at a glance."]),
+      el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+        helpLinkChip("forge.audit-chain", "Audit ledger"),
+        helpLinkChip("forge.permissions", "Permissions"),
+        helpLinkChip("forge.integrations", "Integrations"),
+      ]),
+    ]),
     el("div", { class: "card-grid" }, [
       kpi("Open work items", openWork, "+3 this week", "up"),
       kpi("Review queue", reviewQueue, "↑ awaiting you", "up"),

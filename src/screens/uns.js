@@ -7,6 +7,7 @@ import { navigate } from "../core/router.js";
 import { i3x, getServer } from "../core/i3x/client.js";
 import { parentPath } from "../core/i3x/uns.js";
 import { sparkline as chartSpark } from "../core/charts.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 export function renderUNSIndex() {
   const srv = getServer();
@@ -59,9 +60,16 @@ export function refreshUNSLive() {
 function headerRow(info) {
   return el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
     el("div", {}, [
-      el("div", { class: "strong" }, ["Unified Namespace"]),
+      el("h2", { style: { display: "inline-flex", alignItems: "center", margin: 0, fontSize: "18px" } }, [
+        "Unified Namespace", helpHint("forge.uns"),
+      ]),
       el("div", { class: "tiny muted" }, [
         `${info.namespaces} namespaces · ${info.objectTypes} types · ${info.relationshipTypes} rels · ${info.objects} objects · i3X ${info.version}`,
+      ]),
+      el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+        helpLinkChip("forge.uns", "Unified Namespace"),
+        helpLinkChip("forge.uns.path", "UNS path conventions"),
+        helpLinkChip("forge.isa95", "ISA-95 hierarchy"),
       ]),
     ]),
     el("div", { class: "row" }, [

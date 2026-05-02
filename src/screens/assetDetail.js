@@ -109,6 +109,7 @@ export function renderAssetDetail({ id }) {
           linkedProjects, linkedDocs, dataSources, tasks, maintenance, incidents,
         }) },
         { id: "data", label: "Data", content: () => dataTabStub(a, dataSources) },
+        { id: "dashboard", label: "Dashboard", content: () => assetDashboardTab(a) },
         { id: "config", label: "Configuration", content: () => configTabStub(a) },
       ],
     }),
@@ -142,6 +143,23 @@ function dataTabStub(asset, dataSources) {
     target.append(el("div", { class: "callout danger" }, [
       `Failed to load asset data view: ${err?.message || err}`,
     ]));
+  });
+  return target;
+}
+
+/**
+ * Per-asset configurable dashboard tab. Uses the shared dashboard
+ * canvas, scoped to this asset, so panel suggestions default to
+ * historian points belonging to the asset. Operators arrange charts /
+ * KPIs / gauges Grafana-style.
+ */
+function assetDashboardTab(asset) {
+  const target = el("div", { id: "asset-dashboard-target", class: "stack" });
+  import("../core/dashboardCanvas.js").then(mod => {
+    mod.renderDashboard(target, `asset:${asset.id}`, { name: `${asset.name} dashboard` });
+  }).catch(err => {
+    target.replaceChildren();
+    target.append(el("div", { class: "callout danger" }, [`Failed to load dashboard editor: ${err?.message || err}`]));
   });
   return target;
 }

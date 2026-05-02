@@ -18,6 +18,7 @@ import { signHMAC, canonicalJSON } from "../core/crypto.js";
 import { recentEvents } from "../core/events.js";
 import { canTransitionIncident, INCIDENT_STATUSES } from "../core/fsm/incident.js";
 import { simulation } from "../core/simulation.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 export function renderIncidentsIndex() {
   const root = document.getElementById("screenContainer");
@@ -197,9 +198,14 @@ function severityBar(inc) {
   return el("div", { class: "incident-severity-bar" }, [
     el("span", { class: "sev-chip" }, [inc.severity]),
     el("div", { style: { flex: 1 } }, [
-      el("h2", {}, [inc.title]),
+      el("h2", { style: { display: "inline-flex", alignItems: "center" } }, [inc.title, helpHint("forge.incident")]),
       el("div", { class: "tiny muted" }, [
         `Started ${new Date(inc.startedAt).toLocaleString()} · ${inc.id} · active for ${sla}`,
+      ]),
+      el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+        helpLinkChip("forge.incident", "Incidents"),
+        helpLinkChip("forge.incidents.severity", "Severity levels"),
+        helpLinkChip("forge.incidents.postmortem", "Postmortem"),
       ]),
     ]),
     badge(inc.status.toUpperCase(), inc.status === "active" ? "danger" : inc.status === "resolved" ? "success" : "warn"),

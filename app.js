@@ -111,6 +111,8 @@ function setupRoutes() {
 
   defineRoute("/projects", renderProjectsIndex);
   defineRoute("/work-board/:id", renderWorkBoard);
+  defineRoute("/work",
+    lazy(() => import("./src/screens/allWork.js"), "renderAllWork", "All work"));
 
   defineRoute("/docs",
     lazy(() => import("./src/screens/docViewer.js"), "renderDocsIndex", "Documents"));

@@ -1,6 +1,7 @@
 import { el, mount, card, badge, table } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { navigate } from "../core/router.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 export function renderInbox() {
   const root = document.getElementById("screenContainer");
@@ -8,6 +9,17 @@ export function renderInbox() {
   const items = (d.notifications || []);
 
   mount(root, [
+    el("div", { style: { marginBottom: "12px" } }, [
+      el("h2", { style: { display: "inline-flex", alignItems: "center", margin: 0, fontSize: "18px" } }, [
+        "Inbox", helpHint("forge.inbox"),
+      ]),
+      el("div", { class: "tiny muted" }, ["Mentions, approvals, incidents, and follow notifications converge here."]),
+      el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+        helpLinkChip("forge.inbox", "Inbox"),
+        helpLinkChip("forge.channels.mentions", "@-mentions"),
+        helpLinkChip("forge.approvals", "Approvals"),
+      ]),
+    ]),
     card("Inbox", table({
       columns: [
         { header: "Time",  render: r => el("span", { class: "mono tiny" }, [new Date(r.ts).toLocaleString()]) },

@@ -1,6 +1,7 @@
 import { el, mount, card, badge } from "../core/ui.js";
 import { state, getById } from "../core/store.js";
 import { navigate } from "../core/router.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 export function renderRevisionCompare({ left, right }) {
   const root = document.getElementById("screenContainer");
@@ -11,7 +12,16 @@ export function renderRevisionCompare({ left, right }) {
 
   mount(root, [
     el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
-      el("div", { class: "strong" }, [doc?.name || "Compare"]),
+      el("div", {}, [
+        el("h2", { style: { display: "inline-flex", alignItems: "center", margin: 0, fontSize: "18px" } }, [
+          doc?.name || "Compare", helpHint("forge.drawing.compare"),
+        ]),
+        el("div", { class: "tiny muted" }, [`Rev ${a.label} ↔ Rev ${b.label}`]),
+        el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+          helpLinkChip("forge.drawing.compare", "Revision compare"),
+          helpLinkChip("forge.doc.revisions", "Revision lifecycle"),
+        ]),
+      ]),
       el("button", { class: "btn sm", onClick: () => navigate(`/doc/${a.docId}`) }, ["← Back to document"]),
     ]),
     el("div", { class: "compare-grid" }, [

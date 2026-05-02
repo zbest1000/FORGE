@@ -23,6 +23,7 @@ import { navigate } from "../core/router.js";
 import { api } from "../core/api.js";
 import { sparkline } from "../core/charts.js";
 import { renderAssetsIndex as legacyAssetsTable } from "./assetDetail.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 const SS_EXPANDED = "assets.dashboard.expanded";
 const SS_EXPANDED_INIT = "assets.dashboard.expanded.init";
@@ -91,10 +92,19 @@ export async function renderAssetDashboard() {
   try {
     payload = await api("/api/asset-tree");
   } catch (err) {
-    // UX-D: errorState gives a consistent "this failed, here's how to
-    // recover" surface across screens. Retains the same retry semantics
-    // as the previous bespoke callout but with consistent ARIA
-    // (`role="alert"`) and visual treatment.
+    // If the failure is because the user isn't signed in (or the server
+    // is up but token-less), fall back to the in-browser seed tree
+    // rather than blocking the whole page behind a sign-in prompt.
+    // Operators using the demo / acting-as role-switcher get a fully
+    // populated dashboard immediately; signing in upgrades to the
+    // server-side data.
+    const msg = String(err?.message || err || "").toLowerCase();
+    const isAuth = msg.includes("unauthent") || msg.includes("401") || msg.includes("forbidden") || msg.includes("403");
+    if (isAuth) {
+      mount(root, [renderShell(buildDemoTree(), { demo: true, authHint: true })]);
+      return;
+    }
+    // Genuine network/server failure — surface the error with a retry.
     return mount(root, [
       errorState({
         title: "Failed to load asset tree",
@@ -208,7 +218,7 @@ function legacyAssetsTableNote() {
   ]);
 }
 
-function renderShell({ tree, unassigned, loading = false }, { demo = false } = {}) {
+function renderShell({ tree, unassigned, loading = false }, { demo = false, authHint = false } = {}) {
   ensureDefaultExpansion(tree);
   const filter = (sessionStorage.getItem(SS_FILTER_TEXT) || "").toLowerCase();
   const expanded = getExpanded();
@@ -226,7 +236,7 @@ function renderShell({ tree, unassigned, loading = false }, { demo = false } = {
   const cards = selectedAssetsFor(selected, filtered, unassigned, filter);
 
   return el("div", { class: "stack" }, [
-    headerRow(counts, loading, demo),
+    headerRow(counts, loading, demo, authHint),
     toolbar(filter),
     el("div", { class: "three-col asset-dashboard" }, [
       card("Hierarchy", treePanel(filtered, unassigned, expanded, selected), {
@@ -252,20 +262,40 @@ function computeCounts(tree, unassigned) {
   return { enterprises: tree.length, locations, assets };
 }
 
-function headerRow({ enterprises, locations, assets }, loading, demo) {
-  return el("div", { class: "row spread mb-3" }, [
-    el("div", {}, [
-      el("div", { class: "strong" }, ["Asset dashboard"]),
-      el("div", { class: "tiny muted" }, [
-        loading ? "Loading…" : `${enterprises} enterprise${enterprises === 1 ? "" : "s"} · ${locations} location${locations === 1 ? "" : "s"} · ${assets} asset${assets === 1 ? "" : "s"}`,
+function headerRow({ enterprises, locations, assets }, loading, demo, authHint) {
+  return el("div", { class: "stack mb-3 gap-2" }, [
+    el("div", { class: "row spread" }, [
+      el("div", {}, [
+        el("h2", { style: { display: "inline-flex", alignItems: "center", margin: 0, fontSize: "18px" } }, [
+          "Asset dashboard", helpHint("forge.asset"),
+        ]),
+        el("div", { class: "tiny muted" }, [
+          loading ? "Loading…" : `${enterprises} enterprise${enterprises === 1 ? "" : "s"} · ${locations} location${locations === 1 ? "" : "s"} · ${assets} asset${assets === 1 ? "" : "s"}`,
+        ]),
+        el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+          helpLinkChip("forge.asset", "Assets"),
+          helpLinkChip("forge.isa95", "ISA-95 hierarchy"),
+          helpLinkChip("forge.uns", "Unified Namespace"),
+        ]),
+      ]),
+      el("div", { class: "row wrap" }, [
+        demo
+          ? badge(authHint ? "Read-only · sign in for live data" : "Demo mode · read-only", "warn", { title: authHint ? "Asset tree shown from local seed. Sign in to query the live server tree." : "Sign in to a FORGE server to edit." })
+          : badge("Live · server-backed", "success"),
+        el("button", { class: "btn sm", onClick: () => renderAssetDashboard() }, ["Refresh"]),
       ]),
     ]),
-    el("div", { class: "row wrap" }, [
-      demo
-        ? badge("Demo mode · read-only", "warn", { title: "Sign in to a FORGE server to edit." })
-        : badge("Live · server-backed", "success"),
-      el("button", { class: "btn sm", onClick: () => renderAssetDashboard() }, ["Refresh"]),
-    ]),
+    // Inline auth-hint callout when the server is reachable but the
+    // user isn't signed in. Falls back to seeded data instead of
+    // blocking the screen — but the operator should know they're not
+    // looking at live data.
+    authHint
+      ? el("div", { class: "callout warn", role: "status", style: { padding: "8px 12px" } }, [
+          el("span", { class: "small" }, [
+            "Showing seeded data. Sign in (top-right) to query the live asset tree from /api/asset-tree.",
+          ]),
+        ])
+      : null,
   ]);
 }
 

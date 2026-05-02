@@ -1,11 +1,24 @@
 import { el, mount, card, badge } from "../core/ui.js";
 import { state, getById } from "../core/store.js";
 import { navigate } from "../core/router.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 export function renderTeamSpacesIndex() {
   const root = document.getElementById("screenContainer");
   const d = state.data;
   mount(root, [
+    el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
+      el("div", {}, [
+        el("h2", { style: { display: "inline-flex", alignItems: "center", margin: 0, fontSize: "18px" } }, [
+          "Team spaces", helpHint("forge.spaces"),
+        ]),
+        el("div", { class: "tiny muted" }, ["A workspace primitive containing channels, projects, members, and shared docs."]),
+        el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+          helpLinkChip("forge.spaces", "Team spaces"),
+          helpLinkChip("forge.channels", "Channels"),
+        ]),
+      ]),
+    ]),
     el("div", { class: "card-grid" }, (d.teamSpaces || []).map(ts => {
       const channels = (d.channels || []).filter(c => c.teamSpaceId === ts.id);
       const projects = (d.projects || []).filter(p => p.teamSpaceId === ts.id);
@@ -35,8 +48,12 @@ export function renderTeamSpace({ id }) {
   const members  = (d.users || []).filter(u => ts.memberIds?.includes(u.id));
 
   mount(root, [
-    card(ts.name, el("div", { class: "stack" }, [
+    card(el("span", { style: { display: "inline-flex", alignItems: "center" } }, [ts.name, helpHint("forge.spaces")]), el("div", { class: "stack" }, [
       el("div", { class: "muted" }, [ts.summary]),
+      el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+        helpLinkChip("forge.spaces", "Team spaces"),
+        helpLinkChip("forge.channels", "Channels"),
+      ]),
     ]), { subtitle: `ID ${ts.id}` }),
     el("div", { class: "two-col", style: { marginTop: "16px" } }, [
       card(`Channels (${channels.length})`, el("div", { class: "stack" }, channels.map(c =>

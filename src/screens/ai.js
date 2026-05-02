@@ -11,6 +11,7 @@ import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
 import { query as searchQuery } from "../core/search.js";
 import { impactOfRevision } from "../core/revisions.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 const MODEL_OPTIONS = [
   { value: "local:llama-like",    label: "local · llama-class (no egress)" },
@@ -37,6 +38,16 @@ export function renderAI() {
   const modelSel = select(MODEL_OPTIONS, { value: model, onChange: e => sessionStorage.setItem("ai.model", e.target.value) });
 
   mount(root, [
+    el("div", { style: { marginBottom: "12px" } }, [
+      el("h2", { style: { display: "inline-flex", alignItems: "center", margin: 0, fontSize: "18px" } }, [
+        "AI workspace", helpHint("forge.ai"),
+      ]),
+      el("div", { class: "tiny muted" }, ["Permission-filtered, citation-backed answers grounded in workspace data."]),
+      el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+        helpLinkChip("forge.ai", "AI workspace"),
+        helpLinkChip("forge.ai.citations", "Citations"),
+      ]),
+    ]),
     el("div", { class: "ai-layout" }, [
       el("div", { class: "ai-console" }, [
         el("div", { class: "ai-thread" },

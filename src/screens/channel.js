@@ -18,6 +18,7 @@ import { follow, unfollow, isFollowing, fanout } from "../core/subscriptions.js"
 import { renderMarkdown } from "../core/md.js";
 import { notifyMentions, highlightMentions, resolveMention } from "../core/mentions.js";
 import { pickObject } from "../core/objectPicker.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 export function renderChannel({ id }) {
   const root = document.getElementById("screenContainer");
@@ -107,8 +108,13 @@ function channelHeader(ch, ts) {
   const isFollow = isFollowing(ch.id);
   return el("div", { class: "row spread", style: { padding: "10px 16px", borderBottom: "1px solid var(--border)" } }, [
     el("div", {}, [
-      el("div", { class: "strong" }, [`# ${ch.name}`]),
+      el("div", { class: "strong", style: { display: "inline-flex", alignItems: "center" } }, [`# ${ch.name}`, helpHint("forge.channels")]),
       el("div", { class: "tiny muted" }, [`${ts?.name || ""} · kind: ${ch.kind}`]),
+      el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+        helpLinkChip("forge.channels", "Channels"),
+        helpLinkChip("forge.channels.mentions", "@-mentions"),
+        helpLinkChip("forge.channels.decisions", "Decision markers"),
+      ]),
     ]),
     el("div", { class: "row" }, [
       badge(ch.kind === "incident" ? "INCIDENT-LOCKED" : "LIVE", ch.kind === "incident" ? "danger" : "success"),
