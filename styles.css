@@ -1497,12 +1497,24 @@ body.dock-hidden .screen-container,
   position: fixed;
   inset: 0;
   z-index: 110;
-  background: rgba(0,0,0,0.35);
+  /* Matches the modal-backdrop dim + blur so a drawer reads as a
+     full-app overlay rather than a translucent right-edge sliver
+     that lets the right context panel bleed through. */
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   display: flex;
   justify-content: flex-end;
 }
 
-.drawer {
+/* The wrapper rendered by `drawer()` in src/core/ui.js is
+   `<aside class="drawer-panel">`. The class name was previously
+   `.drawer` here — a JS/CSS mismatch that left the panel with no
+   background, border, or shadow, so the right context panel and
+   project chrome bled through. Aliased on `.drawer` for safety in
+   case any future call site uses the bare class. */
+.drawer,
+.drawer-panel {
   width: min(560px, calc(100vw - 32px));
   height: 100%;
   background: var(--surface);
