@@ -1,37 +1,90 @@
-// Chart helpers — ECharts visualizations plus uPlot sparklines with SVG fallback.
+// Chart helpers — every interactive chart in the app uses ECharts
+// (apache.echarts.org). Sparklines render an immediate SVG fallback
+// so the page paints before the ECharts bundle loads, then upgrade
+// to a live, hover-aware ECharts canvas as soon as the dynamic
+// import resolves.
+//
+// Why ECharts:
+//   * One library across asset detail / dashboards / historian /
+//     formula previews — operators get one consistent tooltip,
+//     legend, zoom, and export experience.
+//   * Built-in toolbox + dataZoom + brush selection — useful for
+//     historical scrubbing without re-rolling our own.
+//   * Tree-shakeable; the import in src/core/vendor.js pulls only
+//     the modules we use.
+//
+// Previously the sparkline used uPlot via vendor.uplot(). It was
+// fast but added a second chart engine to the bundle and gave the
+// asset page a different interaction model from every other chart
+// in the app. Migrating to ECharts unifies the surface.
 
 import { vendor } from "./vendor.js";
 
 /**
  * Render a sparkline. `series` = array of numbers (oldest → newest).
- * Returns an HTMLElement that is updated asynchronously when uPlot loads.
+ * Returns an HTMLElement that paints synchronously (SVG fallback)
+ * and upgrades to ECharts on the next idle period.
+ *
+ * @param {number[]} series
+ * @param {object} [opts]
+ * @param {number} [opts.width=300]
+ * @param {number} [opts.height=60]
+ * @param {string} [opts.label] accessibility label / tooltip prefix.
+ * @param {boolean} [opts.area=true] fill under the line.
  */
-export function sparkline(series, { width = 300, height = 60, label = "" } = {}) {
+export function sparkline(series, { width = 300, height = 60, label = "", area = true } = {}) {
   const host = document.createElement("div");
   host.className = "spark";
   host.style.width = width + "px";
   host.style.height = height + "px";
-  // Synchronous SVG fallback so something shows before uPlot loads.
+  if (label) host.setAttribute("aria-label", label);
+  // Synchronous SVG fallback so something shows before ECharts loads.
   host.append(svgSpark(series, width, height));
   (async () => {
     try {
-      const uPlotCtor = await vendor.uplot();
-      if (!uPlotCtor) return;
+      const echarts = await vendor.echarts();
+      if (!echarts || !host.isConnected) return;
       host.replaceChildren(); // clear fallback
-      const x = series.map((_, i) => i);
-      const data = [x, series];
-      const opts = {
-        width, height,
-        scales: { x: { time: false } },
-        axes: [ { show: false }, { show: false } ],
-        legend: { show: false },
-        cursor: { drag: { x: false, y: false } },
-        series: [
-          {},
-          { stroke: "rgb(56,189,248)", width: 1.5, fill: "rgba(56,189,248,0.12)" },
-        ],
-      };
-      new uPlotCtor(opts, data, host);
+      const chart = echarts.init(host, null, { renderer: "canvas", width, height });
+      chart.setOption({
+        backgroundColor: "transparent",
+        animation: false,
+        // No axes, no legend — sparklines are pure shape.
+        grid: { left: 0, right: 0, top: 2, bottom: 2, containLabel: false },
+        xAxis: { type: "category", show: false, boundaryGap: false, data: series.map((_, i) => i) },
+        yAxis: { type: "value", show: false, scale: true },
+        // Hover tooltip carries the accessible label + raw value.
+        tooltip: {
+          trigger: "axis",
+          confine: true,
+          formatter: (params) => {
+            const v = params?.[0]?.value;
+            const num = typeof v === "number" ? v.toFixed(2) : String(v);
+            return label ? `${label}: ${num}` : num;
+          },
+        },
+        series: [{
+          type: "line",
+          data: series,
+          smooth: true,
+          showSymbol: false,
+          lineStyle: { color: "#38bdf8", width: 1.5 },
+          areaStyle: area ? { color: "rgba(56,189,248,0.18)" } : undefined,
+          // Tiny markline for the latest value so the trend's
+          // current state stays visible at a glance.
+          markPoint: {
+            symbol: "circle",
+            symbolSize: 5,
+            itemStyle: { color: "#38bdf8" },
+            data: series.length ? [{ coord: [series.length - 1, series[series.length - 1]] }] : [],
+          },
+        }],
+      });
+      // Keep the chart sized when the host element resizes.
+      if (typeof ResizeObserver === "function") {
+        const ro = new ResizeObserver(() => chart.resize());
+        ro.observe(host);
+      }
     } catch { /* keep SVG fallback */ }
   })();
   return host;

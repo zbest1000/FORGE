@@ -42,8 +42,9 @@ export function renderHub() {
 
       el("div", { class: "hub-footer" }, [
         el("div", { class: "tiny muted" }, [
-          "Tip: tiles open in a new tab. Press ",
-          el("kbd", {}, [isMac() ? "⌘" : "Ctrl"]), " + ", el("kbd", {}, ["K"]),
+          "Tip: ",
+          el("kbd", {}, [isMac() ? "⌘" : "Ctrl"]), "-click a tile to open it in a new tab. ",
+          "Press ", el("kbd", {}, [isMac() ? "⌘" : "Ctrl"]), " + ", el("kbd", {}, ["K"]),
           " anywhere to jump to anything.",
         ]),
         el("button", { class: "btn sm", onClick: () => navigate("/admin") }, ["Manage groups & access →"]),
@@ -58,20 +59,20 @@ function isMac() {
 
 function portalTile(p) {
   const href = `#/home?portal=${p.id}`;
-  // A real `<a target="_blank" rel="noopener noreferrer">` anchor handles
-  // the new-tab UX correctly across desktop AND mobile (where popups from
-  // JS are routinely blocked). Cmd/Ctrl/middle-click work as expected, the
-  // browser shows the URL in the status bar, and Enter on a focused tile
-  // navigates the same way as a click. No custom handler needed.
+  // User-feedback fix: tiles open in the SAME tab by default. The
+  // previous `target="_blank"` was disorienting — every click ripped
+  // the operator out of context, away from the right side panel and
+  // any in-flight selection. Cmd/Ctrl/middle-click + the browser's
+  // own modifier handling on `<a href>` still open in a new tab when
+  // operators want it; this just removes the implicit jump.
   return el("a", {
     class: "hub-tile",
     href,
-    target: "_blank",
     rel: "noopener noreferrer",
     style: {
       "--portal-accent": p.accent,
     },
-    "aria-label": `Open ${p.label} in a new tab`,
+    "aria-label": `Open ${p.label}`,
   }, [
     el("div", { class: "hub-tile-icon", "aria-hidden": "true" }, [p.icon]),
     el("div", { class: "hub-tile-body" }, [
