@@ -59,7 +59,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy filesystem scan (config + secrets + license)
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -71,13 +71,13 @@ jobs:
 
       - name: Upload filesystem SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@717e230604b28efc38d8b4d3737d0611b16bc19a # v3.30.0
+        uses: github/codeql-action/upload-sarif@2d92b76c45b91eb80fc44c74ce3fce0ee94e8f9d # v3.30.0
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
 
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: forge:scan
@@ -88,13 +88,13 @@ jobs:
 
       - name: Upload image SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@717e230604b28efc38d8b4d3737d0611b16bc19a # v3.30.0
+        uses: github/codeql-action/upload-sarif@2d92b76c45b91eb80fc44c74ce3fce0ee94e8f9d # v3.30.0
         with:
           sarif_file: trivy-image.sarif
           category: trivy-image
 
       - name: Fail on CRITICAL findings
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: forge:scan
