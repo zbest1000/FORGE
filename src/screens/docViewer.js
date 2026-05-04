@@ -267,7 +267,13 @@ async function ingestFiles(files) {
 }
 
 const SK = (id, k) => `doc.${id}.${k}`;
-const PAGES = 3; // Each document has 3 "paper" pages for demonstration.
+// Fallback page count used before the PDF loads (or for docs with no PDF).
+const PAGES_FALLBACK = 3;
+// Returns the real page count once the PDF has been opened; falls back to the
+// fixed constant so navigation controls still render before the first load.
+function getPageCount(docId) {
+  return parseInt(sessionStorage.getItem(SK(docId, "pageCount")) || "", 10) || PAGES_FALLBACK;
+}
 
 export function renderDocViewer({ id }) {
   const root = document.getElementById("screenContainer");
@@ -484,12 +490,12 @@ function viewerTopBar(doc, rev, activePage, zoom) {
       disabled: activePage <= 1,
       onClick: () => goPage(doc.id, activePage - 1),
     }, ["◀"]),
-    el("span", { class: "tiny mono", style: { minWidth: "60px", textAlign: "center" } }, [`${activePage} / ${PAGES}`]),
+    el("span", { class: "tiny mono", style: { minWidth: "60px", textAlign: "center" } }, [`${activePage} / ${getPageCount(doc.id)}`]),
     el("button", {
       class: "btn sm icon-btn",
       title: "Next page",
       "aria-label": "Next page",
-      disabled: activePage >= PAGES,
+      disabled: activePage >= getPageCount(doc.id),
       onClick: () => goPage(doc.id, activePage + 1),
     }, ["▶"]),
     el("span", { class: "viewer-toolbar-divider", "aria-hidden": "true" }),
@@ -630,17 +636,7 @@ function paperPage(doc, rev, page, opts = {}) {
   const zoom = opts.zoom || 1.25;
   const mode = opts.mode || "view";
   const comments = (state.data.comments || []).filter(c => c.docId === doc.id && c.revId === rev.id && c.page === page);
-  const container = el("div", { class: `paper paper-mode-${mode}` }, [
-    el("h2", {}, [`${doc.name} — page ${page}`]),
-    el("div", { class: "paper-meta" }, [`${doc.id}  ·  Rev ${rev.label} ${rev.status}  ·  ${new Date(rev.createdAt || rev.created_at || Date.now()).toLocaleDateString()}`]),
-    paperContent(doc, rev, page),
-    ...comments.map(c => commentPin(c)),
-  ]);
-
-  // Every mode now renders the underlying PDF + an SVG annotation
-  // overlay sized 1:1 with the canvas. The overlay's pointer wiring
-  // is mode-specific (handled in `pdfAnnotations.js`), so the PDF
-  // doesn't need to be re-rendered when switching modes.
+  const container = el("div", { class: `paper paper-mode-${mode}` }, []);
 
   // If the revision has an attached URL, pick the renderer by content kind.
   // CAD formats (DWG/DXF/STEP/IGES/STL/OBJ/glTF/3DM/3DS/3MF/FBX/DAE/PLY/IFC/...)
@@ -686,6 +682,15 @@ function paperPage(doc, rev, page, opts = {}) {
           // capped at the PDF's actual page count so stale page indices
           // (after switching from a 5-page doc to a 2-page doc) still
           // render the last available page instead of erroring.
+          // Persist the real page count so the toolbar nav stays in sync.
+          // Only fire a re-render when the stored count differs from the
+          // actual PDF count — avoids an infinite render loop while still
+          // correcting the "1 / 3" placeholder on the very first load.
+          const prevPageCount = parseInt(sessionStorage.getItem(SK(doc.id, "pageCount")) || "", 10);
+          sessionStorage.setItem(SK(doc.id, "pageCount"), String(pdf.numPages));
+          if (prevPageCount !== pdf.numPages) {
+            requestAnimationFrame(() => renderDocViewer({ id: doc.id }));
+          }
           await renderPage(pdf, Math.min(page, pdf.numPages), host, { scale: zoom });
           mountAnnotationOverlay(host, doc, rev, page, mode);
         } else if (kind === "image") {
@@ -712,6 +717,26 @@ function paperPage(doc, rev, page, opts = {}) {
     }
     container.replaceChildren(host);
     for (const c of comments) container.append(commentPin(c));
+  } else {
+    // No document attached — show a clear empty state so users know
+    // they need to click "Attach PDF" in the toolbar rather than
+    // seeing confusing placeholder text that looks like document content.
+    const emptyHost = el("div", {
+      style: {
+        display: "flex", flexDirection: "column", alignItems: "center",
+        justifyContent: "center", minHeight: "420px", gap: "12px",
+        color: "var(--text-muted)", textAlign: "center", padding: "32px",
+      },
+    }, [
+      el("div", { style: { fontSize: "3rem", lineHeight: "1" } }, ["📄"]),
+      el("div", { style: { fontWeight: "600", fontSize: "1rem" } }, ["No document attached"]),
+      el("div", { class: "tiny muted" }, ['Click "Attach PDF" in the toolbar above to link a PDF, image, or CSV.']),
+      el("button", {
+        class: "btn primary mt-2",
+        onClick: () => attachPdf(doc, rev),
+      }, ["Attach PDF / Image / CSV"]),
+    ]);
+    container.replaceChildren(emptyHost);
   }
 
   container.addEventListener("click", (e) => {
@@ -765,8 +790,9 @@ function commentPin(c) {
 }
 
 function pageStrip(doc, activePage) {
-  return el("div", { class: "row", style: { padding: "8px", gap: "8px", borderTop: "1px solid var(--border)" } },
-    Array.from({ length: PAGES }, (_, i) => el("button", {
+  const count = getPageCount(doc.id);
+  return el("div", { class: "row", style: { padding: "8px", gap: "8px", borderTop: "1px solid var(--border)", flexWrap: "wrap" } },
+    Array.from({ length: count }, (_, i) => el("button", {
       class: `btn sm ${i + 1 === activePage ? "primary" : ""}`,
       onClick: () => goPage(doc.id, i + 1),
     }, [`p${i + 1}`]))
@@ -1180,25 +1206,113 @@ async function convertCommentToIssue(c) {
   navigate(`/work-board/${projectId}`);
 }
 
-async function attachPdf(doc, rev) {
-  const url = await prompt({
-    title: "Attach asset URL",
-    message: "Supported: PDF, image, CSV, CAD (" + supportedExtensions().join(", ") + "). Must be CORS-enabled.",
-    defaultValue: rev.pdfUrl || rev.assetUrl || "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf",
-    placeholder: "https://...",
+function attachPdf(doc, rev) {
+  // File input for local file uploads.
+  const fileInput = el("input", {
+    type: "file",
+    accept: "application/pdf,image/png,image/jpeg,image/gif,image/bmp,image/webp,text/csv,.pdf,.png,.jpg,.jpeg,.gif,.bmp,.webp,.csv",
+    style: { display: "block", marginTop: "4px" },
   });
-  if (!url) return;
-  const cad = detectCad(url);
-  const kind = cad ? cad.kind : detectKind(url);
-  update(s => {
-    const r = s.data.revisions.find(x => x.id === rev.id);
-    if (!r) return;
-    if (kind === "pdf") { r.pdfUrl = url; r.assetUrl = null; }
-    else { r.assetUrl = url; r.pdfUrl = null; r.assetMime = guessMime(url); }
+
+  const urlInput = el("input", {
+    type: "url",
+    placeholder: "https://example.com/document.pdf",
+    value: rev.pdfUrl || rev.assetUrl || "",
+    style: { width: "100%", boxSizing: "border-box" },
+    class: "input",
   });
-  audit("revision.asset.attach", rev.id, { url, kind: kind || "unknown" });
-  toast(`${kind ? kind.toUpperCase() : "Asset"} attached — re-rendering`, "success");
-  renderDocViewer({ id: doc.id });
+
+  // Live hint: show detected asset kind as the user types a URL.
+  const kindHint = el("div", { class: "tiny muted mt-1" }, [""]);
+  urlInput.addEventListener("input", () => {
+    const u = /** @type {HTMLInputElement} */ (urlInput).value.trim();
+    const k = u ? (detectCad(u)?.kind || detectKind(u)) : null;
+    kindHint.textContent = k ? `Detected: ${k.toUpperCase()}` : u ? "Unknown — will attempt to render" : "";
+  });
+
+  // `close` will be assigned after `modal()` returns so the attach handler
+  // can call it without a forward-reference problem.
+  /** @type {() => void} */
+  let closeModal = () => {};
+
+  const doAttach = async () => {
+    const file = /** @type {HTMLInputElement} */ (fileInput).files?.[0];
+    const rawUrl = /** @type {HTMLInputElement} */ (urlInput).value.trim();
+    if (!file && !rawUrl) { toast("Choose a file or enter a URL", "warn"); return; }
+
+    let url = rawUrl;
+    let resolvedKind;
+    let resolvedMime = "";
+
+    if (file) {
+      // Create a blob URL immediately for fast in-session preview.
+      const blobUrl = URL.createObjectURL(file);
+      const ext = (file.name.split(".").pop() || "").toLowerCase();
+      resolvedMime = file.type || guessMime(file.name);
+      resolvedKind = detectCad(file.name, resolvedMime)?.kind
+        || detectKind(blobUrl, resolvedMime)
+        || (ext === "pdf" ? "pdf" : null);
+      url = blobUrl;
+
+      // For files ≤ 5 MB, asynchronously convert to a data URL that
+      // survives localStorage persistence across page reloads.
+      if (file.size <= 5 * 1024 * 1024) {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => {
+          const dataUrl = /** @type {string} */ (reader.result);
+          update(s => {
+            const r = (s.data.revisions || []).find(x => x.id === rev.id);
+            if (!r) return;
+            if (resolvedKind === "pdf") { r.pdfUrl = dataUrl; r.assetUrl = null; }
+            else { r.assetUrl = dataUrl; r.pdfUrl = null; r.assetMime = resolvedMime; }
+          });
+          // No re-render — viewer already shows the blob URL version while
+          // the data URL is being written to state in the background.
+        };
+      } else {
+        toast("File > 5 MB: session-only preview. Reattach after page reload.", "warn");
+      }
+    } else {
+      const cad = detectCad(url);
+      resolvedKind = cad ? cad.kind : detectKind(url);
+    }
+
+    update(s => {
+      const r = (s.data.revisions || []).find(x => x.id === rev.id);
+      if (!r) return;
+      if (resolvedKind === "pdf") { r.pdfUrl = url; r.assetUrl = null; }
+      else { r.assetUrl = url; r.pdfUrl = null; r.assetMime = resolvedMime || guessMime(url); }
+    });
+    // Clear cached page count so the toolbar re-queries the real count.
+    sessionStorage.removeItem(SK(doc.id, "pageCount"));
+    audit("revision.asset.attach", rev.id, { kind: resolvedKind || "unknown" });
+    toast(`${resolvedKind ? resolvedKind.toUpperCase() : "Asset"} attached`, "success");
+    closeModal();
+    renderDocViewer({ id: doc.id });
+  };
+
+  const { close } = modal({
+    title: rev.pdfUrl || rev.assetUrl ? "Change attached document" : "Attach document",
+    body: el("div", { class: "stack" }, [
+      el("div", { class: "stack", style: { gap: "6px" } }, [
+        el("label", { class: "tiny bold" }, ["📁 Upload from your computer"]),
+        fileInput,
+        el("div", { class: "tiny muted" }, ["PDF, image (PNG/JPEG/BMP/WebP), or CSV."]),
+      ]),
+      el("hr", { style: { margin: "8px 0", borderColor: "var(--border)" } }),
+      el("div", { class: "stack", style: { gap: "6px" } }, [
+        el("label", { class: "tiny bold" }, ["🔗 Or link a public URL"]),
+        urlInput,
+        kindHint,
+      ]),
+    ]),
+    actions: [
+      { node: el("button", { class: "btn primary", onClick: doAttach }, ["Attach"]) },
+      { node: el("button", { class: "btn", onClick: () => closeModal() }, ["Cancel"]) },
+    ],
+  });
+  closeModal = close;
 }
 
 function detectKind(url, mime) {

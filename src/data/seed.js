@@ -119,6 +119,7 @@ export function buildSeed() {
       scope: "project",
       siteId: "SITE-NP",
       assetIds: ["AS-2"],
+      uploaderId: "U-1",
     },
     {
       id: "DOC-2",
@@ -133,6 +134,7 @@ export function buildSeed() {
       scope: "project",
       siteId: "SITE-S2",
       assetIds: ["AS-3"],
+      uploaderId: "U-6",
     },
     {
       id: "DOC-3",
@@ -146,6 +148,7 @@ export function buildSeed() {
       scope: "asset",
       siteId: "SITE-S1",
       assetIds: ["AS-1","AS-4"],
+      uploaderId: "U-4",
     },
     {
       id: "DOC-4",
@@ -157,24 +160,33 @@ export function buildSeed() {
       revisionIds: ["REV-4-A"],
       sensitivity: "controlled",
       scope: "enterprise",
+      uploaderId: "U-4",
     },
   ];
 
+  // Demo PDF: Apache-licensed tracemonkey paper from mozilla/pdf.js (65 KB,
+  // 14 pages, CORS-enabled). Used as a stand-in for real engineering docs so
+  // the viewer renders actual PDF content out of the box. Operators replace
+  // this with real documents via "Attach PDF" in the viewer toolbar.
+  const DEMO_PDF = "https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf";
+
   const revisions = [
     { id: "REV-1-A", docId: "DOC-1", label: "A", status: "Superseded", authorId: "U-1", createdAt: iso(-60*24*30),
-      summary: "Initial release; valve tag schema draft.", notes: "Draft narrative. No approval." },
+      summary: "Initial release; valve tag schema draft.", notes: "Draft narrative. No approval.",
+      pdfUrl: DEMO_PDF },
     { id: "REV-1-B", docId: "DOC-1", label: "B", status: "IFR", authorId: "U-1", createdAt: iso(-60*24*2),
-      summary: "Added I/O list; re-keyed V-110/111/112.", notes: "Issued for review. Reviewer assigned: RO." },
+      summary: "Added I/O list; re-keyed V-110/111/112.", notes: "Issued for review. Reviewer assigned: RO.",
+      pdfUrl: DEMO_PDF },
     { id: "REV-2-A", docId: "DOC-2", label: "A", status: "Superseded", authorId: "U-6", createdAt: iso(-60*24*90),
-      summary: "Initial IFR package." },
+      summary: "Initial IFR package.", pdfUrl: DEMO_PDF },
     { id: "REV-2-B", docId: "DOC-2", label: "B", status: "Superseded", authorId: "U-6", createdAt: iso(-60*24*30),
-      summary: "Added emergency vent interlock." },
+      summary: "Added emergency vent interlock.", pdfUrl: DEMO_PDF },
     { id: "REV-2-C", docId: "DOC-2", label: "C", status: "Approved", authorId: "U-6", createdAt: iso(-60*24*3),
-      summary: "Approved for IFC. Utility crossover line added; valve sizing updated." },
+      summary: "Approved for IFC. Utility crossover line added; valve sizing updated.", pdfUrl: DEMO_PDF },
     { id: "REV-3-A", docId: "DOC-3", label: "A", status: "Approved", authorId: "U-4", createdAt: iso(-60*24*20),
-      summary: "Baseline SOP." },
+      summary: "Baseline SOP.", pdfUrl: DEMO_PDF },
     { id: "REV-4-A", docId: "DOC-4", label: "A", status: "IFC", authorId: "U-4", createdAt: iso(-60*24*120),
-      summary: "Enterprise-wide LOTO standard for service and commissioning." },
+      summary: "Enterprise-wide LOTO standard for service and commissioning.", pdfUrl: DEMO_PDF },
   ];
 
   const drawings = [

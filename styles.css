@@ -264,6 +264,8 @@ button {
   align-items: center;
   padding: var(--space-3) var(--space-2);
   gap: var(--space-2);
+  transition: transform var(--timing-slow) var(--ease-standard), opacity var(--timing-normal) var(--ease-standard);
+  will-change: transform;
 }
 
 .rail-logo {
@@ -465,6 +467,21 @@ button.tree-item:focus-visible {
   top: 0;
   z-index: 10;
 }
+
+/* Hamburger toggle button: always visible, lives at the far-left of the
+   header before the breadcrumb/title so the user can open/close the nav
+   rail without finding the View menu. */
+.header-hamburger {
+  flex-shrink: 0;
+  font-size: 18px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  transition: background-color var(--timing-normal) var(--ease-standard);
+}
+.header-hamburger:hover { background: var(--elevated); }
 
 .header-title {
   display: flex;
@@ -1322,21 +1339,32 @@ body.dock-hidden .screen-container,
 }
 
 /* Documentation site layout (/help). */
+/* ================================================================
+   Documentation site — IA manual style
+   Two-panel: sticky sidebar tree nav on left, single-topic article on right.
+   ================================================================ */
+
 .doc-layout {
   display: grid;
-  grid-template-columns: 240px 1fr;
-  gap: 24px;
-  align-items: start;
+  grid-template-columns: 260px 1fr;
+  height: calc(100vh - 60px); /* fill the screen below the header */
+  overflow: hidden;
 }
+
+/* ---- Sidebar ---- */
 .doc-toc {
-  position: sticky;
-  top: 16px;
-  max-height: calc(100vh - 80px);
-  overflow: auto;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
   background: var(--panel);
+  height: 100%;
+}
+.doc-toc-header {
+  padding: 14px 12px 6px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .doc-toc-title {
   font-size: 11px;
@@ -1346,44 +1374,217 @@ body.dock-hidden .screen-container,
   color: var(--muted);
   margin-bottom: 8px;
 }
-.doc-toc-section { margin-bottom: 12px; }
-.doc-toc-section-title {
-  font-weight: 700;
-  font-size: 12px;
-  color: var(--text-strong);
-  margin: 8px 0 4px;
+.doc-toc-home {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text);
+  text-decoration: none;
+  margin-bottom: 4px;
 }
+.doc-toc-home:hover,
+.doc-toc-home.active { background: var(--elevated); color: var(--text-strong); }
+.doc-toc-search {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 8px 12px;
+  width: calc(100% - 24px);
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+}
+.doc-toc-sections {
+  overflow-y: auto;
+  flex: 1;
+  padding: 8px 0 24px;
+}
+.doc-toc-section { border-bottom: 1px solid var(--border-subtle, var(--border)); }
+.doc-toc-section-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 12px;
+  background: none;
+  border: none;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-strong);
+  cursor: pointer;
+  text-align: left;
+  letter-spacing: 0.03em;
+}
+.doc-toc-section-btn:hover { background: var(--elevated); }
+.doc-toc-chevron { font-size: 10px; color: var(--muted); flex-shrink: 0; }
+.doc-toc-links { padding: 0 0 4px; }
 .doc-toc-link {
   display: block;
-  padding: 4px 6px;
-  border-radius: 4px;
+  padding: 5px 12px 5px 26px;
   font-size: 12px;
   color: var(--text);
   text-decoration: none;
   line-height: 1.35;
+  border-left: 2px solid transparent;
 }
-.doc-toc-link:hover { background: var(--surface); color: var(--text-strong); }
-.doc-toc-link.active { background: rgba(56, 189, 248, 0.15); color: var(--text-strong); }
+.doc-toc-link:hover {
+  background: var(--elevated);
+  color: var(--text-strong);
+}
+.doc-toc-link.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
 
+/* ---- Article ---- */
+.doc-article {
+  overflow-y: auto;
+  height: 100%;
+  padding: 32px 48px 80px;
+  max-width: none;
+}
+.doc-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.doc-breadcrumb-link { color: var(--accent); text-decoration: none; }
+.doc-breadcrumb-link:hover { text-decoration: underline; }
+.doc-breadcrumb-section { color: var(--muted); }
+.doc-breadcrumb-current { color: var(--text); }
+.doc-article-title {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--text-strong);
+}
+.doc-article-summary {
+  font-size: 15px;
+  color: var(--muted);
+  margin: 0 0 28px;
+  line-height: 1.6;
+  max-width: 760px;
+}
+
+/* Body elements */
+.doc-body { font-size: 14px; line-height: 1.65; max-width: 760px; }
+.doc-p { margin: 8px 0; }
+.doc-h2 { font-size: 22px; margin: 32px 0 10px; font-weight: 700; color: var(--text-strong); border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.doc-h3 { font-size: 18px; margin: 24px 0 8px; font-weight: 600; color: var(--text-strong); }
+.doc-h4 { font-size: 15px; margin: 18px 0 6px; font-weight: 600; }
+.doc-h5 { font-size: 13px; margin: 14px 0 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.doc-hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+.doc-list { margin: 8px 0 8px 24px; }
+.doc-list li { margin-bottom: 4px; }
+.doc-code {
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.doc-inline-code {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.875em;
+}
+.doc-callout {
+  padding: 12px 16px;
+  border-radius: 6px;
+  border-left: 4px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  margin: 14px 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.doc-callout-warn {
+  border-left-color: var(--warn, #f59e0b);
+  background: color-mix(in srgb, #f59e0b 8%, transparent);
+}
+
+/* Section grid on home page */
+.doc-section-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 24px;
+}
+.doc-section-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  text-decoration: none;
+  transition: border-color var(--timing-normal), box-shadow var(--timing-normal);
+}
+.doc-section-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.doc-section-card-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-strong);
+}
+
+/* Prev / Next nav */
+.doc-prevnext {
+  display: flex;
+  justify-content: space-between;
+  align-items: stretch;
+  gap: 16px;
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+.doc-prevnext-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  text-decoration: none;
+  color: var(--text);
+  background: var(--panel);
+  max-width: 45%;
+  transition: border-color var(--timing-normal), background var(--timing-normal);
+}
+.doc-prevnext-btn:hover { border-color: var(--accent); background: var(--elevated); }
+.doc-prevnext-prev { flex-direction: row; }
+.doc-prevnext-next { flex-direction: row-reverse; margin-left: auto; }
+.doc-prevnext-arrow { font-size: 20px; color: var(--muted); flex-shrink: 0; }
+.doc-prevnext-label { font-size: 13px; font-weight: 600; color: var(--text-strong); }
+
+/* Legacy classes kept for backward compatibility with any screen that
+   renders topic cards directly (e.g. old bookmarks into the all-topics view) */
 .doc-content { max-width: 880px; padding-bottom: 80px; }
-.doc-content h1 { font-size: 28px; margin-bottom: 8px; }
-.doc-lede { color: var(--muted); margin-bottom: 28px; line-height: 1.5; }
 .doc-section { margin-top: 36px; }
 .doc-section h2 { font-size: 20px; margin-bottom: 12px; }
-.doc-topic {
-  padding: 16px 18px;
-  margin-bottom: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
-}
-.doc-topic-focused {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
-}
+.doc-topic { padding: 16px 18px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.doc-topic-focused { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15); }
 .doc-topic h3 { font-size: 16px; margin-bottom: 4px; }
 .doc-summary { color: var(--muted); margin-bottom: 12px; font-size: 13px; }
-.doc-body { font-size: 14px; line-height: 1.55; }
+.doc-lede { color: var(--muted); margin-bottom: 28px; line-height: 1.5; }
 .doc-body p { margin: 6px 0; }
 .doc-body ul { margin: 6px 0 6px 22px; }
 .doc-body code { background: var(--surface); padding: 1px 4px; border-radius: 3px; }
@@ -3135,7 +3336,15 @@ html {
 
 body.hide-left-panel .left-panel { display: none; }
 body.hide-right-panel .right-context-panel { display: none; }
-body.hide-rail .far-left-rail { display: none; }
+/* Rail: slide out to the left rather than instant display:none so
+   the hamburger toggle feels snappy but not jarring. The CSS grid
+   track (`72px`) collapses via the layout-grid override below. */
+body.hide-rail .far-left-rail {
+  transform: translateX(-100%);
+  opacity: 0;
+  pointer-events: none;
+  position: absolute; /* remove from flow so grid track collapses */
+}
 body.hide-header .main-header { display: none; }
 
 body.hide-rail .operations-dock { left: 0; }
