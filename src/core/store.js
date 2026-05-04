@@ -1,6 +1,11 @@
 // Centralized reactive store with localStorage persistence.
 
-const LS_KEY = "forge.state.v1";
+// Bumped to v2 (2026-05): stale v1 state held a CSP-blocked external PDF URL
+// in seed revisions, leaving the doc viewer empty for returning users. v2
+// invalidates the cached state so the new local /sample.pdf seed takes effect.
+// Users keep their own uploaded docs by re-uploading via the viewer's
+// "Attach PDF" action — demo state is otherwise self-replenishing.
+const LS_KEY = "forge.state.v2";
 
 const listeners = new Set();
 

@@ -25,7 +25,7 @@ function stripDevImportMap() {
 // files into `public/` would break that path. So the source-of-truth lives
 // at the repo root and we copy on build.
 function copyRootStatics() {
-  const FILES = ["icon.svg", "manifest.webmanifest"];
+  const FILES = ["icon.svg", "manifest.webmanifest", "sample.pdf"];
   return {
     name: "forge:copy-root-statics",
     apply: "build",
