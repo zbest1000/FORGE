@@ -3338,12 +3338,22 @@ body.hide-left-panel .left-panel { display: none; }
 body.hide-right-panel .right-context-panel { display: none; }
 /* Rail: slide out to the left rather than instant display:none so
    the hamburger toggle feels snappy but not jarring. The CSS grid
-   track (`72px`) collapses via the layout-grid override below. */
+   track (`72px`) collapses via the layout-grid override below.
+   On phones (≤ 640 px) the rail lives at the bottom, so we slide it
+   down instead of left and skip the absolute-position trick (the
+   bottom bar is in the grid's last row). */
 body.hide-rail .far-left-rail {
   transform: translateX(-100%);
   opacity: 0;
   pointer-events: none;
   position: absolute; /* remove from flow so grid track collapses */
+}
+@media (max-width: 640px) {
+  body.hide-rail .far-left-rail {
+    transform: translateY(100%);
+    position: static; /* keep grid placement so adjacent rows aren't pushed */
+    display: none;    /* mobile: hide instantly, no animation */
+  }
 }
 body.hide-header .main-header { display: none; }
 
