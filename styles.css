@@ -468,9 +468,12 @@ button.tree-item:focus-visible {
   z-index: 10;
 }
 
-/* Hamburger toggle button: always visible, lives at the far-left of the
-   header before the breadcrumb/title so the user can open/close the nav
-   rail without finding the View menu. */
+/* Hamburger toggle button: lives at the far-left of the header before
+   the breadcrumb/title so the user can open/close the nav rail without
+   finding the View menu. Hidden on phones — there the rail lives at
+   the bottom of the viewport as a nav bar, so a toggle button at the
+   top of the screen would be confusing. The mobile-hide rule lives
+   in the phone breakpoint block further down. */
 .header-hamburger {
   flex-shrink: 0;
   font-size: 18px;
@@ -1344,10 +1347,18 @@ body.dock-hidden .screen-container,
    Two-panel: sticky sidebar tree nav on left, single-topic article on right.
    ================================================================ */
 
+/* Doc-layout fills the parent screen-container. We negate the
+   container's padding (the manual is "full-bleed") so the sidebar
+   sits flush against the workspace edge — same pattern as Inductive
+   Automation / Notion / GitBook. */
+.screen-container:has(.doc-layout) {
+  padding: 0;
+}
 .doc-layout {
   display: grid;
   grid-template-columns: 260px 1fr;
-  height: calc(100vh - 60px); /* fill the screen below the header */
+  height: 100%;
+  min-height: 480px;
   overflow: hidden;
 }
 
@@ -3237,6 +3248,19 @@ html {
 
   .right-context-panel { display: none; }
 
+  /* Hamburger lives in the header on desktop; on phone the bottom bar
+     is the nav surface, so the toggle would be redundant + confusing. */
+  .header-hamburger { display: none; }
+
+  /* Phone override for hide-rail: the rail is a bottom bar here, so
+     the desktop slide-left animation looks wrong. Hide instantly and
+     keep grid placement so adjacent rows don't reflow oddly. */
+  body.hide-rail .far-left-rail {
+    transform: translateY(100%);
+    position: static;
+    display: none;
+  }
+
   .main-header {
     padding: var(--space-2) var(--space-3);
   }
@@ -3348,13 +3372,9 @@ body.hide-rail .far-left-rail {
   pointer-events: none;
   position: absolute; /* remove from flow so grid track collapses */
 }
-@media (max-width: 640px) {
-  body.hide-rail .far-left-rail {
-    transform: translateY(100%);
-    position: static; /* keep grid placement so adjacent rows aren't pushed */
-    display: none;    /* mobile: hide instantly, no animation */
-  }
-}
+/* The phone-specific override (translateY + display:none) lives inside
+   the existing `max-width: 640px` block above so the responsive-css test
+   sees a single phone breakpoint rather than a duplicate. */
 body.hide-header .main-header { display: none; }
 
 body.hide-rail .operations-dock { left: 0; }
