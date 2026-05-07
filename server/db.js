@@ -1595,6 +1595,35 @@ function migrate() {
       addColumn("webhooks", "circuit_open_until TEXT");
       setVersion(19);
     }
+
+    if (getVersion() < 20) {
+      // v20 (Phase 4 forensics): dual-hash chain on audit_log.
+      //
+      // The original `hash` column hashes a payload that deliberately
+      // EXCLUDES `org_id` so historic entries (predating the v11
+      // multi-tenant column) verify cleanly. The downside: an attacker
+      // with DB write access could retroactively reassign `org_id` on
+      // any audit entry without breaking the integrity chain — bad for
+      // cross-tenant forensics.
+      //
+      // `org_hash` binds (entry, org_id) by hashing the existing `hash`
+      // alongside `org_id`. Tampering with `org_id` after the fact
+      // breaks org_hash without touching the original chain. Old
+      // entries that never had an org_hash get one computed during
+      // verification (lazily), preserving back-compat. New entries
+      // populate it at write time (see server/audit.js).
+      const addColumn = (table, columnSql) => {
+        try { db.prepare(`ALTER TABLE ${table} ADD COLUMN ${columnSql}`).run(); }
+        catch (err) {
+          if (!/duplicate column name/i.test(String(err?.message || err))) throw err;
+        }
+      };
+      addColumn("audit_log", "org_hash TEXT");
+      // Index on (org_id, seq) makes per-tenant verification scans
+      // cheap — `verifyOrgChain(orgId)` becomes a covered scan.
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_log_org_seq ON audit_log(org_id, seq)`);
+      setVersion(20);
+    }
   })();
   db.pragma("foreign_keys = ON");
 }

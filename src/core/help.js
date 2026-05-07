@@ -379,11 +379,102 @@ export function openHelpTopic(topicId) {
 }
 
 /** @returns {Array<{ section: string, topics: Array<{id: string} & HelpTopic> }>} Grouped + sorted topic list for the help-site renderer. */
+// Live-overrides store (Phase 4). Bundled HELP_TOPICS stays the
+// always-available default — drift between product and docs was the
+// audit's concern. Operators can layer overrides on top via:
+//
+//   applyHelpOverrides({ "forge.workitem": { body: "<new>", ... } })
+//
+// or an HTTP fetch:
+//
+//   await loadHelpOverrides("/api/help/topics");
+//
+// Overrides ride at runtime; the bundled topics remain the safety net
+// (e.g. when the fetch fails, when the operator hasn't authored their
+// own content, or when the override JSON is malformed).
+//
+// Override payload shape: a plain object mapping topicId → partial
+// HelpTopic. Fields present on the override replace the bundled
+// values; missing fields fall through to the default. Unknown topic
+// ids are also accepted — they appear as new entries in the index.
+/** @type {Record<string, Partial<HelpTopic>>} */
+const _overrides = Object.create(null);
+
+/**
+ * Merge in an overrides bundle. Idempotent — calling repeatedly with
+ * the same payload converges to the same effective topic set.
+ */
+export function applyHelpOverrides(overrides) {
+  if (!overrides || typeof overrides !== "object") return;
+  for (const [id, patch] of Object.entries(overrides)) {
+    if (!patch || typeof patch !== "object") continue;
+    _overrides[id] = { ..._overrides[id], ...patch };
+  }
+}
+
+/** Drop all overrides and revert to the bundled set. */
+export function clearHelpOverrides() {
+  for (const k of Object.keys(_overrides)) delete _overrides[k];
+}
+
+/**
+ * Fetch a JSON overrides bundle from `url` and apply it. Failures are
+ * silent (the bundled topics remain in effect) — callers that want to
+ * surface failures can check the returned promise.
+ *
+ * Expected response shape:
+ *   { topicId: { title?, summary?, body?, section?, example?, seeAlso? }, ... }
+ */
+export async function loadHelpOverrides(url) {
+  try {
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    applyHelpOverrides(json);
+    return { ok: true, count: Object.keys(json).length };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+}
+
+/**
+ * Look up the effective topic — overrides win over bundled, with
+ * field-level merging so an override that sets only `body` keeps the
+ * bundled `title` / `summary` / `section` etc.
+ */
+function resolveTopic(id) {
+  const base = HELP_TOPICS[id] || null;
+  const over = _overrides[id];
+  if (!base && !over) return null;
+  if (!over) return base;
+  return { ...(base || {}), ...over };
+}
+
 export function listTopicsBySection() {
   /** @type {Record<string, Array<{id: string} & HelpTopic>>} */
   const groups = {};
-  for (const [id, topic] of Object.entries(HELP_TOPICS)) {
-    (groups[topic.section] = groups[topic.section] || []).push({ id, ...topic });
+  // Union of bundled + overridden topic ids. Lets a remote bundle
+  // introduce a brand-new topic without re-shipping the client.
+  const ids = new Set([...Object.keys(HELP_TOPICS), ...Object.keys(_overrides)]);
+  for (const id of ids) {
+    const topic = resolveTopic(id);
+    // Skip topics that don't have the minimum render fields. A
+    // valid topic needs at least a section + title; without those
+    // it can't appear in the index. This catches malformed override
+    // payloads (e.g. an override that only sets `body` for an id
+    // that has no bundled counterpart).
+    if (!topic || !topic.section || !topic.title || !topic.summary || !topic.body) continue;
+    /** @type {{id: string} & HelpTopic} */
+    const entry = {
+      id,
+      title: topic.title,
+      section: topic.section,
+      summary: topic.summary,
+      body: topic.body,
+      example: topic.example,
+      seeAlso: topic.seeAlso,
+    };
+    (groups[topic.section] = groups[topic.section] || []).push(entry);
   }
   for (const k of Object.keys(groups)) {
     groups[k].sort((a, b) => a.title.localeCompare(b.title));
@@ -396,5 +487,5 @@ export function listTopicsBySection() {
 }
 
 export function getTopic(id) {
-  return HELP_TOPICS[id] || null;
+  return resolveTopic(id);
 }
