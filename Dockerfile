@@ -18,7 +18,7 @@
 # below is recognised. Falls back gracefully on older Docker daemons that
 # don't honour it (the cache mounts simply behave as ephemeral).
 
-FROM node:22-bookworm-slim AS builder
+FROM node:26-bookworm-slim AS builder
 WORKDIR /app
 
 # Build tools for better-sqlite3 native binding. `apt` cache mount keeps
@@ -44,7 +44,7 @@ COPY vite.config.js ./
 RUN npm run build
 RUN npm prune --omit=dev --no-audit --no-fund
 
-FROM node:22-bookworm-slim
+FROM node:26-bookworm-slim
 ENV NODE_ENV=production
 WORKDIR /app
 
