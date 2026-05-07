@@ -1,20 +1,25 @@
 // FORGE — bootstrap. Wires seed → store → router → shell → screens.
 
 import { buildSeed } from "./src/data/seed.js";
-import { state, initState, subscribe, registerAuditImpl } from "./src/core/store.js";
+import { state, update, initState, subscribe, registerAuditImpl } from "./src/core/store.js";
 import { defineRoute, startRouter, rerenderCurrent, onRouteChange } from "./src/core/router.js";
 import { openPalette } from "./src/core/palette.js";
 import { initI3X } from "./src/core/i3x/client.js";
 import { normalizeSeed } from "./src/core/normalize.js";
-import * as auditMod from "./src/core/audit.js";
-import { initAuditLedger } from "./src/core/audit.js";
-import { buildIndex, scheduleRebuild } from "./src/core/search.js";
+// Audit + search are critical-path modules (audit fires on every store
+// mutation, search rebuilds index on every state change). Statically
+// imported so Vite chunks them into the entry bundle. The previous mix
+// of static + dynamic imports hit Vite's `INEFFECTIVE_DYNAMIC_IMPORT`
+// warning and prevented chunk separation; now they're consistently
+// static and the self-test below uses the same in-scope references.
+import { initAuditLedger, audit, verifyLedger, exportAuditPack, verifyAuditPack } from "./src/core/audit.js";
+import { buildIndex, scheduleRebuild, query as searchQuery } from "./src/core/search.js";
 import { installHotkeys } from "./src/core/hotkeys.js";
 import { probe, mode, getToken, login, logout, api } from "./src/core/api.js";
 import { canAccessRoute, currentUserId, effectiveGroupIds, currentUser, requiredGroupsForRoute } from "./src/core/groups.js";
 import { el, mount, installRowKeyboardHandlers, toast } from "./src/core/ui.js";
 import { loadLicense, onLicenseChange } from "./src/core/license.js";
-import { audit } from "./src/core/audit.js";
+import { logger } from "./src/core/logging.js";
 
 import { renderRail } from "./src/shell/rail.js";
 import { renderLeftPanel } from "./src/shell/leftPanel.js";
@@ -55,12 +60,12 @@ function lazy(loader, exportName, label) {
     loader().then((mod) => {
       const fn = mod[exportName];
       if (typeof fn !== "function") {
-        console.error(`[lazy] missing export ${exportName} in ${label}`);
+        logger.error("lazy.missing-export", { exportName, label });
         return;
       }
       fn(params);
     }).catch((err) => {
-      console.error(`[lazy] failed to load ${label}`, err);
+      logger.error("lazy.load-failed", { label, err: err?.message || String(err) });
       // A failed dynamic import on a hashed chunk filename almost
       // always means the build was redeployed under us — the URL
       // referenced by the loaded entry chunk no longer exists in
@@ -258,11 +263,10 @@ function attachHotkeys() {
   const restoreBtn = document.getElementById("layoutRestore");
   if (restoreBtn) {
     restoreBtn.addEventListener("click", () => {
-      import("./src/core/store.js").then(({ update }) => {
-        update(s => {
-          s.ui.showRail = true; s.ui.showLeftPanel = true; s.ui.showContextPanel = true;
-          s.ui.showHeader = true; s.ui.focusMode = false; s.ui.dockVisible = true;
-        });
+      // store is statically imported; no dynamic-load round trip needed.
+      update(s => {
+        s.ui.showRail = true; s.ui.showLeftPanel = true; s.ui.showContextPanel = true;
+        s.ui.showHeader = true; s.ui.focusMode = false; s.ui.dockVisible = true;
       });
     });
   }
@@ -403,7 +407,7 @@ async function boot() {
   const health = await healthP;
   if (health) {
     state.server = { connected: true, health };
-    console.info("[forge] connected to server", health);
+    logger.info("forge.server.connected", health);
     // If a token is cached, warm /api/me to populate the real user.
     if (getToken()) {
       try {
@@ -417,15 +421,16 @@ async function boot() {
         if (me.user?.role && !state.ui.roleOverridden) {
           state.ui.role = me.user.role;
         }
-        console.info("[forge] signed in as", me.user.email, "role=", me.user.role);
+        // Goes through logger.info → scrub() — emails are auto-redacted, only role shows.
+        logger.info("forge.signed-in", { email: me.user.email, role: me.user.role });
       } catch {
-        console.warn("[forge] stored token rejected; staying anonymous");
+        logger.warn("forge.token.rejected");
       }
     }
     renderShell();
   } else {
     state.server = { connected: false };
-    console.info("[forge] demo mode (no backend)");
+    logger.info("forge.mode.demo");
   }
 }
 
@@ -455,13 +460,12 @@ function requestAccess(route, requiredIds, requiredLabels) {
     labels: ["access-request", ...requiredIds],
     created_at: new Date().toISOString(),
   };
-  import("./src/core/store.js").then(({ update }) => {
-    update(s => { (s.data.workItems = s.data.workItems || []).push(item); });
-    import("./src/core/audit.js").then(({ audit }) => {
-      audit("access.request", id, { route, required: requiredIds });
-    });
-    toast(`Access request ${id} filed`, "success");
-  });
+  // store + audit are statically imported above; the previous nested
+  // dynamic import chain prevented Vite from separating audit.js into
+  // its own chunk (INEFFECTIVE_DYNAMIC_IMPORT warning). Direct calls now.
+  update(s => { (s.data.workItems = s.data.workItems || []).push(item); });
+  audit("access.request", id, { route, required: requiredIds });
+  toast(`Access request ${id} filed`, "success");
 }
 
 // Field mode (spec §12.5): register the service worker so the SPA shell is
@@ -470,15 +474,15 @@ function requestAccess(route, requiredIds, requiredLabels) {
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").then(reg => {
-      console.info("[forge] service worker registered", reg.scope);
+      logger.info("forge.sw.registered", { scope: reg.scope });
       // Replay queue when we come back online.
       window.addEventListener("online", () => reg.active?.postMessage({ type: "replay-queue" }));
-    }).catch(err => console.warn("[forge] sw register failed", err));
+    }).catch(err => logger.warn("forge.sw.register-failed", { err: err?.message || String(err) }));
 
     navigator.serviceWorker.addEventListener("message", (e) => {
       const msg = e.data || {};
-      if (msg.type === "offline-queued") console.info("[forge] queued offline write", msg.id, msg.url);
-      if (msg.type === "offline-replayed") console.info("[forge] replayed", msg.id, "status", msg.status);
+      if (msg.type === "offline-queued") logger.info("forge.offline.queued", { id: msg.id, url: msg.url });
+      if (msg.type === "offline-replayed") logger.info("forge.offline.replayed", { id: msg.id, status: msg.status });
     });
   });
 }
@@ -500,8 +504,10 @@ boot();
   check("work items seeded", d.workItems.length >= 5);
   check("§4 base fields on workItem", ["org_id","created_by","acl","audit_ref","labels"].every(k => k in d.workItems[0]));
 
+  // Audit + search are statically imported at the top — using those
+  // bindings instead of `await import(...)` keeps Vite's chunking
+  // honest (no INEFFECTIVE_DYNAMIC_IMPORT split warning).
   try {
-    const { verifyLedger, exportAuditPack, verifyAuditPack } = await import("./src/core/audit.js");
     const v = await verifyLedger();
     check("audit ledger intact", v.ok, `strict=${v.strictCount}`);
     const pack = await exportAuditPack();
@@ -509,8 +515,7 @@ boot();
   } catch (e) { check("audit module", false, e.message); }
 
   try {
-    const search = await import("./src/core/search.js");
-    const r = search.query("valve");
+    const r = searchQuery("valve");
     check("BM25 search", r.total > 0, "hits=" + r.total);
   } catch (e) { check("search", false, e.message); }
 

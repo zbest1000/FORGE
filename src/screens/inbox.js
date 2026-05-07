@@ -1,4 +1,4 @@
-import { el, mount, card, badge, table } from "../core/ui.js";
+import { el, mount, card, badge, table, emptyState } from "../core/ui.js";
 import { state, update } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { helpHint, helpLinkChip } from "../core/help.js";
@@ -20,27 +20,34 @@ export function renderInbox() {
         helpLinkChip("forge.approvals", "Approvals"),
       ]),
     ]),
-    card("Inbox", table({
-      columns: [
-        { header: "Time",  render: r => el("span", { class: "mono tiny" }, [new Date(r.ts).toLocaleString()]) },
-        { header: "Kind",  render: r => badge(r.kind, variantFor(r.kind)) },
-        { header: "Message", key: "text" },
-        { header: "", render: r => el("button", {
-          class: "btn sm",
-          onClick: (e) => { e.stopPropagation(); navigate(r.route); },
-        }, ["Open"]) },
-      ],
-      rows: items,
-      onRowClick: (r) => navigate(r.route),
-    }), {
-      subtitle: `${items.length} notifications · permission-filtered`,
-      actions: [
-        el("button", {
-          class: "btn sm ghost",
-          onClick: () => update(s => { s.data.notifications = []; }),
-        }, ["Mark all read"]),
-      ],
-    }),
+    items.length === 0
+      ? emptyState({
+          icon: "📬",
+          title: "Your inbox is clear",
+          message: "@-mentions, approval requests, incident pings, and follow notifications all land here. You'll see them as they come in.",
+          action: { label: "Browse approvals", variant: "", onClick: () => navigate("/approvals") },
+        })
+      : card("Inbox", table({
+          columns: [
+            { header: "Time",  render: r => el("span", { class: "mono tiny" }, [new Date(r.ts).toLocaleString()]) },
+            { header: "Kind",  render: r => badge(r.kind, variantFor(r.kind)) },
+            { header: "Message", key: "text" },
+            { header: "", render: r => el("button", {
+              class: "btn sm",
+              onClick: (e) => { e.stopPropagation(); navigate(r.route); },
+            }, ["Open"]) },
+          ],
+          rows: items,
+          onRowClick: (r) => navigate(r.route),
+        }), {
+          subtitle: `${items.length} notifications · permission-filtered`,
+          actions: [
+            el("button", {
+              class: "btn sm ghost",
+              onClick: () => update(s => { s.data.notifications = []; }),
+            }, ["Mark all read"]),
+          ],
+        }),
   ]);
 }
 

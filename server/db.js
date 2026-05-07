@@ -1547,6 +1547,26 @@ function migrate() {
 
       setVersion(17);
     }
+
+    if (getVersion() < 18) {
+      // v18 (Phase 1 hardening): hot-path index on the files table.
+      // The `files` table doesn't carry an `org_id` column today —
+      // tenant scope is enforced via the parent record's `org_id`
+      // (document, asset, etc.). The (parent_kind, parent_id) lookup
+      // is the only access pattern, so this index targets it directly.
+      //
+      // A future migration that adds files.org_id (defense-in-depth
+      // for direct-FK lookups) would extend this to the 3-column
+      // form; for now the 2-column index already collapses the table
+      // scan that some routes hit when the FTS5 join misses.
+      //
+      // Idempotent: IF NOT EXISTS keeps re-runs safe.
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_files_parent
+          ON files(parent_kind, parent_id)
+      `);
+      setVersion(18);
+    }
   })();
   db.pragma("foreign_keys = ON");
 }

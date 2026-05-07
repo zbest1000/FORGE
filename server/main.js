@@ -195,6 +195,28 @@ const CSP_DEV = {
   connectSrc:["'self'", "https://esm.sh", "https://storage.googleapis.com", "https://api.i3x.dev", "ws:", "wss:"],
   workerSrc: ["'self'", "blob:", "https://esm.sh", "https://storage.googleapis.com"],
 };
+// CSP_DEV permits 'unsafe-inline' + 'unsafe-eval' on script-src and pulls
+// in esm.sh — necessary for source-mode dev (where browser-native modules
+// follow the import map) but a security regression if it ever ships to
+// production. Refuse to boot if dev CSP is active in NODE_ENV=production
+// without an explicit opt-in. Operators that genuinely need it (e.g. a
+// staging box that loads source modules) can set FORGE_ALLOW_DEV_CSP=1.
+const usingDevCsp = !(HAS_DIST && !ALLOW_SOURCE_CLIENT);
+if (usingDevCsp && process.env.NODE_ENV === "production" && process.env.FORGE_ALLOW_DEV_CSP !== "1") {
+  // Fail fast — the alternative is silently shipping a relaxed CSP.
+  // eslint-disable-next-line no-console
+  console.error(
+    "[forge] REFUSING TO START: dev CSP (allows 'unsafe-inline' + esm.sh) is active " +
+    "but NODE_ENV=production. Build the SPA with `npm run build` so dist/ exists, " +
+    "or — only if you really mean it — set FORGE_ALLOW_DEV_CSP=1.\n"
+  );
+  throw new Error("dev CSP active in production; refusing to start");
+}
+if (usingDevCsp && process.env.NODE_ENV !== "production") {
+  // Quieter warning in dev/test — visible but not an obstacle.
+  // eslint-disable-next-line no-console
+  console.warn("[forge] dev CSP active (source-mode). Production builds use the strict CSP automatically.");
+}
 await app.register(helmet, {
   contentSecurityPolicy: {
     directives: (HAS_DIST && !ALLOW_SOURCE_CLIENT) ? CSP_PROD : CSP_DEV,
@@ -336,6 +358,11 @@ app.get("/api/health", async () => ({
 const GRAPHIQL_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.FORGE_GRAPHIQL || ""));
 const GQL_DEPTH = Number(process.env.FORGE_GRAPHQL_MAX_DEPTH || 12);
 const GQL_ALIASES = Number(process.env.FORGE_GRAPHQL_MAX_ALIASES || 20);
+// Cheap pre-validation guards complementing mercurius's queryDepth + the
+// alias cap below. Both are tunable via env so legitimate large queries
+// (BI exports, audit dumps) can lift them without a redeploy.
+const GQL_MAX_LENGTH = Number(process.env.FORGE_GRAPHQL_MAX_LENGTH || 32 * 1024); // 32 KB
+const GQL_MAX_SELECTIONS = Number(process.env.FORGE_GRAPHQL_MAX_SELECTIONS || 500);
 await app.register(async (scope) => {
   scope.addHook("onRequest", requireFeature(FEATURES.GRAPHQL_API));
   await scope.register(mercurius, {
@@ -350,14 +377,33 @@ await app.register(async (scope) => {
       return { statusCode: err?.errors?.[0]?.extensions?.http?.status || 200, response: { errors: err?.errors || [], data: err?.data ?? null } };
     },
   });
-  // Cheap aliases-cap: count `:` separators in the query string before mercurius
-  // hits the resolver pool. Runs only on graphql endpoints.
+  // Pre-validation guards on /graphql. Cheap regex/length checks that
+  // run before mercurius parses the document — defends the resolver pool
+  // and the parser from oversize / overly-complex requests.
   scope.addHook("preValidation", async (req, reply) => {
     if (!req.url.startsWith("/graphql")) return;
-    const q = (req.body && typeof req.body === "object" ? req.body.query : null) || "";
-    const aliasCount = (String(q).match(/\b[a-zA-Z_][a-zA-Z0-9_]*\s*:\s*[a-zA-Z_]/g) || []).length;
+    const q = String((req.body && typeof req.body === "object" ? req.body.query : null) || "");
+
+    // 1) Raw length cap. A 32 KB query is a generous ceiling for any
+    //    legitimate UI/API request and cuts off pathological payloads.
+    if (q.length > GQL_MAX_LENGTH) {
+      return reply.code(413).send({ errors: [{ message: "graphql query too large", extensions: { code: "QUERY_TOO_LARGE", limit: GQL_MAX_LENGTH } }] });
+    }
+
+    // 2) Aliases cap (kept) — `field: subfield` aliasing is the cheapest
+    //    way to force a server to repeat work N times under a single
+    //    selection.
+    const aliasCount = (q.match(/\b[a-zA-Z_][a-zA-Z0-9_]*\s*:\s*[a-zA-Z_]/g) || []).length;
     if (aliasCount > GQL_ALIASES) {
       return reply.code(400).send({ errors: [{ message: "graphql query has too many aliases", extensions: { code: "QUERY_COMPLEXITY", limit: GQL_ALIASES } }] });
+    }
+
+    // 3) Total selection count (open braces minus comments/strings, but
+    //    we skip the AST since this runs before parse). Keeps a single
+    //    deeply-flat query from blowing past resolver budget.
+    const selectionCount = (q.match(/\{/g) || []).length;
+    if (selectionCount > GQL_MAX_SELECTIONS) {
+      return reply.code(400).send({ errors: [{ message: "graphql query has too many selections", extensions: { code: "QUERY_COMPLEXITY", limit: GQL_MAX_SELECTIONS } }] });
     }
   });
 });

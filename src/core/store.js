@@ -1,5 +1,7 @@
 // Centralized reactive store with localStorage persistence.
 
+import { logger } from "./logging.js";
+
 // Bumped to v2 (2026-05): stale v1 state held a CSP-blocked external PDF URL
 // in seed revisions, leaving the doc viewer empty for returning users. v2
 // invalidates the cached state so the new local /sample.pdf seed takes effect.
@@ -82,7 +84,7 @@ function hydrate() {
       }
     }
   } catch (e) {
-    console.warn("hydrate failed", e);
+    logger.warn("store.hydrate.failed", e);
   }
 }
 
@@ -94,7 +96,7 @@ function persistNow() {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify({ ui: state.ui, data: state.data }));
   } catch (e) {
-    console.warn("persist failed", e);
+    logger.warn("store.persist.failed", e);
   }
 }
 function persist() {
@@ -126,7 +128,7 @@ export function subscribe(fn) {
 
 export function notify() {
   persist();
-  listeners.forEach(fn => { try { fn(state); } catch (e) { console.error(e); } });
+  listeners.forEach(fn => { try { fn(state); } catch (e) { logger.error("store.listener.threw", e); } });
 }
 
 export function update(mutator) {

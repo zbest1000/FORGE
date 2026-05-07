@@ -2,6 +2,7 @@
 // Supports optional query strings (?q=foo).
 
 import { state } from "./store.js";
+import { logger } from "./logging.js";
 
 const ROUTES = [];
 let currentHandler = null;
@@ -63,7 +64,7 @@ export function rerenderCurrent() {
 
 const routeListeners = new Set();
 export function onRouteChange(fn) { routeListeners.add(fn); return () => routeListeners.delete(fn); }
-function emitRouteChange() { routeListeners.forEach(fn => { try { fn(state); } catch (e) { console.error(e); } }); }
+function emitRouteChange() { routeListeners.forEach(fn => { try { fn(state); } catch (e) { logger.error("router.listener.threw", e); } }); }
 
 export function startRouter() {
   window.addEventListener("hashchange", resolve);
