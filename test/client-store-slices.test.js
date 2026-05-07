@@ -30,7 +30,10 @@ globalThis.window = /** @type any */ ({
 });
 globalThis.location = /** @type any */ ({ hash: "", reload() {} });
 
-const { state, update, subscribeSlice, markDirty, initState } = await import("../src/core/store.js");
+// `state` not destructured here — the slice tests only observe state
+// through subscribeSlice callbacks; reading the live store object would
+// couple tests to implementation details. update() is the only mutator.
+const { update, subscribeSlice, markDirty, initState } = await import("../src/core/store.js");
 
 beforeEach(() => {
   initState({ workItems: [], theme: "dark", nested: { count: 0 } });
