@@ -29,6 +29,8 @@
   // them as separate strict-include sets in dedicated PRs.
   "include": [
     "src/core/logging.js",
+    "src/core/idle.js",
+    "src/core/screens-registry.js",
     "src/screens/docViewerConstants.js"
   ],
   "exclude": [
