@@ -10,10 +10,28 @@ import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
 import { navigate } from "../core/router.js";
 import { can } from "../core/permissions.js";
-import { renderMermaid } from "../core/mermaid.js";
-import { simulation } from "../core/simulation.js";
 
-const COLUMNS = ["Backlog", "Open", "In Progress", "In Review", "Approved", "Done"];
+// View modules + item-operation helpers. The calendar / dependency
+// renderers and the openItem / changeStatus / openNewItem operations
+// live in dedicated files (Phase 4 decomposition); workBoard.js
+// re-exports the relevant functions so allWork.js (which imports them
+// from workBoard) keeps working without touching its own code.
+import { calendarView } from "./workBoardCalendar.js";
+import { dependencyView } from "./workBoardDependency.js";
+import {
+  COLUMNS,
+  changeStatus as changeStatusImpl,
+  openItem as openItemImpl,
+  openNewItem,
+} from "./workBoardItem.js";
+
+// Re-export so allWork.js + others importing from workBoard.js keep
+// resolving the same names — the implementations now live in
+// workBoardItem.js and workBoardCalendar.js / workBoardDependency.js.
+export { calendarView, dependencyView };
+export { COLUMNS };
+export const changeStatus = changeStatusImpl;
+export const openItem = openItemImpl;
 
 export function renderProjectsIndex() {
   const root = document.getElementById("screenContainer");
@@ -836,283 +854,9 @@ export function timelineView(items, _scope) {
   return card("Timeline", svg, { subtitle: "Today = dashed accent line. Bars colored by severity." });
 }
 
-// ---------- calendar (month grid by due date) ----------
-//
-// Two interaction surfaces:
-//
-//   1. Month + year navigation. Prev/next chevrons step by month;
-//      dropdowns let users jump straight to any month and any year in
-//      a ±10-year window around today (extended to cover the actual
-//      data range if items extend beyond the default).
-//   2. Customisable rendering of "done" items via a small `Done style`
-//      picker stored per scope. Options: green pill, strikethrough,
-//      dimmed, or hidden. Default is "green" so finished work stays
-//      visible (matches what the user asked for) without overpowering
-//      the open work.
-const DONE_STYLE_KEY = (scopeId) => `board.cal.doneStyle.${scopeId}`;
-const DONE_STYLES = [
-  { id: "green",  label: "Green pill" },
-  { id: "strike", label: "Strike out" },
-  { id: "dim",    label: "Dimmed" },
-  { id: "hidden", label: "Hidden" },
-];
-const DONE_STATUSES = new Set(["Done", "Closed", "Approved"]);
-
-export function calendarView(items, scope) {
-  const monthKey = `board.cal.${scope.id}`;
-  const cur = sessionStorage.getItem(monthKey);
-  const today = new Date();
-  const anchor = cur ? new Date(cur + "-01T00:00:00") : new Date(today.getFullYear(), today.getMonth(), 1);
-  const year = anchor.getFullYear();
-  const month = anchor.getMonth();
-  const doneStyle = sessionStorage.getItem(DONE_STYLE_KEY(scope.id)) || "green";
-
-  // Hidden mode: drop done items before the day-grouping pass so the
-  // counters and "+N more" overflow stay accurate.
-  const visibleItems = doneStyle === "hidden"
-    ? items.filter(w => !DONE_STATUSES.has(w.status))
-    : items;
-
-  // Group items by ISO date.
-  const byDay = new Map();
-  for (const w of visibleItems) {
-    if (!w.due) continue;
-    const d = new Date(w.due);
-    if (d.getFullYear() !== year || d.getMonth() !== month) continue;
-    const k = d.toISOString().slice(0, 10);
-    if (!byDay.has(k)) byDay.set(k, []);
-    byDay.get(k).push(w);
-  }
-
-  // Year picker range: ±10 around the current view, but stretched to
-  // cover any item with a due date outside that window. Means a user
-  // who lands on May 2026 with a 2018 task can still navigate there.
-  const yearRange = computeYearRange(items, year);
-  const setNav = (nextYear, nextMonth) => {
-    sessionStorage.setItem(monthKey, `${nextYear}-${String(nextMonth + 1).padStart(2, "0")}`);
-    scope.rerender();
-  };
-  const stepMonth = (delta) => {
-    const next = new Date(year, month + delta, 1);
-    setNav(next.getFullYear(), next.getMonth());
-  };
-  const stepYear = (delta) => setNav(year + delta, month);
-  const goToday = () => setNav(today.getFullYear(), today.getMonth());
-
-  const monthSel = el("select", { class: "select sm", "aria-label": "Jump to month" });
-  ["January","February","March","April","May","June","July","August","September","October","November","December"]
-    .forEach((name, i) => {
-      const opt = document.createElement("option");
-      opt.value = String(i); opt.textContent = name;
-      if (i === month) opt.selected = true;
-      monthSel.append(opt);
-    });
-  monthSel.addEventListener("change", () => setNav(year, parseInt(/** @type {HTMLSelectElement} */ (monthSel).value, 10)));
-
-  const yearSel = el("select", { class: "select sm", "aria-label": "Jump to year" });
-  for (const y of yearRange) {
-    const opt = document.createElement("option");
-    opt.value = String(y); opt.textContent = String(y);
-    if (y === year) opt.selected = true;
-    yearSel.append(opt);
-  }
-  yearSel.addEventListener("change", () => setNav(parseInt(/** @type {HTMLSelectElement} */ (yearSel).value, 10), month));
-
-  const doneStyleSel = el("select", {
-    class: "select sm",
-    "aria-label": "How to render done items",
-    title: "Render style for items with status Done / Closed / Approved",
-  });
-  for (const opt of DONE_STYLES) {
-    const o = document.createElement("option");
-    o.value = opt.id; o.textContent = opt.label;
-    if (opt.id === doneStyle) o.selected = true;
-    doneStyleSel.append(o);
-  }
-  doneStyleSel.addEventListener("change", () => {
-    sessionStorage.setItem(DONE_STYLE_KEY(scope.id), /** @type {HTMLSelectElement} */ (doneStyleSel).value);
-    scope.rerender();
-  });
-
-  // First-of-month weekday (Mon=0 … Sun=6).
-  const first = new Date(year, month, 1);
-  const startCol = (first.getDay() + 6) % 7;
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const cells = [];
-  for (let i = 0; i < startCol; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
-  while (cells.length % 7) cells.push(null);
-
-  const headerRow = el("div", { class: "row spread mb-2", style: { gap: "8px", flexWrap: "wrap" } }, [
-    el("div", { class: "row", style: { gap: "4px", alignItems: "center" } }, [
-      el("button", { class: "btn sm icon-btn", onClick: () => stepYear(-1), title: "Previous year", "aria-label": "Previous year" }, ["«"]),
-      el("button", { class: "btn sm icon-btn", onClick: () => stepMonth(-1), title: "Previous month", "aria-label": "Previous month" }, ["‹"]),
-      monthSel,
-      yearSel,
-      el("button", { class: "btn sm icon-btn", onClick: () => stepMonth(1), title: "Next month", "aria-label": "Next month" }, ["›"]),
-      el("button", { class: "btn sm icon-btn", onClick: () => stepYear(1), title: "Next year", "aria-label": "Next year" }, ["»"]),
-      el("button", { class: "btn sm", onClick: goToday, title: "Jump to current month" }, ["Today"]),
-    ]),
-    el("div", { class: "row", style: { gap: "6px", alignItems: "center" } }, [
-      el("span", { class: "tiny muted" }, ["Done items:"]),
-      doneStyleSel,
-    ]),
-  ]);
-
-  const weekdayHeader = el("div", { class: "calendar-grid header" },
-    ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(n => el("div", { class: "calendar-cell head" }, [n]))
-  );
-
-  const grid = el("div", { class: "calendar-grid" }, cells.map(c => {
-    if (!c) return el("div", { class: "calendar-cell empty" });
-    const k = c.toISOString().slice(0, 10);
-    const list = byDay.get(k) || [];
-    const isToday = c.toDateString() === today.toDateString();
-    return el("div", { class: `calendar-cell ${isToday ? "today" : ""}` }, [
-      el("div", { class: "calendar-date" }, [String(c.getDate())]),
-      ...list.slice(0, 3).map(w => calendarPill(w, doneStyle)),
-      list.length > 3 ? el("div", { class: "tiny muted" }, ["+", String(list.length - 3), " more"]) : null,
-    ]);
-  }));
-
-  return card("Calendar", el("div", {}, [headerRow, weekdayHeader, grid]), {
-    subtitle: "Items plotted by due date. Click a pill to open. Spec §6.2.",
-  });
-}
-
-// Shared pill renderer so /work-board and /work look identical and the
-// done-style choice applies uniformly.
-function calendarPill(w, doneStyle) {
-  const isDone = DONE_STATUSES.has(w.status);
-  const sev = `sev-${w.severity || "low"}`;
-  const doneClass = isDone ? `done done-${doneStyle}` : "";
-  const titlePrefix = isDone ? "✓ " : "";
-  return el("button", {
-    class: `calendar-pill ${sev} ${doneClass}`.trim(),
-    title: titlePrefix + (w.title || w.id) + (isDone ? ` (${w.status})` : ""),
-    onClick: () => openItem(w.id),
-  }, [
-    isDone ? el("span", { "aria-hidden": "true", style: { marginRight: "3px" } }, ["✓"]) : null,
-    w.id + " · " + (w.title || "").slice(0, 18),
-  ]);
-}
-
-function computeYearRange(items, viewYear) {
-  const today = new Date();
-  let lo = today.getFullYear() - 10;
-  let hi = today.getFullYear() + 10;
-  for (const w of items) {
-    if (!w.due) continue;
-    const y = new Date(w.due).getFullYear();
-    if (Number.isFinite(y)) {
-      if (y < lo) lo = y;
-      if (y > hi) hi = y;
-    }
-  }
-  // Always include the year currently being viewed so navigating past
-  // the data extent doesn't strand the user with an empty dropdown.
-  if (viewYear < lo) lo = viewYear;
-  if (viewYear > hi) hi = viewYear;
-  const out = [];
-  for (let y = lo; y <= hi; y++) out.push(y);
-  return out;
-}
-
-// ---------- dependency map ----------
-export function dependencyView(items, _scope) {
-  // Mermaid flowchart built from the blocked-by graph. Falls back to a
-  // hand-rolled SVG below.
-  const lines = ["flowchart LR"];
-  const safe = id => id.replace(/[^A-Za-z0-9_]/g, "_");
-  for (const w of items) {
-    const sev = w.severity === "high" || w.severity === "critical" ? ":::hi"
-      : w.severity === "medium" ? ":::md" : ":::lo";
-    lines.push(`  ${safe(w.id)}["${w.id}<br/>${(w.title || "").slice(0, 32)}"]${sev}`);
-  }
-  for (const w of items) {
-    for (const bl of (w.blockers || [])) {
-      if (items.some(x => x.id === bl)) lines.push(`  ${safe(bl)} --> ${safe(w.id)}`);
-    }
-  }
-  lines.push("  classDef hi fill:#ef4444,stroke:#991b1b,color:#fff;");
-  lines.push("  classDef md fill:#f59e0b,stroke:#92400e,color:#111;");
-  lines.push("  classDef lo fill:#38bdf8,stroke:#075985,color:#111;");
-  const def = lines.join("\n");
-  return card("Dependency map (Mermaid)", el("div", { class: "stack" }, [
-    renderMermaid(def),
-    el("div", { class: "tiny muted" }, ["Rendered with mermaid-js (MIT). Falls back to in-repo SVG if offline."]),
-    dependencyViewSvg(items),
-  ]), { subtitle: "Red = high/critical severity. Arrows = blocked-by." });
-}
-
-function dependencyViewSvg(items) {
-  // Force-free layout: position nodes by status column + order.
-  const byStatus = {};
-  for (const w of items) (byStatus[w.status] = byStatus[w.status] || []).push(w);
-  const cols = COLUMNS.filter(c => byStatus[c]?.length);
-  const W = 1000, H = 480;
-  const colW = W / Math.max(1, cols.length);
-  const coords = new Map();
-  cols.forEach((c, ci) => {
-    byStatus[c].forEach((w, i) => {
-      coords.set(w.id, { x: colW * ci + colW / 2, y: 40 + (H - 80) * (i + 1) / (byStatus[c].length + 1) });
-    });
-  });
-
-  const NS = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(NS, "svg");
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  svg.setAttribute("width", "100%"); svg.style.background = "var(--panel)"; svg.style.borderRadius = "8px";
-
-  // Draw dependency edges.
-  for (const w of items) {
-    const to = coords.get(w.id);
-    for (const blocker of (w.blockers || [])) {
-      const from = coords.get(blocker);
-      if (!from || !to) continue;
-      const path = document.createElementNS(NS, "line");
-      path.setAttribute("x1", from.x); path.setAttribute("y1", from.y);
-      path.setAttribute("x2", to.x); path.setAttribute("y2", to.y);
-      path.setAttribute("stroke", "#ef4444"); path.setAttribute("stroke-width", "1.5");
-      svg.append(path);
-    }
-  }
-
-  // Draw nodes.
-  for (const w of items) {
-    const c = coords.get(w.id);
-    if (!c) continue;
-    const g = document.createElementNS(NS, "g");
-    g.style.cursor = "pointer";
-    g.addEventListener("click", () => openItem(w.id));
-    const circle = document.createElementNS(NS, "circle");
-    circle.setAttribute("cx", String(c.x)); circle.setAttribute("cy", String(c.y)); circle.setAttribute("r", "14");
-    const fill = w.severity === "high" || w.severity === "critical" ? "#ef4444" : w.severity === "medium" ? "#f59e0b" : "#38bdf8";
-    circle.setAttribute("fill", fill);
-    g.append(circle);
-    const txt = document.createElementNS(NS, "text");
-    txt.setAttribute("x", String(c.x)); txt.setAttribute("y", String(c.y - 20));
-    txt.setAttribute("text-anchor", "middle"); txt.setAttribute("font-size", "10"); txt.setAttribute("fill", "var(--text)");
-    txt.textContent = w.id;
-    g.append(txt);
-    svg.append(g);
-  }
-
-  // Column headers.
-  cols.forEach((c, ci) => {
-    const t = document.createElementNS(NS, "text");
-    t.setAttribute("x", String(colW * ci + colW / 2)); t.setAttribute("y", "20");
-    t.setAttribute("text-anchor", "middle"); t.setAttribute("font-size", "12"); t.setAttribute("fill", "var(--muted)");
-    t.textContent = c;
-    svg.append(t);
-  });
-
-  return el("div", { class: "stack" }, [
-    el("div", { class: "tiny muted" }, ["Hand-rolled SVG fallback (always available):"]),
-    svg,
-  ]);
-}
-
+// Calendar view moved to ./workBoardCalendar.js (Phase 4 decomposition).
+// Re-exported above. Legacy implementation deleted — see git blame on
+// workBoardCalendar.js for the original code.
 // ---------- automation rules ----------
 //
 // Comprehensive listing of every automated behavior the system runs on
@@ -1188,137 +932,7 @@ function showAutomationRulesModal() {
   });
 }
 
-// ---------- actions ----------
-export function changeStatus(itemId, newStatus) {
-  const item = getById("workItems", itemId);
-  if (!item) return;
-  if (!can("edit")) { toast("Cannot transition — read-only role", "warn"); return; }
-  const old = item.status;
-  if (old === newStatus) return;
-  update(s => { const i = s.data.workItems.find(x => x.id === itemId); if (i) i.status = newStatus; });
-  audit("workitem.transition", itemId, { from: old, to: newStatus });
-  toast(`${itemId} → ${newStatus}`, "success");
-}
-
-export function openItem(itemId) {
-  const w = getById("workItems", itemId);
-  if (!w) return;
-  const statusSelect = select(COLUMNS, { value: w.status });
-  const severitySelect = select(["low","medium","high","critical"], { value: w.severity });
-  const titleInput = input({ value: w.title });
-  const descTextarea = textarea({ value: w.description || "" });
-  const blockersInput = input({ value: (w.blockers || []).join(", ") });
-  const userOptions = (state.data?.users || []).map(u => ({ value: u.id, label: `${u.id} · ${u.name || u.email || u.id}` }));
-  const assigneeSelect = select([{ value: "", label: "Unassigned" }, ...userOptions], { value: w.assigneeId || "" });
-  // Bind dates as <input type="date"> with yyyy-mm-dd shape so the
-  // native date picker renders. Leaving the value blank clears it.
-  const toDate = (iso) => iso ? new Date(iso).toISOString().slice(0, 10) : "";
-  const assignedInput = input({ type: "date", value: toDate(w.assignedAt) });
-  const dueInput = input({ type: "date", value: toDate(w.due) });
-
-  drawer({
-    title: `${w.id} — ${w.type}`,
-    body: el("div", { class: "stack" }, [
-      el("div", { class: "row wrap" }, [
-        badge(w.status, "info"),
-        badge(w.severity, w.severity === "high" || w.severity === "critical" ? "danger" : w.severity === "medium" ? "warn" : "info"),
-        ...(w.assetIds || []).map(id => badge(`Asset ${id}`, "accent")),
-      ]),
-      formRow("Title", titleInput),
-      formRow("Status", statusSelect),
-      formRow("Severity", severitySelect),
-      formRow("Assignee", assigneeSelect),
-      formRow("Assigned date", assignedInput),
-      formRow("Due date", dueInput),
-      formRow("Description", descTextarea),
-      formRow("Blocked by (comma-separated IDs)", blockersInput),
-      historyDrawer(w),
-    ]),
-    actions: [
-      { label: "Close" },
-      { label: "Save", variant: "primary", onClick: () => {
-        if (!can("edit")) { toast("No permission", "warn"); return; }
-        update(s => {
-          const i = s.data.workItems.find(x => x.id === itemId);
-          if (!i) return;
-          const from = { ...i };
-          i.title = titleInput.value;
-          i.status = statusSelect.value;
-          i.severity = severitySelect.value;
-          i.description = descTextarea.value;
-          i.blockers = blockersInput.value.split(",").map(x => x.trim()).filter(Boolean);
-          // Assignee change: stamp assignedAt to now if the user is
-          // changing the assignee and didn't override the date input.
-          // If they explicitly cleared assignedInput, leave it null.
-          const newAssignee = assigneeSelect.value || null;
-          if (newAssignee !== from.assigneeId) {
-            i.assigneeId = newAssignee;
-            if (assignedInput.value === toDate(from.assignedAt)) {
-              i.assignedAt = newAssignee ? new Date().toISOString() : null;
-            } else {
-              i.assignedAt = assignedInput.value ? new Date(assignedInput.value).toISOString() : null;
-            }
-          } else {
-            i.assignedAt = assignedInput.value ? new Date(assignedInput.value).toISOString() : null;
-          }
-          i.due = dueInput.value ? new Date(dueInput.value).toISOString() : null;
-          audit("workitem.update", itemId, { changes: diff(from, i) });
-        });
-        toast("Saved", "success");
-      }},
-    ],
-  });
-}
-
-function historyDrawer(w) {
-  const ev = (state.data.auditEvents || []).filter(e => e.subject === w.id).slice(0, 8);
-  if (!ev.length) return el("div", { class: "tiny muted" }, ["(no history)"]);
-  return el("div", {}, [
-    el("div", { class: "tiny muted" }, ["History"]),
-    ev.map(e => el("div", { class: "activity-row" }, [
-      el("span", { class: "ts" }, [new Date(e.ts).toLocaleString()]),
-      el("span", { class: "small" }, [e.action]),
-      el("span", { class: "tiny muted" }, [e.actor]),
-    ])),
-  ]);
-}
-
-function diff(a, b) {
-  const out = {};
-  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-    if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) out[k] = [a[k], b[k]];
-  }
-  return out;
-}
-
-function openNewItem(projectId) {
-  const titleInput = input({ placeholder: "Short title" });
-  const typeSelect = select(["Task","Issue","Action","RFI","NCR","Punch","Defect","CAPA","Change"]);
-  const severitySelect = select(["low","medium","high","critical"], { value: "medium" });
-  const assigneeSelect = select(state.data.users.map(u => ({ value: u.id, label: u.name })));
-  modal({
-    title: "New work item",
-    body: el("div", { class: "stack" }, [
-      formRow("Title", titleInput),
-      formRow("Type", typeSelect),
-      formRow("Severity", severitySelect),
-      formRow("Assignee", assigneeSelect),
-    ]),
-    actions: [
-      { label: "Cancel" },
-      { label: "Create", variant: "primary", onClick: () => {
-        if (!titleInput.value.trim()) { toast("Title required", "warn"); return false; }
-        const id = simulation.demoId("WI", state.data.workItems || []);
-        const item = {
-          id, projectId, type: typeSelect.value, title: titleInput.value.trim(),
-          assigneeId: assigneeSelect.value, status: "Open", severity: severitySelect.value,
-          due: null, blockers: [], labels: [],
-          created_at: new Date().toISOString(),
-        };
-        update(s => { s.data.workItems.push(item); });
-        audit("workitem.create", id, { type: item.type });
-        toast(`${id} created`, "success");
-      }},
-    ],
-  });
-}
+// Item operations (changeStatus, openItem, openNewItem) and the diff/
+// historyDrawer helpers moved to ./workBoardItem.js (Phase 4).
+// changeStatus + openItem are re-exported at the top of this file
+// for back-compat with allWork.js.
