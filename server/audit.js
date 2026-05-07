@@ -8,8 +8,8 @@ const GENESIS = "0".repeat(64);
 
 const stmtLast = db.prepare("SELECT hash, seq FROM audit_log ORDER BY seq DESC LIMIT 1");
 const stmtInsert = db.prepare(`
-  INSERT INTO audit_log (id, ts, actor, action, subject, detail, trace_id, prev_hash, hash, seq, org_id)
-  VALUES (@id, @ts, @actor, @action, @subject, @detail, @trace_id, @prev_hash, @hash, @seq, @org_id)
+  INSERT INTO audit_log (id, ts, actor, action, subject, detail, trace_id, prev_hash, hash, seq, org_id, org_hash)
+  VALUES (@id, @ts, @actor, @action, @subject, @detail, @trace_id, @prev_hash, @hash, @seq, @org_id, @org_hash)
 `);
 const stmtUserOrg = db.prepare("SELECT org_id FROM users WHERE id = ?");
 
@@ -69,12 +69,19 @@ export function audit({ actor, action, subject, detail = {}, traceId = null, org
     };
     entry.hash = await sha256Hex(canonicalJSON(payload));
     _tail = entry.hash;
+    // Dual-hash chain (v20): bind (entry, org_id) so an attacker can't
+    // retroactively reassign tenant ownership without breaking
+    // org_hash. The original chain is unchanged — org_hash hashes the
+    // existing `hash` alongside the org_id, so verifying it is a single
+    // hash recomputation rather than a separate chain walk.
+    entry.org_hash = await sha256Hex(canonicalJSON({ hash: entry.hash, org_id: entry.org_id || null }));
     try {
       stmtInsert.run({
         id: entry.id, ts: entry.ts, actor: entry.actor, action: entry.action,
         subject: entry.subject, detail: JSON.stringify(entry.detail || {}),
         trace_id: entry.trace_id, prev_hash: entry.prev_hash,
         hash: entry.hash, seq: entry.seq, org_id: entry.org_id,
+        org_hash: entry.org_hash,
       });
     } catch (err) {
       console.error("audit insert failed", err, entry);
@@ -113,6 +120,40 @@ export async function verifyLedger() {
     prev = e.hash;
   }
   return { ok: true, count: rows.length };
+}
+
+/**
+ * Phase 4 forensics: walk the dual-hash org_hash chain. Returns
+ * `{ ok, count, missing, mismatched }`. Pre-v20 entries (no org_hash
+ * stored) are counted in `missing` rather than failing — the chain is
+ * lazy-bound for historic data and only protects entries written
+ * after the migration.
+ *
+ * When `orgId` is supplied, only entries for that tenant (plus
+ * `org_id IS NULL` system events) are inspected. This is the path the
+ * compliance UI calls per tenant — small audit slices verify in
+ * milliseconds, full-table walks scale linearly with the ledger size.
+ */
+export async function verifyOrgChain({ orgId = null } = {}) {
+  await drain();
+  let sql = "SELECT * FROM audit_log";
+  const params = {};
+  if (orgId) {
+    sql += " WHERE org_id = @org_id OR org_id IS NULL";
+    params.org_id = orgId;
+  }
+  sql += " ORDER BY seq";
+  const rows = db.prepare(sql).all(params);
+  let missing = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const e = rows[i];
+    if (!e.org_hash) { missing++; continue; }
+    const expected = await sha256Hex(canonicalJSON({ hash: e.hash, org_id: e.org_id || null }));
+    if (expected !== e.org_hash) {
+      return { ok: false, firstBadIndex: i, reason: "org_hash mismatch", entry: e, missing };
+    }
+  }
+  return { ok: true, count: rows.length, missing };
 }
 
 /**

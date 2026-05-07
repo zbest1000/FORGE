@@ -2,6 +2,7 @@
 // Supports optional query strings (?q=foo).
 
 import { state } from "./store.js";
+import { logger } from "./logging.js";
 
 const ROUTES = [];
 let currentHandler = null;
@@ -63,10 +64,41 @@ export function rerenderCurrent() {
 
 const routeListeners = new Set();
 export function onRouteChange(fn) { routeListeners.add(fn); return () => routeListeners.delete(fn); }
-function emitRouteChange() { routeListeners.forEach(fn => { try { fn(state); } catch (e) { console.error(e); } }); }
+function emitRouteChange() { routeListeners.forEach(fn => { try { fn(state); } catch (e) { logger.error("router.listener.threw", e); } }); }
 
 export function startRouter() {
   window.addEventListener("hashchange", resolve);
   if (!location.hash) location.hash = "#/hub";
   else resolve();
+}
+
+/**
+ * Parsed query params from the current hash. `#/work?status=Open&due=overdue`
+ * returns `URLSearchParams` you can read via `.get("status")` or iterate.
+ *
+ * Why this exists: filter state was previously parked in sessionStorage,
+ * which meant URLs couldn't be shared, bookmarked, or used as undo
+ * history. Screens that opted into URL-driven filters call this on
+ * mount and keep the URL as the single source of truth.
+ */
+export function queryParams() {
+  const [, qs = ""] = currentPath().split("?");
+  return new URLSearchParams(qs);
+}
+
+/**
+ * Patch the current URL's query string with the given key/value pairs.
+ * `null` / `undefined` / "" values delete the key. Re-renders the screen
+ * by going through the standard hash-change path so listeners stay in
+ * lockstep.
+ */
+export function updateQueryParams(patch) {
+  const [path, qs = ""] = currentPath().split("?");
+  const params = new URLSearchParams(qs);
+  for (const [k, v] of Object.entries(patch)) {
+    if (v == null || v === "" || v === false) params.delete(k);
+    else params.set(k, String(v));
+  }
+  const next = params.toString();
+  navigate("#" + path + (next ? "?" + next : ""));
 }

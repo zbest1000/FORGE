@@ -1,6 +1,13 @@
 // Centralized reactive store with localStorage persistence.
 
-const LS_KEY = "forge.state.v1";
+import { logger } from "./logging.js";
+
+// Bumped to v2 (2026-05): stale v1 state held a CSP-blocked external PDF URL
+// in seed revisions, leaving the doc viewer empty for returning users. v2
+// invalidates the cached state so the new local /sample.pdf seed takes effect.
+// Users keep their own uploaded docs by re-uploading via the viewer's
+// "Attach PDF" action — demo state is otherwise self-replenishing.
+const LS_KEY = "forge.state.v2";
 
 const listeners = new Set();
 
@@ -77,7 +84,7 @@ function hydrate() {
       }
     }
   } catch (e) {
-    console.warn("hydrate failed", e);
+    logger.warn("store.hydrate.failed", e);
   }
 }
 
@@ -89,7 +96,7 @@ function persistNow() {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify({ ui: state.ui, data: state.data }));
   } catch (e) {
-    console.warn("persist failed", e);
+    logger.warn("store.persist.failed", e);
   }
 }
 function persist() {
@@ -119,10 +126,97 @@ export function subscribe(fn) {
   return () => listeners.delete(fn);
 }
 
+// Slice subscriptions (Phase 3 architecture).
+//
+// `subscribe()` above fires for every mutation. That's fine for top-level
+// shell + screen renders, but means every keystroke in a filter input
+// causes the whole shell to re-render even though only the filter
+// state moved. Slice subscriptions narrow the listener: callers register
+// interest in a specific path (e.g. "data.workItems", "ui.theme") and
+// only get notified when that path actually changed between the
+// pre-mutation snapshot and the post-mutation state.
+//
+// The contract is intentionally simple — paths are dot-strings,
+// equality is reference-equality on the deepest segment, and a
+// missing path resolves to undefined (matching JS's "?." behavior).
+// This handles the 95 % case without dragging in immutable.js or a
+// proper diff engine.
+//
+// `subscribeSlice("data.workItems", fn)` calls fn(newSlice, oldSlice)
+// when the array reference changes. Mutations done in-place via
+// `update(s => s.data.workItems.push(...))` won't fire the slice
+// listener (the array reference is unchanged) — callers that want
+// fine-grained reactivity should swap the array (`s.data.workItems = [...s.data.workItems, x]`)
+// or call markDirty(path) explicitly.
+
+/** @type {Map<string, Set<(next: any, prev: any) => void>>} */
+const sliceListeners = new Map();
+/** @type {Set<string>} */
+const dirtyPaths = new Set();
+
+function getPath(obj, path) {
+  if (!path) return obj;
+  let cur = obj;
+  for (const seg of path.split(".")) {
+    if (cur == null) return undefined;
+    cur = cur[seg];
+  }
+  return cur;
+}
+
+/**
+ * Subscribe to a single slice of state. Returns an unsubscribe fn.
+ * @param {string} path Dot-separated path, e.g. "data.workItems" or "ui.theme".
+ * @param {(next: any, prev: any) => void} fn
+ */
+export function subscribeSlice(path, fn) {
+  if (!sliceListeners.has(path)) sliceListeners.set(path, new Set());
+  sliceListeners.get(path).add(fn);
+  return () => {
+    const set = sliceListeners.get(path);
+    if (set) {
+      set.delete(fn);
+      if (set.size === 0) sliceListeners.delete(path);
+    }
+  };
+}
+
+/**
+ * Mark a path as dirty so its slice listeners fire on the next
+ * notify(), even if reference-equality says nothing changed. Used by
+ * mutation helpers that mutate-in-place (push/splice) and want to
+ * still surface the change.
+ */
+export function markDirty(path) { dirtyPaths.add(path); }
+
 export function notify() {
   persist();
-  listeners.forEach(fn => { try { fn(state); } catch (e) { console.error(e); } });
+  // Slice subscribers: fire only the ones whose watched path's value
+  // actually changed since the last notify. Snapshots are kept on the
+  // listener set so each subscription is independent.
+  for (const [path, set] of sliceListeners) {
+    const next = getPath(state, path);
+    const isDirty = dirtyPaths.has(path);
+    for (const fn of set) {
+      // Each listener carries its own `_lastSeen` weak-cache via a
+      // dedicated WeakMap-substitute: the function itself doesn't get a
+      // hidden field so we use a separate map keyed by the fn.
+      const prev = _slicePrev.get(fn);
+      if (isDirty || prev !== next) {
+        _slicePrev.set(fn, next);
+        try { fn(next, prev); } catch (e) { logger.error("store.slice-listener.threw", { path, err: e }); }
+      }
+    }
+  }
+  dirtyPaths.clear();
+  // Top-level subscribers: fire unconditionally (matches the legacy
+  // contract). Screens that want to opt out of the global storm should
+  // migrate to subscribeSlice().
+  listeners.forEach(fn => { try { fn(state); } catch (e) { logger.error("store.listener.threw", e); } });
 }
+
+/** @type {WeakMap<Function, any>} */
+const _slicePrev = new WeakMap();
 
 export function update(mutator) {
   mutator(state);

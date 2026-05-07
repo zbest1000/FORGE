@@ -15,7 +15,7 @@
 
 import {
   el, mount, card, badge, kpi, toast, modal, formRow, input, textarea,
-  select, prompt, confirm, loadingState,
+  select, prompt, confirm, loadingState, emptyState,
 } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { api } from "../core/api.js";
@@ -43,7 +43,11 @@ export async function renderAssetConfig({ assetId, target }) {
 
   mount(target, [
     headerRow(bindings, canRawSql),
-    bindings.length ? bindingsTable(bindings, assetId) : emptyState(),
+    bindings.length ? bindingsTable(bindings, assetId) : emptyState({
+      icon: "🔌",
+      title: "No data points wired up yet",
+      message: "Apply a profile to wire this asset's data points to a registered MQTT broker, OPC UA endpoint, or SQL data source.",
+    }),
     el("div", { class: "row wrap", style: { marginTop: "12px" } }, [
       el("button", { class: "btn primary", onClick: () => openApplyProfileModal({ assetId, profiles, systems, canRawSql }) }, ["Apply profile…"]),
       el("button", { class: "btn", onClick: () => openCustomMappingModal({ assetId, systems, canRawSql }) }, ["Custom mapping…"]),
@@ -124,12 +128,6 @@ function headerRow(bindings, canRawSql) {
     el("div", { class: "row wrap" }, [
       canRawSql ? badge("historian.sql.raw", "purple", { title: "You can author free-form SQL templates." }) : null,
     ]),
-  ]);
-}
-
-function emptyState() {
-  return el("div", { class: "muted", style: { padding: "24px", textAlign: "center" } }, [
-    "Apply a profile to wire this asset's data points to a registered MQTT broker, OPC UA endpoint, or SQL data source.",
   ]);
 }
 

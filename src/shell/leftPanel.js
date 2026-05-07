@@ -106,7 +106,7 @@ function domainFor(route) {
   if (path === "/spec")                  return "spec";
 
   // Compound routes — match by prefix.
-  if (path.startsWith("/work-board") || path === "/projects" || path === "/approvals") return "work";
+  if (path === "/work" || path.startsWith("/work-board") || path === "/projects" || path === "/approvals") return "work";
   if (path.startsWith("/doc") || path.startsWith("/compare") || path === "/docs") return "docs";
   if (path.startsWith("/drawing") || path === "/drawings") return "drawings";
   if (path.startsWith("/asset") || path === "/assets" || path === "/uns" || path === "/i3x") return "assets";
@@ -179,7 +179,8 @@ function quickActions(domain, d, portal) {
       { label: "Audit ledger", route: "/audit" },
     ],
     work: [
-      { label: "+ Work item", route: firstProject ? `/work-board/${firstProject.id}` : "/projects", primary: true },
+      { label: "All work", route: "/work", primary: true },
+      { label: "+ Work item", route: firstProject ? `/work-board/${firstProject.id}` : "/projects" },
       { label: "Approvals", route: "/approvals" },
     ],
     docs: [
@@ -225,12 +226,54 @@ function quickActions(domain, d, portal) {
   ));
 }
 
+// In-panel filter text per domain. Persisted in sessionStorage so the
+// filter survives navigation away from the screen and back.
+function getFilterText(domain) {
+  return sessionStorage.getItem(`leftPanel.filter.${domain}`) || "";
+}
+function setFilterText(domain, value) {
+  if (value) sessionStorage.setItem(`leftPanel.filter.${domain}`, value);
+  else sessionStorage.removeItem(`leftPanel.filter.${domain}`);
+  // Tiny re-render so the filtered list shows immediately.
+  renderLeftPanel();
+}
+
+function filterInputFor(domain, placeholder) {
+  const v = getFilterText(domain);
+  const inp = el("input", {
+    class: "input sm",
+    type: "search",
+    placeholder,
+    value: v,
+    "aria-label": placeholder,
+    style: { marginBottom: "8px" },
+  });
+  /** @type {any} */ (inp).addEventListener("input", (e) => {
+    const target = /** @type {HTMLInputElement} */ (e.target);
+    setFilterText(domain, target.value);
+    // Restore focus to the input after the re-render pulls a fresh
+    // node into the DOM. Without this, typing one char loses focus.
+    setTimeout(() => {
+      const fresh = document.querySelector(`#leftPanel input[type="search"]`);
+      if (fresh instanceof HTMLInputElement) {
+        fresh.focus();
+        try { fresh.setSelectionRange(target.value.length, target.value.length); } catch {}
+      }
+    }, 0);
+  });
+  return inp;
+}
+
 function sectionsFor(domain, d, portal) {
   const activeRoute = state.route || "";
   const makeSection = (title, items, map) => sectionNode(title, items, map, activeRoute);
-  const recentDocs = [...(d.documents || [])].slice(0, 8);
-  const recentDrawings = [...(d.drawings || [])].slice(0, 8);
-  const visibleAssets = (d.assets || []).filter(canSeeAsset);
+  // Apply per-domain filter where it makes sense (docs / drawings / assets
+  // / incidents / spaces). Empty filter = full list.
+  const filter = getFilterText(domain).trim().toLowerCase();
+  const matches = (label) => !filter || String(label || "").toLowerCase().includes(filter);
+  const recentDocs = (d.documents || []).filter(doc => matches(doc.name)).slice(0, 50);
+  const recentDrawings = (d.drawings || []).filter(dr => matches(dr.name)).slice(0, 50);
+  const visibleAssets = (d.assets || []).filter(canSeeAsset).filter(a => matches(a.name));
 
   // Portal landing view: use the portal's own items as the navigation
   // tree. Keeps the panel feeling like "you're inside the Engineering
@@ -246,6 +289,10 @@ function sectionsFor(domain, d, portal) {
 
   if (domain === "work") {
     return [
+      makeSection("Views", [
+        { route: "/work", label: "All work (cross-project)" },
+        { route: "/projects", label: "Projects index" },
+      ], x => x),
       makeSection("Projects", d.projects || [], p => ({ route: `/work-board/${p.id}`, label: p.name })),
       makeSection("Queues", [
         { route: "/approvals", label: "Approval queue", badge: String((d.approvals || []).filter(a => a.status === "pending").length) },
@@ -255,7 +302,8 @@ function sectionsFor(domain, d, portal) {
   }
   if (domain === "docs") {
     return [
-      makeSection("Documents", recentDocs, doc => ({ route: `/doc/${doc.id}`, label: doc.name })),
+      filterInputFor("docs", "Search documents…"),
+      makeSection(filter ? `Matches (${recentDocs.length})` : "Documents", recentDocs, doc => ({ route: `/doc/${doc.id}`, label: doc.name })),
       makeSection("Review", [
         { route: "/approvals", label: "Approvals", badge: String((d.approvals || []).filter(a => a.status === "pending").length) },
         { route: "/search", label: "Find controlled records" },
@@ -263,11 +311,15 @@ function sectionsFor(domain, d, portal) {
     ];
   }
   if (domain === "drawings") {
-    return [makeSection("Drawings", recentDrawings, dr => ({ route: `/drawing/${dr.id}`, label: dr.name }))];
+    return [
+      filterInputFor("drawings", "Search drawings…"),
+      makeSection(filter ? `Matches (${recentDrawings.length})` : "Drawings", recentDrawings, dr => ({ route: `/drawing/${dr.id}`, label: dr.name })),
+    ];
   }
   if (domain === "assets") {
     return [
-      makeSection("Assets", visibleAssets, a => ({ route: `/asset/${a.id}`, label: a.name, unread: a.status === "alarm" || a.status === "warning" })),
+      filterInputFor("assets", "Search assets…"),
+      makeSection(filter ? `Matches (${visibleAssets.length})` : "Assets", visibleAssets, a => ({ route: `/asset/${a.id}`, label: a.name, unread: a.status === "alarm" || a.status === "warning" })),
       makeSection("Industrial data & APIs", [
         { route: "/uns", label: "Unified Namespace" },
         { route: "/i3x", label: "i3X API" },
@@ -276,12 +328,19 @@ function sectionsFor(domain, d, portal) {
     ];
   }
   if (domain === "incidents") {
-    return [makeSection("Incident rooms", d.incidents || [], i => ({ route: `/incident/${i.id}`, label: i.title, unread: i.status === "active", badge: i.severity }))];
+    const incs = (d.incidents || []).filter(i => matches(i.title) || matches(i.id));
+    return [
+      filterInputFor("incidents", "Search incidents…"),
+      makeSection(filter ? `Matches (${incs.length})` : "Incident rooms", incs, i => ({ route: `/incident/${i.id}`, label: i.title, unread: i.status === "active", badge: i.severity })),
+    ];
   }
   if (domain === "spaces") {
+    const ts = (d.teamSpaces || []).filter(t => matches(t.name));
+    const ch = (d.channels || []).filter(c => matches(c.name));
     return [
-      makeSection("Team Spaces", d.teamSpaces || [], ts => ({ route: `/team-space/${ts.id}`, label: ts.name })),
-      makeSection("Channels", d.channels || [], c => ({ route: `/channel/${c.id}`, label: `# ${c.name}`, unread: c.unread > 0, badge: c.unread > 0 ? String(c.unread) : null })),
+      filterInputFor("spaces", "Search spaces & channels…"),
+      makeSection(filter ? `Spaces (${ts.length})` : "Team Spaces", ts, t => ({ route: `/team-space/${t.id}`, label: t.name })),
+      makeSection(filter ? `Channels (${ch.length})` : "Channels", ch, c => ({ route: `/channel/${c.id}`, label: `# ${c.name}`, unread: c.unread > 0, badge: c.unread > 0 ? String(c.unread) : null })),
     ];
   }
   if (domain === "integrations") {

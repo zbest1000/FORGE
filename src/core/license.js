@@ -15,6 +15,7 @@
 // surface that enforces tier gates.
 
 import { mode as apiMode, api } from "./api.js";
+import { logger } from "./logging.js";
 
 export const FEATURES = Object.freeze({
   CORE_AUTH: "core.auth",
@@ -92,7 +93,7 @@ export function onLicenseChange(fn) {
 
 function notify() {
   for (const fn of subs) {
-    try { fn(_cached); } catch (err) { console.warn("[license] subscriber error", err); }
+    try { fn(_cached); } catch (err) { logger.warn("license.subscriber.threw", err); }
   }
 }
 
@@ -107,7 +108,7 @@ export async function loadLicense() {
     try {
       _cached = await api("/api/license");
     } catch (err) {
-      console.warn("[license] fetch failed; falling back to community", err);
+      logger.warn("license.fetch.failed", { err: err?.message || String(err) });
       _cached = {
         source: "fallback", customer: "Unlicensed", tier: "community",
         edition: "community", term: "perpetual", seats: 3, hard_seat_cap: 5,

@@ -22,6 +22,51 @@ const MAX_QUEUE = Number(process.env.FORGE_SSE_MAX_QUEUE || 256);
 const DRAIN_TIMEOUT_MS = Number(process.env.FORGE_SSE_DRAIN_TIMEOUT_MS || 30_000);
 const KEEPALIVE_MS = Number(process.env.FORGE_SSE_KEEPALIVE_MS || 25_000);
 
+// Per-org rate limiter (Phase 2).
+// A tenant publishing 10 000 historian samples / sec previously fanned out
+// to every client in their org AND through-handlers shared with other
+// tenants' SSE plumbing — net result was that one busy tenant could
+// starve unrelated tenants by saturating the dispatch loop.
+//
+// Implementation: a sliding-bucket per-org counter. Events above the
+// budget are dropped before the per-client enqueue, and a single
+// `dropped` notification is fanned out to that org's clients per window
+// so the UI can decide to refetch state. The numbers are tunable;
+// defaults sized for a 10x headroom over typical interactive workloads.
+const ORG_BUDGET = Number(process.env.FORGE_SSE_ORG_BUDGET || 1000);   // events
+const ORG_WINDOW_MS = Number(process.env.FORGE_SSE_ORG_WINDOW_MS || 10_000); // 10 s
+
+/** @type {Map<string, { count: number, windowStart: number, dropped: number, lastNotice: number }>} */
+const orgBuckets = new Map();
+
+function checkOrgBudget(orgId) {
+  if (!orgId) return { allowed: true }; // global broadcasts are not gated
+  const nowMs = Date.now();
+  let b = orgBuckets.get(orgId);
+  if (!b || nowMs - b.windowStart >= ORG_WINDOW_MS) {
+    // New window: roll over. If the previous window had drops, emit a
+    // single dropped notice to that org's clients so the UI knows to
+    // refetch (avoids one notice per dropped event).
+    if (b && b.dropped > 0) {
+      const note = `event: dropped\ndata: ${JSON.stringify({ count: b.dropped, reason: "org_rate_limited", windowMs: ORG_WINDOW_MS })}\n\n`;
+      for (const c of clients) {
+        if (c.orgId === orgId) {
+          enqueue(c, note);
+          flush(c);
+        }
+      }
+    }
+    b = { count: 0, windowStart: nowMs, dropped: 0, lastNotice: 0 };
+    orgBuckets.set(orgId, b);
+  }
+  b.count++;
+  if (b.count > ORG_BUDGET) {
+    b.dropped++;
+    return { allowed: false, dropped: b.dropped };
+  }
+  return { allowed: true };
+}
+
 const clients = new Set();
 const clientsById = new Map();
 let _shuttingDown = false;
@@ -220,6 +265,12 @@ function enqueue(client, line) {
  */
 export function broadcast(topic, data, orgId) {
   if (_shuttingDown) return;
+  // Per-org budget gate. A tenant publishing past their event quota
+  // gets the event dropped here — preserving the dispatch loop and
+  // every other tenant's responsiveness. The org sees a single
+  // `dropped` notification per window (handled in checkOrgBudget).
+  const budget = checkOrgBudget(orgId);
+  if (!budget.allowed) return;
   const line = `event: ${topic}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const c of clients) {
     if (orgId && c.orgId && c.orgId !== orgId) continue;

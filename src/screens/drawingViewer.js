@@ -28,6 +28,7 @@ import { follow, isFollowing, unfollow } from "../core/subscriptions.js";
 import { vendor } from "../core/vendor.js";
 import { renderCad } from "../core/cad-viewer.js";
 import { detectCad, supportedExtensions } from "../core/cad.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 export function renderDrawingsIndex() {
   const root = document.getElementById("screenContainer");
@@ -62,6 +63,18 @@ export function renderDrawingViewer({ id }) {
   const markups = (state.data.markups || []).filter(m => m.drawingId === id && m.sheetId === activeSheetId);
 
   mount(root, [
+    el("div", { class: "row spread", style: { marginBottom: "8px" } }, [
+      el("div", {}, [
+        el("h2", { style: { display: "inline-flex", alignItems: "center", margin: 0, fontSize: "18px" } }, [
+          dr.name, helpHint("forge.drawing"),
+        ]),
+        el("div", { class: "tiny muted" }, [`${dr.sheets.length} sheets · ${dr.discipline || "Drawing"}`]),
+        el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+          helpLinkChip("forge.drawing.markup", "Markup palette"),
+          helpLinkChip("forge.drawing.compare", "Revision compare"),
+        ]),
+      ]),
+    ]),
     toolbar(dr, activeSheetId, mode, tool, layers, compareWithId, overlayOpacity),
     el("div", { class: "viewer-layout" }, [
       canvasColumn(dr, activeSheetId, mode, tool, markups, layers, compareWithId, overlayOpacity),

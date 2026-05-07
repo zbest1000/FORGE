@@ -29,7 +29,7 @@ async function ensure() {
       // file), fall through to the pinned esm.sh worker so the viewer
       // still works.
       lib.GlobalWorkerOptions.workerSrc = workerUrl
-        || "https://esm.sh/pdfjs-dist@4.6.82/build/pdf.worker.min.mjs";
+        || "https://esm.sh/pdfjs-dist@5.0.0/build/pdf.worker.min.mjs";
     }
     _pdfjs = lib;
     return lib;

@@ -8,7 +8,7 @@ import { forgeMark } from "../core/forgeLogo.js";
 const DEFAULT_ITEMS = [
   { icon: "🏛", label: "Hub",      route: "/hub" },
   { icon: "🏠", label: "Home",     route: "/home" },
-  { icon: "✓",  label: "Work",     route: "/projects" },
+  { icon: "✓",  label: "Work",     route: "/work" },
   { icon: "Docs", label: "Docs",     route: "/docs" },
   { icon: "Draw", label: "Drawings", route: "/drawings" },
   { icon: "⚙️", label: "Assets",   route: "/assets" },
@@ -82,7 +82,7 @@ function matches(path, route) {
   if (route === "/hub")  return p === "/hub";
   if (route === "/docs") return p === "/docs" || p.startsWith("/doc/") || p.startsWith("/compare/");
   if (route === "/drawings") return p === "/drawings" || p.startsWith("/drawing/");
-  if (route === "/projects") return p === "/projects" || p.startsWith("/work-board/") || p === "/approvals";
+  if (route === "/work" || route === "/projects") return p === "/work" || p === "/projects" || p.startsWith("/work-board/") || p === "/approvals";
   if (route === "/assets") return p === "/assets" || p.startsWith("/asset/") || p === "/uns" || p === "/i3x" || p === "/profiles";
   if (route === "/operations") return p === "/operations";
   if (route === "/incidents") return p === "/incidents" || p.startsWith("/incident/");

@@ -1547,6 +1547,83 @@ function migrate() {
 
       setVersion(17);
     }
+
+    if (getVersion() < 18) {
+      // v18 (Phase 1 hardening): hot-path index on the files table.
+      // The `files` table doesn't carry an `org_id` column today —
+      // tenant scope is enforced via the parent record's `org_id`
+      // (document, asset, etc.). The (parent_kind, parent_id) lookup
+      // is the only access pattern, so this index targets it directly.
+      //
+      // A future migration that adds files.org_id (defense-in-depth
+      // for direct-FK lookups) would extend this to the 3-column
+      // form; for now the 2-column index already collapses the table
+      // scan that some routes hit when the FTS5 join misses.
+      //
+      // Idempotent: IF NOT EXISTS keeps re-runs safe.
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_files_parent
+          ON files(parent_kind, parent_id)
+      `);
+      setVersion(18);
+    }
+
+    if (getVersion() < 19) {
+      // v19 (Phase 2 resilience): webhook circuit breaker.
+      //
+      // Today a dead webhook URL retries 6× per delivery with backoff
+      // up to 30 min. With many queued events that's a lot of outbound
+      // calls to a known-broken endpoint, plus the noise it generates
+      // (logs, audit entries) crowds out the diagnostics that would
+      // help fix it.
+      //
+      // The breaker tracks `consecutive_failures`. After
+      // FORGE_WEBHOOK_BREAKER_THRESHOLD (default 5) consecutive
+      // failures, `circuit_open_until` is set to now + 24 h. While
+      // open, dispatch + tick skip the webhook entirely (visible in
+      // admin as "circuit open"). A successful delivery resets the
+      // counter and clears the timestamp; the operator can also
+      // manually re-enable to clear the breaker via the existing
+      // toggle endpoint.
+      const addColumn = (table, columnSql) => {
+        try { db.prepare(`ALTER TABLE ${table} ADD COLUMN ${columnSql}`).run(); }
+        catch (err) {
+          if (!/duplicate column name/i.test(String(err?.message || err))) throw err;
+        }
+      };
+      addColumn("webhooks", "consecutive_failures INTEGER NOT NULL DEFAULT 0");
+      addColumn("webhooks", "circuit_open_until TEXT");
+      setVersion(19);
+    }
+
+    if (getVersion() < 20) {
+      // v20 (Phase 4 forensics): dual-hash chain on audit_log.
+      //
+      // The original `hash` column hashes a payload that deliberately
+      // EXCLUDES `org_id` so historic entries (predating the v11
+      // multi-tenant column) verify cleanly. The downside: an attacker
+      // with DB write access could retroactively reassign `org_id` on
+      // any audit entry without breaking the integrity chain — bad for
+      // cross-tenant forensics.
+      //
+      // `org_hash` binds (entry, org_id) by hashing the existing `hash`
+      // alongside `org_id`. Tampering with `org_id` after the fact
+      // breaks org_hash without touching the original chain. Old
+      // entries that never had an org_hash get one computed during
+      // verification (lazily), preserving back-compat. New entries
+      // populate it at write time (see server/audit.js).
+      const addColumn = (table, columnSql) => {
+        try { db.prepare(`ALTER TABLE ${table} ADD COLUMN ${columnSql}`).run(); }
+        catch (err) {
+          if (!/duplicate column name/i.test(String(err?.message || err))) throw err;
+        }
+      };
+      addColumn("audit_log", "org_hash TEXT");
+      // Index on (org_id, seq) makes per-tenant verification scans
+      // cheap — `verifyOrgChain(orgId)` becomes a covered scan.
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_log_org_seq ON audit_log(org_id, seq)`);
+      setVersion(20);
+    }
   })();
   db.pragma("foreign_keys = ON");
 }

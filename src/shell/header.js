@@ -87,6 +87,18 @@ export function renderHeader() {
   syncDocumentTitle(meta, portal);
 
   mount(root, [
+    // Hamburger toggle — always visible at the left edge of the header so
+    // the user can open/close the navigation rail without hunting through
+    // the View menu. The icon flips between ☰ (open) and ✕ (close) to
+    // reflect the current rail state.
+    el("button", {
+      class: "btn sm icon-btn header-hamburger",
+      title: state.ui.showRail ? "Close navigation" : "Open navigation",
+      "aria-label": state.ui.showRail ? "Close navigation" : "Open navigation",
+      "aria-expanded": String(!!state.ui.showRail),
+      "aria-controls": "farLeftRail",
+      onClick: () => update(s => { s.ui.showRail = !s.ui.showRail; }),
+    }, [state.ui.showRail ? "✕" : "☰"]),
     el("div", { class: "header-title" }, [
       el("div", { class: "breadcrumb" }, [
         state.data?.organization?.name || "", " / ",

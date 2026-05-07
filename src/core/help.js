@@ -261,6 +261,51 @@ makes cross-vendor / cross-site queries work.
   "forge.opcua":        { section: "FORGE concepts", title: "OPC UA bridge", summary: "Industrial OPC UA endpoint integration — bucketed monitored items.", body: "FORGE creates one OPCUAClient per registered endpoint and subscribes via batched `CreateMonitoredItems` calls bucketed by publishing interval (250 ms / 1 s / 5 s / 60 s). Reload uses surgical `addMonitoredItems` / `deleteMonitoredItems` rather than reconnecting." },
   "forge.spec":         { section: "FORGE concepts", title: "FORGE spec",    summary: "The canonical spec for FORGE's industrial-edge surface (UNS, audit, integrations, RBAC).", body: "The full specification lives at `docs/INDUSTRIAL_EDGE_PLATFORM_SPEC.md`. The /spec route renders a read-only view of section IDs and brief descriptions; cite spec section numbers (e.g. §6.2) in audit notes and PR descriptions." },
 
+  // Document control
+  "forge.doc.revisions":  { section: "Document control", title: "Revision lifecycle", summary: "Draft → IFR → Approved → IFC → Superseded — the controlled-document FSM.", body: "Each revision moves through: **Draft** (work in progress), **IFR** (Issued For Review — circulating for comment), **Approved** (signed off but not yet released), **IFC** (Issued For Construction — released to downstream parties), **Superseded** (replaced by a newer revision), **Rejected** / **Archived** (terminal). Transitions write to the audit chain; transmittals record outbound IFC issuance to specific recipients." },
+  "forge.doc.transmittal":{ section: "Document control", title: "Transmittals", summary: "The record of releasing a revision externally — to whom, when, and what attachments.", body: "A transmittal pairs a revision with a recipient list and a date. FORGE generates a draft cover letter from the revision's metadata (discipline, package, area, line) which the operator edits before sending. The transmittal record is immutable once sent." },
+  "forge.doc.regional-comments":{ section: "Document control", title: "Regional comments (pins)", summary: "Discussion threads pinned to (page, x, y) coordinates on a doc revision.", body: "Pins anchor to normalised coordinates so they survive page re-flow. Each pin holds a comment thread; threads roll up onto the revision and surface in approval review. Drop a pin: in Annotate mode click the page; in View mode hold Alt and click." },
+  "forge.doc.metadata":   { section: "Document control", title: "Metadata fields", summary: "Discipline, Package, Area, Line, System, Vendor, Sensitivity — the indexable axes of a document.", body: "Metadata controls who can SEE the document (Sensitivity), how it shows up in search, and how the revision compare/impact analyses cluster results. Area / Line / System / Package / Vendor autocomplete from existing assets and documents in the workspace." },
+
+  // Drawings + CAD
+  "forge.drawing":        { section: "Drawings", title: "Drawing viewer", summary: "PDF / DWG / DXF / IFC / STEP / IGES / STL / OBJ / glTF — unified viewer with markup palette.", body: "Each format routes to the appropriate engine (PDF.js for PDFs, three.js for 3D, mlightcad for in-browser DWG, web-ifc for IFC). Markup palette overlays survive across format kinds and round-trip through the comparison view." },
+  "forge.drawing.compare":{ section: "Drawings", title: "Revision compare", summary: "Side-by-side or overlay comparison of two drawing revisions.", body: "Split panes show the two revisions; the opacity slider blends them. Changed regions are detected automatically and listed in the diff legend with linked issues. Compare is symmetric — choose either revision as the base." },
+  "forge.drawing.markup": { section: "Drawings", title: "Markup palette", summary: "Stamps, text, arrows, dimensions — drawing markups stored as overlays.", body: "Markups are non-destructive — the underlying CAD/PDF is never modified. Each markup carries an author, timestamp, and audit row. Use markups for redlines, queries, and approvals." },
+
+  // Spaces + channels + messaging
+  "forge.spaces":         { section: "Collaboration", title: "Team spaces", summary: "A workspace primitive containing channels, projects, members, and shared docs.", body: "Team spaces are the unit of access scoping below the workspace level. Each space has its own channels, projects, document subset, and member list. ACLs cascade from the space to its children unless overridden." },
+  "forge.channels":       { section: "Collaboration", title: "Channels", summary: "Structured threads — discussion / review / decision / handover / alarm.", body: "Channels carry typed messages. Each post has a `type` (discussion, review, decision, handover, alarm). Decisions are highlighted as DECISION badges and roll up in the channel summary. Live channels can be locked to read-only when an incident is bound to them." },
+  "forge.channels.mentions": { section: "Collaboration", title: "@-mentions", summary: "Resolve users by initials, name, or @handle; mentions notify the recipient.", body: "Type `@` to start a mention. The mention resolver matches against initials, full name, or handle (case-insensitive). Mentioned users get a notification in their inbox with a back-link to the message." },
+  "forge.channels.decisions":{ section: "Collaboration", title: "Decision markers", summary: "Posts of type=decision are pinned to the channel and roll up in audit/AI summaries.", body: "Decisions create an immutable record of WHO decided WHAT and WHEN. The decision type promotes the post in summaries and exports; it does not change visibility." },
+
+  // Approvals
+  "forge.approvals":      { section: "Approvals", title: "Approval queue", summary: "Per-user queue of items awaiting your signature; SLA, delegation, expiry.", body: "Approvals are typed by subject (Revision / WorkItem / Project). Each row shows SLA (time remaining), severity, and delegation. Approve / Reject prompts capture signature notes; Delegate transfers the item to another approver with audited reason." },
+  "forge.approvals.sla":  { section: "Approvals", title: "SLA timers", summary: "Each approval carries a deadline; missed SLAs escalate to incidents.", body: "SLA timers start when the approval enters the queue. The colour shifts from info → warn → danger as the deadline approaches. After expiry, the approval is auto-escalated to an incident with severity matching the subject's risk." },
+
+  // AI + search
+  "forge.ai":             { section: "AI", title: "AI workspace",  summary: "Permission-filtered, citation-backed answers grounded in workspace data.", body: "The AI workspace runs a model router (configurable per workspace) over your indexed corpus. Every answer carries citations back to the source docs / messages / assets. Answers respect the asker's permissions — anything they can't see in the UI is invisible to the model." },
+  "forge.ai.citations":   { section: "AI", title: "Citations", summary: "Every AI answer cites source docs / messages / assets — clickable back-links.", body: "Citations appear as `[REV-1-B]`, `[INC-4412]`, etc. Click any citation to jump to the cited object. The citation set is the model's grounding window — if a fact isn't backed by a citation, treat the AI's claim with extra scrutiny." },
+  "forge.search":         { section: "Search", title: "Workspace search", summary: "Cross-domain search — docs / drawings / assets / work-items / incidents / channels.", body: "The command palette (⌘K) and the /search route share the same index. Results are permission-filtered. Quotes match phrases; `kind:Document` narrows by domain." },
+  "forge.inbox":          { section: "Inbox", title: "Inbox & notifications", summary: "Mentions, approvals, incidents, and follow notifications converge here.", body: "Each notification carries a `kind` (mention / approval / incident / follow / system) and a back-link. Marking all read clears the badge but does not remove notifications from the audit ledger." },
+
+  // ISA-95 hierarchy + asset model
+  "forge.isa95":          { section: "Industrial hierarchy", title: "ISA-95 hierarchy",  summary: "Enterprise → Site → Area → ProductionLine → Cell → Equipment.", body: "ISA-95 (IEC 62264) is the standard hierarchy for industrial assets. FORGE's UNS uses these levels for navigation and for the canonical UNS path (`acme/site42/lineA/cell3/HX-01/temperature`). Custom levels are allowed alongside the standard hierarchy." },
+  "forge.uns":            { section: "Industrial hierarchy", title: "Unified Namespace", summary: "Canonical addressing layer over MQTT / OPC UA / SQL — single hierarchy across vendors.", body: "UNS publishes a hierarchical, ISA-95-aligned graph of every asset and variable in the workspace. Every connector (MQTT broker / OPC UA endpoint / SQL historian) maps its source path to a UNS path. The UNS browser at /uns walks this graph; the i3X API queries it programmatically." },
+  "forge.uns.path":       { section: "Industrial hierarchy", title: "UNS path conventions", summary: "Slash-separated, lowercase, ISA-95-aligned — `enterprise/site/area/line/equipment/variable`.", body: "Conventions: lowercase ASCII, slash separators, no spaces, no special chars. Variables/alarms hang off equipment as the leaf level. Profiles use template tokens like `{enterprise}/{site}/{asset}/{point}` that resolve against the asset's hierarchy on bind." },
+
+  // Incidents
+  "forge.incidents.severity":{ section: "Incidents", title: "Severity levels", summary: "SEV-1 (critical) → SEV-5 (informational) — drives SLA, paging, and command structure.", body: "Severity sets the SLA timer, the on-call paging policy, and the size of the command roster. SEV-1 incidents are auto-paged to the workspace's pager rotation; SEV-3 and below are routed to channels only." },
+  "forge.incidents.postmortem":{ section: "Incidents", title: "Postmortem", summary: "Post-resolution analysis — timeline, contributing factors, action items.", body: "Resolved incidents enter the postmortem state. The system pulls the timeline + linked work items into a structured doc; the IC fills in contributing factors and remediation. Postmortems are searchable as documents." },
+
+  // Profiles
+  "forge.profile.versions":{ section: "Profiles", title: "Profile versions", summary: "Profiles are immutable — every edit creates a new version; bindings pin to a version.", body: "Editing a profile (its template, points, or kind) creates a new immutable version. Existing asset bindings stay pinned to the version they were created against; upgrade is explicit per-asset or fleet-wide. This avoids silent drift across hundreds of bound assets." },
+  "forge.profile.binding":{ section: "Profiles", title: "Asset point bindings", summary: "The per-asset link from a profile point to a real source path on a real connector.", body: "When you apply a profile to an asset + a registered system, FORGE resolves the path template against the asset's hierarchy variables and creates one binding per point. Each binding stores the resolved path, the system id, and the pinned profile-version id. Custom mappings have null profile_version_id." },
+
+  // ERP
+  "forge.erp.mapping":   { section: "ERP", title: "Mapping matrix", summary: "Bidirectional ERP↔FORGE entity map — PurchaseOrder ↔ WorkItem(RFI), CostCenter ↔ TeamSpace, etc.", body: "Each ERP entity type maps to a FORGE entity type with a transform script. Status badges show the sync health: in-sync (no drift), drift (some fields differ but not flagged), conflict (active conflict needing resolution). Conflicts queue up in the conflict queue with side-by-side diff." },
+  "forge.erp.drift":     { section: "ERP", title: "Drift vs conflict", summary: "Drift = differences detected; conflict = differences flagged for resolution.", body: "Drift is informational — fields differ but the system can keep syncing in a chosen direction. Conflicts arrive when the drift exceeds a configured tolerance, when both sides updated the same field since last sync, or when the transform fails on a row. Conflicts block the sync until resolved." },
+  "forge.erp.backfill":  { section: "ERP", title: "Backfill", summary: "Dry-run + commit a bulk migration of historical ERP data into FORGE.", body: "Backfill walks an ERP entity type and creates / updates the matching FORGE objects. Dry-run shows what would change without writing; commit writes everything in a single audited batch. Use for initial integration or after a transform-rule change." },
+
 };
 
 let _helpSeq = 0;
@@ -334,11 +379,102 @@ export function openHelpTopic(topicId) {
 }
 
 /** @returns {Array<{ section: string, topics: Array<{id: string} & HelpTopic> }>} Grouped + sorted topic list for the help-site renderer. */
+// Live-overrides store (Phase 4). Bundled HELP_TOPICS stays the
+// always-available default — drift between product and docs was the
+// audit's concern. Operators can layer overrides on top via:
+//
+//   applyHelpOverrides({ "forge.workitem": { body: "<new>", ... } })
+//
+// or an HTTP fetch:
+//
+//   await loadHelpOverrides("/api/help/topics");
+//
+// Overrides ride at runtime; the bundled topics remain the safety net
+// (e.g. when the fetch fails, when the operator hasn't authored their
+// own content, or when the override JSON is malformed).
+//
+// Override payload shape: a plain object mapping topicId → partial
+// HelpTopic. Fields present on the override replace the bundled
+// values; missing fields fall through to the default. Unknown topic
+// ids are also accepted — they appear as new entries in the index.
+/** @type {Record<string, Partial<HelpTopic>>} */
+const _overrides = Object.create(null);
+
+/**
+ * Merge in an overrides bundle. Idempotent — calling repeatedly with
+ * the same payload converges to the same effective topic set.
+ */
+export function applyHelpOverrides(overrides) {
+  if (!overrides || typeof overrides !== "object") return;
+  for (const [id, patch] of Object.entries(overrides)) {
+    if (!patch || typeof patch !== "object") continue;
+    _overrides[id] = { ..._overrides[id], ...patch };
+  }
+}
+
+/** Drop all overrides and revert to the bundled set. */
+export function clearHelpOverrides() {
+  for (const k of Object.keys(_overrides)) delete _overrides[k];
+}
+
+/**
+ * Fetch a JSON overrides bundle from `url` and apply it. Failures are
+ * silent (the bundled topics remain in effect) — callers that want to
+ * surface failures can check the returned promise.
+ *
+ * Expected response shape:
+ *   { topicId: { title?, summary?, body?, section?, example?, seeAlso? }, ... }
+ */
+export async function loadHelpOverrides(url) {
+  try {
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    applyHelpOverrides(json);
+    return { ok: true, count: Object.keys(json).length };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+}
+
+/**
+ * Look up the effective topic — overrides win over bundled, with
+ * field-level merging so an override that sets only `body` keeps the
+ * bundled `title` / `summary` / `section` etc.
+ */
+function resolveTopic(id) {
+  const base = HELP_TOPICS[id] || null;
+  const over = _overrides[id];
+  if (!base && !over) return null;
+  if (!over) return base;
+  return { ...(base || {}), ...over };
+}
+
 export function listTopicsBySection() {
   /** @type {Record<string, Array<{id: string} & HelpTopic>>} */
   const groups = {};
-  for (const [id, topic] of Object.entries(HELP_TOPICS)) {
-    (groups[topic.section] = groups[topic.section] || []).push({ id, ...topic });
+  // Union of bundled + overridden topic ids. Lets a remote bundle
+  // introduce a brand-new topic without re-shipping the client.
+  const ids = new Set([...Object.keys(HELP_TOPICS), ...Object.keys(_overrides)]);
+  for (const id of ids) {
+    const topic = resolveTopic(id);
+    // Skip topics that don't have the minimum render fields. A
+    // valid topic needs at least a section + title; without those
+    // it can't appear in the index. This catches malformed override
+    // payloads (e.g. an override that only sets `body` for an id
+    // that has no bundled counterpart).
+    if (!topic || !topic.section || !topic.title || !topic.summary || !topic.body) continue;
+    /** @type {{id: string} & HelpTopic} */
+    const entry = {
+      id,
+      title: topic.title,
+      section: topic.section,
+      summary: topic.summary,
+      body: topic.body,
+      example: topic.example,
+      seeAlso: topic.seeAlso,
+    };
+    (groups[topic.section] = groups[topic.section] || []).push(entry);
   }
   for (const k of Object.keys(groups)) {
     groups[k].sort((a, b) => a.title.localeCompare(b.title));
@@ -351,5 +487,5 @@ export function listTopicsBySection() {
 }
 
 export function getTopic(id) {
-  return HELP_TOPICS[id] || null;
+  return resolveTopic(id);
 }

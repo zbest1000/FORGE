@@ -18,6 +18,7 @@ import { can } from "../core/permissions.js";
 import { signHMAC, canonicalJSON } from "../core/crypto.js";
 import { transition } from "../core/revisions.js";
 import { cascadeOnApprove } from "../core/fsm/revision.js";
+import { helpHint, helpLinkChip } from "../core/help.js";
 
 export function renderApprovals() {
   const root = document.getElementById("screenContainer");
@@ -34,9 +35,16 @@ export function renderApprovals() {
   mount(root, [
     el("div", { class: "row spread", style: { marginBottom: "12px" } }, [
       el("div", {}, [
-        el("div", { class: "strong" }, ["Approval queue"]),
+        el("h2", { style: { display: "inline-flex", alignItems: "center", margin: 0, fontSize: "18px" } }, [
+          "Approval queue", helpHint("forge.approvals"),
+        ]),
         el("div", { class: "tiny muted" }, [
           `${approvals.filter(a => a.status === "pending").length} pending · ${approvals.filter(a => a.status === "expired").length} expired · ${approvals.length} total`,
+        ]),
+        el("div", { class: "row wrap", style: { gap: "6px", marginTop: "6px" } }, [
+          helpLinkChip("forge.approvals", "Approval queue"),
+          helpLinkChip("forge.approvals.sla", "SLA timers"),
+          helpLinkChip("forge.doc.revisions", "Revision lifecycle"),
         ]),
       ]),
       el("div", { class: "row" }, [

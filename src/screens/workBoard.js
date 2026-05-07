@@ -49,16 +49,26 @@ export function renderWorkBoard({ id }) {
   const viewPreset = sessionStorage.getItem(`board.saved.${id}`) || "all";
   const visibleItems = applySavedView(items, viewPreset);
 
+  // Single-project scope: storage keys namespace under the project id,
+  // and re-renders re-mount the project board. The shared view code in
+  // this file accepts the same scope shape from /work (allWork.js) with
+  // `id: "all"` and a different `rerender`.
+  const scope = {
+    id,
+    rerender: () => renderWorkBoard({ id }),
+    showProjectColumn: false,
+  };
+
   mount(root, [
     header(project, view, filter, visibleItems.length, batch, viewKey, filterKey, batchKey, id, viewPreset),
     projectContext(project, items),
-    batchBar(batch, batchKey, id),
-    view === "kanban"   ? kanbanView(visibleItems, batch, batchKey) :
-    view === "table"    ? tableView(visibleItems, batch, batchKey) :
-    view === "timeline" ? timelineView(visibleItems) :
-    view === "calendar" ? calendarView(visibleItems, id) :
-    view === "deps"     ? dependencyView(visibleItems) :
-    kanbanView(visibleItems, batch, batchKey),
+    batchBar(batch, batchKey, scope),
+    view === "kanban"   ? kanbanView(visibleItems, scope, batch, batchKey) :
+    view === "table"    ? tableView(visibleItems, scope, batch, batchKey) :
+    view === "timeline" ? timelineView(visibleItems, scope) :
+    view === "calendar" ? calendarView(visibleItems, scope) :
+    view === "deps"     ? dependencyView(visibleItems, scope) :
+    kanbanView(visibleItems, scope, batch, batchKey),
   ]);
 }
 
@@ -307,56 +317,62 @@ function filteredItems(projectId, filter) {
 }
 
 // ---------- batch bar ----------
-function batchBar(batch, batchKey, projectId) {
+//
+// All batch helpers now take a `scope = { id, rerender }` instead of a
+// raw projectId. `scope.id` is used for the sessionStorage key namespace
+// (e.g. `board.batch.<id>`); `scope.rerender()` is called after the
+// mutation so both the per-project board and the consolidated /work view
+// can reuse this code by passing their own re-render callback.
+export function batchBar(batch, batchKey, scope) {
   if (!batch.length) return el("div", {});
   return card(`Batch (${batch.length} selected)`, el("div", { class: "row wrap" }, [
     ...COLUMNS.map(c => el("button", {
       class: "btn sm",
       disabled: !can("edit"),
-      onClick: () => batchMove(batch, c, batchKey, projectId),
+      onClick: () => batchMove(batch, c, batchKey, scope),
     }, [`→ ${c}`])),
-    el("button", { class: "btn sm", disabled: !can("edit"), onClick: () => batchSeverity(batch, batchKey, projectId) }, ["Set severity"]),
-    el("button", { class: "btn sm", disabled: !can("edit"), onClick: () => batchAssignee(batch, batchKey, projectId) }, ["Assign"]),
-    el("button", { class: "btn sm", disabled: !can("edit"), onClick: () => batchAddLabel(batch, batchKey, projectId) }, ["+ Label"]),
-    el("button", { class: "btn sm ghost", onClick: () => { sessionStorage.setItem(batchKey, "[]"); renderWorkBoard({ id: projectId }); } }, ["Clear"]),
+    el("button", { class: "btn sm", disabled: !can("edit"), onClick: () => batchSeverity(batch, batchKey, scope) }, ["Set severity"]),
+    el("button", { class: "btn sm", disabled: !can("edit"), onClick: () => batchAssignee(batch, batchKey, scope) }, ["Assign"]),
+    el("button", { class: "btn sm", disabled: !can("edit"), onClick: () => batchAddLabel(batch, batchKey, scope) }, ["+ Label"]),
+    el("button", { class: "btn sm ghost", onClick: () => { sessionStorage.setItem(batchKey, "[]"); scope.rerender(); } }, ["Clear"]),
   ]));
 }
 
-function batchMove(ids, to, batchKey, projectId) {
+function batchMove(ids, to, batchKey, scope) {
   update(s => { for (const id of ids) { const w = s.data.workItems.find(x => x.id === id); if (w) { const from = w.status; w.status = to; audit("workitem.transition", id, { from, to, batch: true }); } } });
   sessionStorage.setItem(batchKey, "[]");
   toast(`${ids.length} items → ${to}`, "success");
-  renderWorkBoard({ id: projectId });
+  scope.rerender();
 }
-function batchSeverity(ids, batchKey, projectId) {
+function batchSeverity(ids, batchKey, scope) {
   const pick = select(["low","medium","high","critical"], { value: "high" });
   modal({ title: "Set severity", body: formRow("Severity", pick), actions: [
     { label: "Cancel" },
     { label: "Apply", variant: "primary", onClick: () => {
       update(s => { for (const id of ids) { const w = s.data.workItems.find(x => x.id === id); if (w) { w.severity = pick.value; audit("workitem.update", id, { severity: pick.value }); } } });
       sessionStorage.setItem(batchKey, "[]");
-      toast("Severity updated", "success"); renderWorkBoard({ id: projectId });
+      toast("Severity updated", "success"); scope.rerender();
     }},
   ] });
 }
-function batchAssignee(ids, batchKey, projectId) {
+function batchAssignee(ids, batchKey, scope) {
   const pick = select(state.data.users.map(u => ({ value: u.id, label: u.name })));
   modal({ title: "Assign", body: formRow("Assignee", pick), actions: [
     { label: "Cancel" },
     { label: "Apply", variant: "primary", onClick: () => {
       update(s => { for (const id of ids) { const w = s.data.workItems.find(x => x.id === id); if (w) { w.assigneeId = pick.value; audit("workitem.assign", id, { to: pick.value }); } } });
-      sessionStorage.setItem(batchKey, "[]"); renderWorkBoard({ id: projectId });
+      sessionStorage.setItem(batchKey, "[]"); scope.rerender();
     }},
   ] });
 }
-async function batchAddLabel(ids, batchKey, projectId) {
+async function batchAddLabel(ids, batchKey, scope) {
   const label = await prompt({ title: "Add label", message: "Label name:" });
   if (!label) return;
   update(s => { for (const id of ids) { const w = s.data.workItems.find(x => x.id === id); if (w) { w.labels = w.labels || []; if (!w.labels.includes(label)) w.labels.push(label); audit("workitem.label", id, { add: label }); } } });
-  sessionStorage.setItem(batchKey, "[]"); renderWorkBoard({ id: projectId });
+  sessionStorage.setItem(batchKey, "[]"); scope.rerender();
 }
 
-function toggleBatch(itemId, batchKey) {
+export function toggleBatch(itemId, batchKey) {
   const arr = JSON.parse(sessionStorage.getItem(batchKey) || "[]");
   const s = new Set(arr);
   if (s.has(itemId)) s.delete(itemId); else s.add(itemId);
@@ -364,7 +380,12 @@ function toggleBatch(itemId, batchKey) {
 }
 
 // ---------- kanban ----------
-function kanbanView(items, batch, batchKey) {
+//
+// Drag-drop status change is the same regardless of scope. Card click
+// (or shift-click for multi-select) calls `scope.rerender()` so the
+// caller decides how to redraw — used by both the per-project board
+// and /work to reuse this view.
+export function kanbanView(items, scope, batch, batchKey) {
   return el("div", { class: "kanban" }, COLUMNS.map(col => {
     const colItems = items.filter(i => i.status === col);
     const node = el("div", {
@@ -377,31 +398,40 @@ function kanbanView(items, batch, batchKey) {
         node.classList.remove("drop-active");
         const itemId = e.dataTransfer.getData("text/plain");
         changeStatus(itemId, col);
+        scope.rerender();
       },
     }, [
       el("div", { class: "kanban-col-header" }, [col, el("span", { class: "tiny muted" }, [String(colItems.length)])]),
-      ...colItems.map(w => kanbanCard(w, batch, batchKey)),
+      ...colItems.map(w => kanbanCard(w, scope, batch, batchKey)),
     ]);
     return node;
   }));
 }
 
-function kanbanCard(w, batch, batchKey) {
+function kanbanCard(w, scope, batch, batchKey) {
   const sevVariant = w.severity === "high" || w.severity === "critical" ? "danger" : w.severity === "medium" ? "warn" : "info";
   const isSelected = batch.includes(w.id);
-  return el("div", {
+  // In all-work scope show the project name as a chip so cards aren't
+  // ambiguous when many projects are mixed together.
+  const projectName = scope.showProjectColumn
+    ? (state.data?.projects || []).find(p => p.id === w.projectId)?.name || w.projectId
+    : null;
+  const card = el("div", {
     class: `kanban-card ${isSelected ? "selected" : ""}`,
     style: isSelected ? { boxShadow: "0 0 0 2px var(--accent) inset" } : {},
     draggable: "true",
+    "data-item-id": w.id,
+    // HTML5 drag/drop — works great on mouse, doesn't fire on touch.
     onDragstart: (e) => { e.dataTransfer.setData("text/plain", w.id); e.currentTarget.classList.add("dragging"); },
     onDragend: (e) => e.currentTarget.classList.remove("dragging"),
-    onClick: (e) => { if (e.shiftKey) { toggleBatch(w.id, batchKey); renderWorkBoard({ id: w.projectId }); } else openItem(w.id); },
+    onClick: (e) => { if (e.shiftKey) { toggleBatch(w.id, batchKey); scope.rerender(); } else openItem(w.id); },
   }, [
     el("div", { class: "row spread" }, [
       el("span", { class: "card-id" }, [w.id]),
       badge(w.type, "info"),
     ]),
     el("div", { class: "card-title" }, [w.title]),
+    projectName ? el("div", { class: "tiny muted", style: { marginTop: "2px" } }, ["📁 ", projectName]) : null,
     el("div", { class: "card-meta row wrap" }, [
       badge(w.severity, sevVariant),
       w.due ? el("span", { class: "tiny muted" }, ["due " + new Date(w.due).toLocaleDateString()]) : null,
@@ -409,6 +439,79 @@ function kanbanCard(w, batch, batchKey) {
       (w.labels || []).slice(0, 2).map(l => badge(l, "")),
     ]),
   ]);
+
+  // Touch / pen drag path: HTML5 drag/drop is mouse-only on every major
+  // mobile browser, so on touch we run our own pointerdown/move/up FSM
+  // and use elementsFromPoint() to hit-test drop columns. Mouse interactions
+  // get pointerType === "mouse" and we no-op here so the native HTML5 path
+  // owns them (avoids double-handling).
+  attachTouchDrag(card, w, scope);
+  return card;
+}
+
+// Touch-friendly drag-drop helper. Activates only when the pointer is a
+// touch or pen (mouse uses HTML5 drag/drop above). Tracks initial press,
+// shows a "dragging" class on the card after a small movement threshold,
+// and on release hit-tests against `.kanban-col` elements at the release
+// coordinate to find the destination status.
+function attachTouchDrag(card, item, scope) {
+  let dragging = false;
+  let startX = 0, startY = 0;
+  let activePointerId = null;
+  const THRESHOLD_PX = 6; // small to feel responsive but ignore taps
+  const HOVER_ATTR = "data-touch-hover";
+
+  card.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse") return; // mouse uses HTML5 drag/drop
+    activePointerId = e.pointerId;
+    startX = e.clientX; startY = e.clientY;
+    dragging = false;
+    // Don't preventDefault yet — let a tap propagate to onClick if no drag.
+  });
+
+  card.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== activePointerId) return;
+    const dx = Math.abs(e.clientX - startX);
+    const dy = Math.abs(e.clientY - startY);
+    if (!dragging && (dx > THRESHOLD_PX || dy > THRESHOLD_PX)) {
+      dragging = true;
+      card.classList.add("dragging");
+      try { card.setPointerCapture(e.pointerId); } catch {}
+    }
+    if (!dragging) return;
+    e.preventDefault();
+    // Highlight the column currently under the pointer.
+    const cols = document.querySelectorAll(".kanban-col");
+    cols.forEach(c => c.removeAttribute(HOVER_ATTR));
+    const els = document.elementsFromPoint(e.clientX, e.clientY);
+    const target = els.find(n => n.classList && n.classList.contains("kanban-col"));
+    if (target) target.setAttribute(HOVER_ATTR, "true");
+  });
+
+  const finish = (e, commit) => {
+    if (e.pointerId !== activePointerId) return;
+    activePointerId = null;
+    if (!dragging) return;
+    card.classList.remove("dragging");
+    document.querySelectorAll(".kanban-col").forEach(c => c.removeAttribute(HOVER_ATTR));
+    if (commit) {
+      // `elementsFromPoint` is typed as `Element[]`; `.dataset` lives on
+      // HTMLElement, so we narrow before reading. The runtime check
+      // (.classList && .contains) already implies an element subclass.
+      const els = document.elementsFromPoint(e.clientX, e.clientY);
+      const target = /** @type {HTMLElement | undefined} */ (
+        els.find(n => n instanceof HTMLElement && n.classList.contains("kanban-col"))
+      );
+      const newStatus = target?.dataset?.status;
+      if (newStatus && newStatus !== item.status) {
+        changeStatus(item.id, newStatus);
+        scope.rerender();
+      }
+    }
+    dragging = false;
+  };
+  card.addEventListener("pointerup",     (e) => finish(e, true));
+  card.addEventListener("pointercancel", (e) => finish(e, false));
 }
 
 // ---------- table ----------
@@ -478,19 +581,25 @@ function customFieldsFor(projectId) {
   return state.data?.customWorkItemFields?.[projectId] || [];
 }
 
-function tableView(items, batch, batchKey) {
-  const projectId = items[0]?.projectId || "";
-  const persisted = loadTableState(projectId) || {};
+export function tableView(items, scope, batch, batchKey) {
+  // sessionStorage namespace + custom-field key. For all-work scope
+  // (`scope.id === "all"`) custom fields aren't applicable (they're
+  // tied to a specific project) so they collapse to an empty list.
+  const persisted = loadTableState(scope.id) || {};
   const sort = persisted.sort || { col: null, dir: 1 };
   const filters = persisted.filters || {};
-  const visible = persisted.visible || DEFAULT_VISIBLE;
-  const customFields = customFieldsFor(projectId);
+  // Default-visible columns: in all-work scope we add a "project" column
+  // up front so users know which project each row belongs to.
+  const baseDefaults = scope.showProjectColumn ? ["id", "project", ...DEFAULT_VISIBLE.filter(c => c !== "id")] : DEFAULT_VISIBLE;
+  const visible = persisted.visible || baseDefaults;
+  const customFields = scope.id === "all" ? [] : customFieldsFor(scope.id);
 
   // Build the column list — built-in columns the user has chosen + any
   // custom fields they've defined for this project. Custom fields render
   // via a generic accessor.
   const allCols = [
     ...COLUMN_DEFS,
+    ...(scope.showProjectColumn ? [PROJECT_COLUMN_DEF] : []),
     ...customFields.map(f => ({
       id: `cf:${f.id}`,
       header: f.name,
@@ -522,21 +631,25 @@ function tableView(items, batch, batchKey) {
   const setSort = (colId) => {
     const cur = sort.col === colId ? sort.dir : 0;
     const next = cur === 0 ? { col: colId, dir: 1 } : cur === 1 ? { col: colId, dir: -1 } : { col: null, dir: 1 };
-    saveTableState(projectId, { ...persisted, sort: next });
-    renderWorkBoard({ id: projectId });
+    saveTableState(scope.id, { ...persisted, sort: next });
+    scope.rerender();
   };
   const setFilter = (colId, val) => {
     const next = { ...filters, [colId]: val };
     if (!val) delete next[colId];
-    saveTableState(projectId, { ...persisted, filters: next });
-    renderWorkBoard({ id: projectId });
+    saveTableState(scope.id, { ...persisted, filters: next });
+    scope.rerender();
   };
   const toggleColumn = (colId) => {
     const next = visible.includes(colId) ? visible.filter(c => c !== colId) : [...visible, colId];
-    saveTableState(projectId, { ...persisted, visible: next });
-    renderWorkBoard({ id: projectId });
+    saveTableState(scope.id, { ...persisted, visible: next });
+    scope.rerender();
   };
   const addCustomField = () => {
+    if (scope.id === "all") {
+      toast("Custom fields are project-scoped. Open a specific project to add them.", "warn");
+      return;
+    }
     const name = window.prompt("Field name (e.g. \"Customer ref\")");
     if (!name || !name.trim()) return;
     const type = window.prompt("Type (text / number / date / select)", "text") || "text";
@@ -544,7 +657,7 @@ function tableView(items, batch, batchKey) {
     const field = { id, name: name.trim(), type: type.trim() };
     update(s => {
       s.data.customWorkItemFields = s.data.customWorkItemFields || {};
-      s.data.customWorkItemFields[projectId] = [...(s.data.customWorkItemFields[projectId] || []), field];
+      s.data.customWorkItemFields[scope.id] = [...(s.data.customWorkItemFields[scope.id] || []), field];
     });
     toggleColumn(`cf:${id}`);
   };
@@ -588,10 +701,10 @@ function tableView(items, batch, batchKey) {
       el("thead", {}, [headerRow, filterRow]),
       el("tbody", {}, rows.map(w => el("tr", {
         style: { cursor: "pointer", background: batch.includes(w.id) ? "var(--elevated)" : "" },
-        onClick: (e) => { if (e.shiftKey) { toggleBatch(w.id, batchKey); renderWorkBoard({ id: w.projectId }); } else openItem(w.id); },
+        onClick: (e) => { if (e.shiftKey) { toggleBatch(w.id, batchKey); scope.rerender(); } else openItem(w.id); },
       }, [
         el("td", { onClick: e => e.stopPropagation() }, [
-          el("input", { type: "checkbox", checked: batch.includes(w.id), onChange: () => { toggleBatch(w.id, batchKey); renderWorkBoard({ id: w.projectId }); } }),
+          el("input", { type: "checkbox", checked: batch.includes(w.id), onChange: () => { toggleBatch(w.id, batchKey); scope.rerender(); } }),
         ]),
         ...cols.map(c => el("td", {}, [c.render(w)])),
         el("td", {}, [""]),
@@ -601,6 +714,21 @@ function tableView(items, batch, batchKey) {
       items.length ? "No rows match the current filters." : "No items yet.",
     ]) : null,
   ].filter(Boolean)));
+}
+
+// Pseudo-column for the all-work scope: shows the project name. Hidden
+// when scope is a single project (it would be redundant).
+const PROJECT_COLUMN_DEF = {
+  id: "project",
+  header: "Project",
+  sort: (a, b) => String(projectNameForId(a.projectId)).localeCompare(String(projectNameForId(b.projectId))),
+  filter: (w, q) => projectNameForId(w.projectId).toLowerCase().includes(q),
+  render: (w) => el("span", { class: "tiny" }, [projectNameForId(w.projectId)]),
+};
+function projectNameForId(id) {
+  if (!id) return "—";
+  const p = (state.data?.projects || []).find(x => x.id === id);
+  return p?.name || id;
 }
 
 function columnMenu(allCols, visible, toggleColumn, addCustomField) {
@@ -647,7 +775,7 @@ function columnMenu(allCols, visible, toggleColumn, addCustomField) {
 }
 
 // ---------- timeline (Gantt-ish) ----------
-function timelineView(items) {
+export function timelineView(items, _scope) {
   const haveDates = items.filter(w => w.due);
   if (!haveDates.length) return card("Timeline", el("div", { class: "muted tiny" }, ["No due dates to plot."]));
   const starts = haveDates.map(w => w.created_at ? Date.parse(w.created_at) : Date.now());
@@ -709,17 +837,45 @@ function timelineView(items) {
 }
 
 // ---------- calendar (month grid by due date) ----------
-function calendarView(items, projectId) {
-  const monthKey = `board.cal.${projectId}`;
+//
+// Two interaction surfaces:
+//
+//   1. Month + year navigation. Prev/next chevrons step by month;
+//      dropdowns let users jump straight to any month and any year in
+//      a ±10-year window around today (extended to cover the actual
+//      data range if items extend beyond the default).
+//   2. Customisable rendering of "done" items via a small `Done style`
+//      picker stored per scope. Options: green pill, strikethrough,
+//      dimmed, or hidden. Default is "green" so finished work stays
+//      visible (matches what the user asked for) without overpowering
+//      the open work.
+const DONE_STYLE_KEY = (scopeId) => `board.cal.doneStyle.${scopeId}`;
+const DONE_STYLES = [
+  { id: "green",  label: "Green pill" },
+  { id: "strike", label: "Strike out" },
+  { id: "dim",    label: "Dimmed" },
+  { id: "hidden", label: "Hidden" },
+];
+const DONE_STATUSES = new Set(["Done", "Closed", "Approved"]);
+
+export function calendarView(items, scope) {
+  const monthKey = `board.cal.${scope.id}`;
   const cur = sessionStorage.getItem(monthKey);
   const today = new Date();
   const anchor = cur ? new Date(cur + "-01T00:00:00") : new Date(today.getFullYear(), today.getMonth(), 1);
   const year = anchor.getFullYear();
   const month = anchor.getMonth();
+  const doneStyle = sessionStorage.getItem(DONE_STYLE_KEY(scope.id)) || "green";
+
+  // Hidden mode: drop done items before the day-grouping pass so the
+  // counters and "+N more" overflow stay accurate.
+  const visibleItems = doneStyle === "hidden"
+    ? items.filter(w => !DONE_STATUSES.has(w.status))
+    : items;
 
   // Group items by ISO date.
   const byDay = new Map();
-  for (const w of items) {
+  for (const w of visibleItems) {
     if (!w.due) continue;
     const d = new Date(w.due);
     if (d.getFullYear() !== year || d.getMonth() !== month) continue;
@@ -728,13 +884,55 @@ function calendarView(items, projectId) {
     byDay.get(k).push(w);
   }
 
-  const monthLabel = anchor.toLocaleString(undefined, { month: "long", year: "numeric" });
-
-  const setMonth = (delta) => {
-    const next = new Date(year, month + delta, 1);
-    sessionStorage.setItem(monthKey, `${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,"0")}`);
-    renderWorkBoard({ id: projectId });
+  // Year picker range: ±10 around the current view, but stretched to
+  // cover any item with a due date outside that window. Means a user
+  // who lands on May 2026 with a 2018 task can still navigate there.
+  const yearRange = computeYearRange(items, year);
+  const setNav = (nextYear, nextMonth) => {
+    sessionStorage.setItem(monthKey, `${nextYear}-${String(nextMonth + 1).padStart(2, "0")}`);
+    scope.rerender();
   };
+  const stepMonth = (delta) => {
+    const next = new Date(year, month + delta, 1);
+    setNav(next.getFullYear(), next.getMonth());
+  };
+  const stepYear = (delta) => setNav(year + delta, month);
+  const goToday = () => setNav(today.getFullYear(), today.getMonth());
+
+  const monthSel = el("select", { class: "select sm", "aria-label": "Jump to month" });
+  ["January","February","March","April","May","June","July","August","September","October","November","December"]
+    .forEach((name, i) => {
+      const opt = document.createElement("option");
+      opt.value = String(i); opt.textContent = name;
+      if (i === month) opt.selected = true;
+      monthSel.append(opt);
+    });
+  monthSel.addEventListener("change", () => setNav(year, parseInt(/** @type {HTMLSelectElement} */ (monthSel).value, 10)));
+
+  const yearSel = el("select", { class: "select sm", "aria-label": "Jump to year" });
+  for (const y of yearRange) {
+    const opt = document.createElement("option");
+    opt.value = String(y); opt.textContent = String(y);
+    if (y === year) opt.selected = true;
+    yearSel.append(opt);
+  }
+  yearSel.addEventListener("change", () => setNav(parseInt(/** @type {HTMLSelectElement} */ (yearSel).value, 10), month));
+
+  const doneStyleSel = el("select", {
+    class: "select sm",
+    "aria-label": "How to render done items",
+    title: "Render style for items with status Done / Closed / Approved",
+  });
+  for (const opt of DONE_STYLES) {
+    const o = document.createElement("option");
+    o.value = opt.id; o.textContent = opt.label;
+    if (opt.id === doneStyle) o.selected = true;
+    doneStyleSel.append(o);
+  }
+  doneStyleSel.addEventListener("change", () => {
+    sessionStorage.setItem(DONE_STYLE_KEY(scope.id), /** @type {HTMLSelectElement} */ (doneStyleSel).value);
+    scope.rerender();
+  });
 
   // First-of-month weekday (Mon=0 … Sun=6).
   const first = new Date(year, month, 1);
@@ -745,10 +943,20 @@ function calendarView(items, projectId) {
   for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
   while (cells.length % 7) cells.push(null);
 
-  const headerRow = el("div", { class: "row spread mb-2" }, [
-    el("button", { class: "btn sm", onClick: () => setMonth(-1), "aria-label": "previous month" }, ["← Prev"]),
-    el("div", { class: "strong" }, [monthLabel]),
-    el("button", { class: "btn sm", onClick: () => setMonth(1), "aria-label": "next month" }, ["Next →"]),
+  const headerRow = el("div", { class: "row spread mb-2", style: { gap: "8px", flexWrap: "wrap" } }, [
+    el("div", { class: "row", style: { gap: "4px", alignItems: "center" } }, [
+      el("button", { class: "btn sm icon-btn", onClick: () => stepYear(-1), title: "Previous year", "aria-label": "Previous year" }, ["«"]),
+      el("button", { class: "btn sm icon-btn", onClick: () => stepMonth(-1), title: "Previous month", "aria-label": "Previous month" }, ["‹"]),
+      monthSel,
+      yearSel,
+      el("button", { class: "btn sm icon-btn", onClick: () => stepMonth(1), title: "Next month", "aria-label": "Next month" }, ["›"]),
+      el("button", { class: "btn sm icon-btn", onClick: () => stepYear(1), title: "Next year", "aria-label": "Next year" }, ["»"]),
+      el("button", { class: "btn sm", onClick: goToday, title: "Jump to current month" }, ["Today"]),
+    ]),
+    el("div", { class: "row", style: { gap: "6px", alignItems: "center" } }, [
+      el("span", { class: "tiny muted" }, ["Done items:"]),
+      doneStyleSel,
+    ]),
   ]);
 
   const weekdayHeader = el("div", { class: "calendar-grid header" },
@@ -762,11 +970,7 @@ function calendarView(items, projectId) {
     const isToday = c.toDateString() === today.toDateString();
     return el("div", { class: `calendar-cell ${isToday ? "today" : ""}` }, [
       el("div", { class: "calendar-date" }, [String(c.getDate())]),
-      ...list.slice(0, 3).map(w => el("button", {
-        class: `calendar-pill sev-${w.severity || "low"}`,
-        title: w.title,
-        onClick: () => openItem(w.id),
-      }, [w.id + " · " + (w.title || "").slice(0, 18)])),
+      ...list.slice(0, 3).map(w => calendarPill(w, doneStyle)),
       list.length > 3 ? el("div", { class: "tiny muted" }, ["+", String(list.length - 3), " more"]) : null,
     ]);
   }));
@@ -776,8 +980,46 @@ function calendarView(items, projectId) {
   });
 }
 
+// Shared pill renderer so /work-board and /work look identical and the
+// done-style choice applies uniformly.
+function calendarPill(w, doneStyle) {
+  const isDone = DONE_STATUSES.has(w.status);
+  const sev = `sev-${w.severity || "low"}`;
+  const doneClass = isDone ? `done done-${doneStyle}` : "";
+  const titlePrefix = isDone ? "✓ " : "";
+  return el("button", {
+    class: `calendar-pill ${sev} ${doneClass}`.trim(),
+    title: titlePrefix + (w.title || w.id) + (isDone ? ` (${w.status})` : ""),
+    onClick: () => openItem(w.id),
+  }, [
+    isDone ? el("span", { "aria-hidden": "true", style: { marginRight: "3px" } }, ["✓"]) : null,
+    w.id + " · " + (w.title || "").slice(0, 18),
+  ]);
+}
+
+function computeYearRange(items, viewYear) {
+  const today = new Date();
+  let lo = today.getFullYear() - 10;
+  let hi = today.getFullYear() + 10;
+  for (const w of items) {
+    if (!w.due) continue;
+    const y = new Date(w.due).getFullYear();
+    if (Number.isFinite(y)) {
+      if (y < lo) lo = y;
+      if (y > hi) hi = y;
+    }
+  }
+  // Always include the year currently being viewed so navigating past
+  // the data extent doesn't strand the user with an empty dropdown.
+  if (viewYear < lo) lo = viewYear;
+  if (viewYear > hi) hi = viewYear;
+  const out = [];
+  for (let y = lo; y <= hi; y++) out.push(y);
+  return out;
+}
+
 // ---------- dependency map ----------
-function dependencyView(items) {
+export function dependencyView(items, _scope) {
   // Mermaid flowchart built from the blocked-by graph. Falls back to a
   // hand-rolled SVG below.
   const lines = ["flowchart LR"];
@@ -947,7 +1189,7 @@ function showAutomationRulesModal() {
 }
 
 // ---------- actions ----------
-function changeStatus(itemId, newStatus) {
+export function changeStatus(itemId, newStatus) {
   const item = getById("workItems", itemId);
   if (!item) return;
   if (!can("edit")) { toast("Cannot transition — read-only role", "warn"); return; }
@@ -958,7 +1200,7 @@ function changeStatus(itemId, newStatus) {
   toast(`${itemId} → ${newStatus}`, "success");
 }
 
-function openItem(itemId) {
+export function openItem(itemId) {
   const w = getById("workItems", itemId);
   if (!w) return;
   const statusSelect = select(COLUMNS, { value: w.status });

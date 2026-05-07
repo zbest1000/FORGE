@@ -57,6 +57,14 @@ import {
 export const KIND = "mqtt";
 
 const DEFAULT_BACKPRESSURE_TPS = Number(process.env.FORGE_MQTT_BACKPRESSURE_TPS || 10);
+// Per-system overall budget (Phase 2). Per-binding buckets defend against
+// one runaway publisher; the system-level budget defends against a
+// wildcard subscription with hundreds of bindings sustaining 10× tps each
+// — N × DEFAULT_BACKPRESSURE_TPS is a different order of magnitude than
+// the broker can survive without coalescing. When the system bucket is
+// empty, samples are dropped at the dispatch boundary just like the
+// per-binding case (still surfaced as 'Substituted' on the next sample).
+const DEFAULT_SYSTEM_TPS = Number(process.env.FORGE_MQTT_SYSTEM_TPS || 1000);
 const DEFAULT_QOS = Number(process.env.FORGE_MQTT_QOS || 1);
 
 // Test-harness factory hook. Production runs leave this as null and
@@ -176,22 +184,43 @@ async function connectSystem(system, sysConfig) {
 }
 
 function withinBudget(stateForSystem, bindingId) {
-  // Token bucket per binding. Each binding gets DEFAULT_BACKPRESSURE_TPS
-  // tokens/sec, refilled lazily on each message.
+  // Two layered token buckets: per-binding (small, per-publisher) and
+  // per-system (large, shared across all bindings on the same broker
+  // connection). A message has to pass BOTH gates to be dispatched.
+  // Per-binding alone wasn't enough — a wildcard subscription with 1000
+  // bindings could still sustain 10000 tps total against the broker.
   const now = Date.now();
-  const cap = DEFAULT_BACKPRESSURE_TPS;
+  const bindingCap = DEFAULT_BACKPRESSURE_TPS;
+  const systemCap = DEFAULT_SYSTEM_TPS;
+
+  // Per-binding bucket
   let bucket = stateForSystem.buckets.get(bindingId);
   if (!bucket) {
-    bucket = { tokens: cap, last: now };
+    bucket = { tokens: bindingCap, last: now };
     stateForSystem.buckets.set(bindingId, bucket);
   }
-  const elapsed = (now - bucket.last) / 1000;
-  if (elapsed > 0) {
-    bucket.tokens = Math.min(cap, bucket.tokens + elapsed * cap);
+  const bElapsed = (now - bucket.last) / 1000;
+  if (bElapsed > 0) {
+    bucket.tokens = Math.min(bindingCap, bucket.tokens + bElapsed * bindingCap);
     bucket.last = now;
   }
-  if (bucket.tokens >= 1) {
+
+  // Per-system bucket (lazy-init on the system state object). Shared
+  // across all bindings under this enterprise_systems row.
+  if (!stateForSystem.systemBucket) {
+    stateForSystem.systemBucket = { tokens: systemCap, last: now };
+  }
+  const sb = stateForSystem.systemBucket;
+  const sElapsed = (now - sb.last) / 1000;
+  if (sElapsed > 0) {
+    sb.tokens = Math.min(systemCap, sb.tokens + sElapsed * systemCap);
+    sb.last = now;
+  }
+
+  // Both gates: drop if either is empty.
+  if (bucket.tokens >= 1 && sb.tokens >= 1) {
     bucket.tokens -= 1;
+    sb.tokens -= 1;
     return true;
   }
   return false;
