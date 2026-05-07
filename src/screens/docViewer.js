@@ -25,6 +25,7 @@ import { renderCad } from "../core/cad-viewer.js";
 import { currentUserId, currentUser, currentRole } from "../core/groups.js";
 import { buildAnnotationOverlay, listAnnotations } from "../core/pdfAnnotations.js";
 import { query as unifiedQuery } from "../core/search.js";
+import { detectKind, guessMime } from "./docViewerKind.js";
 import { helpHint, helpLinkChip } from "../core/help.js";
 // Toolbar + constants both live in dedicated modules now. This file
 // no longer references the viewer-config constants directly — they're
@@ -1233,24 +1234,7 @@ function attachPdf(doc, rev) {
   closeModal = close;
 }
 
-function detectKind(url, mime) {
-  if (!url) return null;
-  const u = String(url).toLowerCase();
-  if (mime?.startsWith("image/") || /\.(png|jpe?g|svg|webp|gif)(\?|#|$)/i.test(u)) return "image";
-  if (mime === "text/csv" || /\.csv(\?|#|$)/i.test(u)) return "csv";
-  if (mime?.includes("pdf") || /\.pdf(\?|#|$)/i.test(u)) return "pdf";
-  return null;
-}
-
-function guessMime(url) {
-  const u = url.toLowerCase();
-  if (u.endsWith(".png")) return "image/png";
-  if (u.endsWith(".jpg") || u.endsWith(".jpeg")) return "image/jpeg";
-  if (u.endsWith(".svg")) return "image/svg+xml";
-  if (u.endsWith(".csv")) return "text/csv";
-  if (u.endsWith(".pdf")) return "application/pdf";
-  return "application/octet-stream";
-}
+// detectKind + guessMime moved to ./docViewerKind.js — imported above.
 
 function renderCsvTable(parsed) {
   const { headers = [], rows = [] } = parsed || {};
