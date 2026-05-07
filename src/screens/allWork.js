@@ -1,20 +1,31 @@
 // Consolidated all-work view (`/work`).
 //
-// Independent of any single project — surfaces every work item the
-// viewer can see, with three viewing modes:
+// Cross-project view that surfaces every work item the viewer can see.
+// Reuses the per-project board's view code (kanban / table / timeline /
+// calendar / dependency) by importing the shared view functions from
+// workBoard.js and passing an all-work scope:
 //
-//   - Kanban  : columns by status, cards filterable by everything below
-//   - Table   : sortable rows
-//   - Calendar: month grid keyed by `due` date
+//   { id: "all", rerender: () => renderAllWork(), showProjectColumn: true }
 //
-// Filters: search text + status + assignee + project + due-date
-// preset (overdue / this week / this month / any) + show-completed
-// toggle. Each filter persists in sessionStorage.
+// This guarantees the consolidated view looks and feels identical to the
+// per-project board — same drag-drop kanban, same sortable table with
+// column visibility menu, same Gantt-ish timeline, same month calendar,
+// same Mermaid dependency map. The only addition is a top-level filter
+// bar (project, status, assignee, due-date preset, search) that scopes
+// which items each view receives.
 
-import { el, mount, badge, tabs } from "../core/ui.js";
+import { el, mount, tabs } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { helpHint, helpLinkChip } from "../core/help.js";
+import {
+  kanbanView,
+  tableView,
+  timelineView,
+  calendarView,
+  dependencyView,
+  batchBar,
+} from "./workBoard.js";
 
 const SS_VIEW       = "allwork.view";
 const SS_FILTER     = "allwork.filter";
@@ -23,8 +34,9 @@ const SS_ASSIGNEE   = "allwork.assignee";
 const SS_PROJECT    = "allwork.project";
 const SS_DUE        = "allwork.due";
 const SS_COMPLETED  = "allwork.includeCompleted";
+const SS_BATCH      = "allwork.batch";
 
-const STATUS_OPTIONS = ["Backlog", "Open", "In Progress", "In Review", "Blocked", "Done", "Closed"];
+const STATUS_OPTIONS = ["Backlog", "Open", "In Progress", "In Review", "Blocked", "Approved", "Done", "Closed"];
 
 export function renderAllWork() {
   const root = document.getElementById("screenContainer");
@@ -33,18 +45,31 @@ export function renderAllWork() {
   const filters = readFilters();
   const allItems = collectWorkItems();
   const filtered = applyFilters(allItems, filters);
+  const batch = JSON.parse(sessionStorage.getItem(SS_BATCH) || "[]");
+
+  // Scope object passed into the shared workBoard views. Storage keys
+  // for sort/filter/visibility/calendar-month all namespace under "all"
+  // so they survive navigation but stay distinct from per-project state.
+  const scope = {
+    id: "all",
+    rerender: () => renderAllWork(),
+    showProjectColumn: true,
+  };
 
   mount(root, [
     headerRow(filtered.length, allItems.length),
     filterBar(filters),
+    batchBar(batch, SS_BATCH, scope),
     tabs({
       sessionKey: SS_VIEW,
       defaultId: view,
       ariaLabel: "All-work view",
       tabs: [
-        { id: "kanban",   label: "Kanban",   content: () => kanbanView(filtered) },
-        { id: "table",    label: "Table",    content: () => tableView(filtered) },
-        { id: "calendar", label: "Calendar", content: () => calendarView(filtered) },
+        { id: "kanban",   label: "Board",        content: () => kanbanView(filtered, scope, batch, SS_BATCH) },
+        { id: "table",    label: "Table",        content: () => tableView(filtered, scope, batch, SS_BATCH) },
+        { id: "timeline", label: "Timeline",     content: () => timelineView(filtered, scope) },
+        { id: "calendar", label: "Calendar",     content: () => calendarView(filtered, scope) },
+        { id: "deps",     label: "Dependencies", content: () => dependencyView(filtered, scope) },
       ],
     }),
   ]);
@@ -104,7 +129,7 @@ function filterBar(filters) {
     const v = /** @type {HTMLInputElement} */ (search).value;
     timer = setTimeout(() => {
       setFilter(SS_FILTER, v);
-      // Restore focus after re-render
+      // Restore focus after re-render so the user can keep typing.
       setTimeout(() => {
         const fresh = document.querySelector('input[aria-label="Search work items"]');
         if (fresh instanceof HTMLInputElement) {
@@ -140,7 +165,11 @@ function filterBar(filters) {
   assigneeSel.addEventListener("change", () => setFilter(SS_ASSIGNEE, /** @type {HTMLSelectElement} */ (assigneeSel).value));
 
   const projectSel = el("select", { class: "select sm", "aria-label": "Filter by project" });
-  const projectOpts = [{ value: "", label: "All projects" }, ...projects.map(p => ({ value: p.id, label: p.name }))];
+  const projectOpts = [
+    { value: "", label: "All projects" },
+    { value: "__none__", label: "Unassigned to project" },
+    ...projects.map(p => ({ value: p.id, label: p.name })),
+  ];
   for (const o of projectOpts) {
     const opt = document.createElement("option");
     opt.value = o.value; opt.textContent = o.label;
@@ -183,15 +212,60 @@ function filterBar(filters) {
     },
   }, ["Clear filters"]);
 
-  return el("div", { class: "row wrap mb-3", style: { gap: "8px", alignItems: "center" } }, [
-    el("div", { style: { flex: "1 1 240px" } }, [search]),
-    statusSel,
-    assigneeSel,
-    projectSel,
-    dueSel,
-    completedToggle,
-    clearBtn,
+  // Active filter chip strip — at-a-glance summary of what's currently
+  // applied. Each chip clears its own filter when clicked. Keeps users
+  // out of the "why am I seeing/not seeing X?" trap.
+  const activeChips = activeFilterChips(filters, projects, users);
+
+  return el("div", { class: "stack mb-3", style: { gap: "8px" } }, [
+    el("div", { class: "row wrap", style: { gap: "8px", alignItems: "center" } }, [
+      el("div", { style: { flex: "1 1 240px" } }, [search]),
+      statusSel,
+      assigneeSel,
+      projectSel,
+      dueSel,
+      completedToggle,
+      clearBtn,
+    ]),
+    activeChips,
   ]);
+}
+
+function activeFilterChips(filters, projects, users) {
+  const chips = [];
+  if (filters.text) chips.push(filterChip(`"${filters.text}"`, () => setFilter(SS_FILTER, "")));
+  if (filters.status) chips.push(filterChip(`Status: ${filters.status}`, () => setFilter(SS_STATUS, "")));
+  if (filters.assignee) {
+    const label = filters.assignee === "me" ? "Assigned to me"
+      : filters.assignee === "unassigned" ? "Unassigned"
+      : (users.find(u => u.id === filters.assignee)?.name || filters.assignee);
+    chips.push(filterChip(`Assignee: ${label}`, () => setFilter(SS_ASSIGNEE, "")));
+  }
+  if (filters.project) {
+    const label = filters.project === "__none__" ? "No project"
+      : (projects.find(p => p.id === filters.project)?.name || filters.project);
+    chips.push(filterChip(`Project: ${label}`, () => setFilter(SS_PROJECT, "")));
+  }
+  if (filters.due && filters.due !== "any") {
+    const label = ({ overdue: "Overdue", today: "Due today", week: "This week", month: "This month", "no-due": "No due date" })[filters.due] || filters.due;
+    chips.push(filterChip(`Due: ${label}`, () => setFilter(SS_DUE, "")));
+  }
+  if (!filters.includeCompleted) {
+    chips.push(filterChip("Hiding done / closed", () => setFilter(SS_COMPLETED, "1"), "muted"));
+  }
+  if (!chips.length) return el("div");
+  return el("div", { class: "row wrap", style: { gap: "6px", alignItems: "center" } }, [
+    el("span", { class: "tiny muted" }, ["Active filters:"]),
+    ...chips,
+  ]);
+}
+
+function filterChip(label, onClear, variant) {
+  return el("button", {
+    class: `btn xs ${variant || ""}`,
+    title: "Click to clear this filter",
+    onClick: onClear,
+  }, [label, " ✕"]);
 }
 
 function collectWorkItems() {
@@ -210,7 +284,11 @@ function applyFilters(items, filters) {
     // Done / closed gate
     if (!filters.includeCompleted && (w.status === "Done" || w.status === "Closed")) return false;
     if (filters.status && w.status !== filters.status) return false;
-    if (filters.project && w.projectId !== filters.project) return false;
+    if (filters.project) {
+      if (filters.project === "__none__") {
+        if (w.projectId) return false;
+      } else if (w.projectId !== filters.project) return false;
+    }
     if (filters.assignee) {
       if (filters.assignee === "me") {
         if (w.assigneeId !== meId) return false;
@@ -243,142 +321,3 @@ function applyFilters(items, filters) {
   });
 }
 
-// ---------- Kanban ----------
-
-function kanbanView(items) {
-  const cols = STATUS_OPTIONS.map(status => ({
-    status,
-    items: items.filter(w => w.status === status),
-  })).filter(c => c.items.length || ["Backlog", "Open", "In Progress", "Done"].includes(c.status));
-
-  return el("div", { class: "kanban-board", style: { display: "grid", gridTemplateColumns: `repeat(${cols.length}, minmax(220px, 1fr))`, gap: "10px", overflowX: "auto" } },
-    cols.map(c => el("div", { class: "kanban-col", style: { background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "6px", padding: "8px", minHeight: "260px" } }, [
-      el("div", { class: "row spread", style: { marginBottom: "6px" } }, [
-        el("span", { class: "strong small" }, [c.status]),
-        el("span", { class: "tiny muted" }, [String(c.items.length)]),
-      ]),
-      ...c.items.map(workCard),
-      c.items.length === 0 ? el("div", { class: "muted tiny" }, ["No items."]) : null,
-    ]))
-  );
-}
-
-function workCard(w) {
-  const due = w.due ? new Date(w.due) : null;
-  const overdue = due && due.getTime() < Date.now() && w.status !== "Done" && w.status !== "Closed";
-  const proj = (state.data?.projects || []).find(p => p.id === w.projectId);
-  const user = (state.data?.users || []).find(u => u.id === w.assigneeId);
-  return el("button", {
-    class: "kanban-card",
-    type: "button",
-    style: { display: "block", width: "100%", textAlign: "left", marginBottom: "6px", padding: "8px 10px", background: "var(--panel)", border: "1px solid var(--border)", borderRadius: "6px", cursor: "pointer" },
-    onClick: () => navigate(`/work-board/${w.projectId}#${w.id}`),
-  }, [
-    el("div", { class: "row spread" }, [
-      el("span", { class: "tiny muted mono" }, [w.id]),
-      w.severity ? badge(w.severity, w.severity === "high" ? "danger" : w.severity === "medium" ? "warn" : "info") : null,
-    ]),
-    el("div", { class: "small strong", style: { margin: "4px 0" } }, [w.title || "(untitled)"]),
-    el("div", { class: "row wrap tiny muted", style: { gap: "8px" } }, [
-      proj ? el("span", {}, [proj.name]) : null,
-      user ? el("span", {}, [`@${user.name}`]) : null,
-      due ? el("span", { style: { color: overdue ? "var(--danger)" : undefined } }, [(overdue ? "Overdue · " : "Due ") + due.toLocaleDateString()]) : null,
-    ]),
-  ]);
-}
-
-// ---------- Table ----------
-
-function tableView(items) {
-  const projects = state.data?.projects || [];
-  const users = state.data?.users || [];
-  return el("div", { style: { overflowX: "auto" } }, [
-    el("table", { class: "table" }, [
-      el("thead", {}, [el("tr", {}, ["ID", "Title", "Type", "Status", "Severity", "Assignee", "Project", "Due"].map(h => el("th", {}, [h])))]),
-      el("tbody", {}, items.map(w => {
-        const due = w.due ? new Date(w.due) : null;
-        const overdue = due && due.getTime() < Date.now() && w.status !== "Done" && w.status !== "Closed";
-        return el("tr", { class: "row-clickable", onClick: () => navigate(`/work-board/${w.projectId}#${w.id}`) }, [
-          el("td", { class: "tiny mono" }, [w.id]),
-          el("td", {}, [w.title]),
-          el("td", {}, [w.type || "—"]),
-          el("td", {}, [badge(w.status, statusVariant(w.status))]),
-          el("td", {}, [w.severity ? badge(w.severity, w.severity === "high" ? "danger" : w.severity === "medium" ? "warn" : "info") : "—"]),
-          el("td", {}, [users.find(u => u.id === w.assigneeId)?.name || "—"]),
-          el("td", {}, [projects.find(p => p.id === w.projectId)?.name || "—"]),
-          el("td", { style: { color: overdue ? "var(--danger)" : undefined } }, [due ? due.toLocaleDateString() + (overdue ? " · overdue" : "") : "—"]),
-        ]);
-      })),
-    ]),
-    items.length === 0 ? el("div", { class: "muted small mt-2" }, ["No work items match the current filters."]) : null,
-  ]);
-}
-
-function statusVariant(s) {
-  return ({
-    "Done": "success", "Closed": "success",
-    "In Progress": "info", "In Review": "info",
-    "Blocked": "danger",
-    "Open": "warn", "Backlog": "",
-  })[s] || "";
-}
-
-// ---------- Calendar ----------
-
-function calendarView(items) {
-  // Month grid keyed by item.due. Items without a due date listed below
-  // the grid in a "No due date" lane.
-  const cur = new Date();
-  cur.setDate(1);
-  const year = cur.getFullYear();
-  const month = cur.getMonth();
-  const firstDow = cur.getDay(); // 0..6
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  /** @type {Map<string, any[]>} */
-  const byDay = new Map();
-  const noDue = [];
-  for (const w of items) {
-    if (!w.due) { noDue.push(w); continue; }
-    const dt = new Date(w.due);
-    if (dt.getFullYear() !== year || dt.getMonth() !== month) continue;
-    const key = String(dt.getDate());
-    (byDay.get(key) || byDay.set(key, []).get(key)).push(w);
-  }
-
-  const cells = [];
-  for (let i = 0; i < firstDow; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-
-  const monthName = cur.toLocaleString(undefined, { month: "long", year: "numeric" });
-
-  return el("div", { class: "stack" }, [
-    el("div", { class: "strong" }, [monthName]),
-    el("div", { class: "calendar-grid", style: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px" } }, [
-      ...["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(h => el("div", { class: "tiny muted", style: { textAlign: "center", padding: "4px" } }, [h])),
-      ...cells.map(d => el("div", {
-        class: "calendar-cell",
-        style: {
-          minHeight: "82px", border: "1px solid var(--border)", borderRadius: "4px",
-          padding: "4px", background: d ? "var(--panel)" : "transparent",
-        },
-      }, d ? [
-        el("div", { class: "tiny mono muted" }, [String(d)]),
-        ...(byDay.get(String(d)) || []).map(w => el("button", {
-          class: "kanban-card",
-          type: "button",
-          style: { display: "block", width: "100%", textAlign: "left", margin: "2px 0", padding: "3px 5px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "3px", fontSize: "11px", cursor: "pointer" },
-          title: w.title,
-          onClick: () => navigate(`/work-board/${w.projectId}#${w.id}`),
-        }, [w.title?.length > 28 ? w.title.slice(0, 26) + "…" : (w.title || w.id)])),
-      ] : [])),
-    ]),
-    noDue.length ? el("div", { class: "stack mt-2" }, [
-      el("div", { class: "tiny muted" }, [`Items without a due date (${noDue.length})`]),
-      el("div", { class: "row wrap" }, noDue.map(w => el("button", {
-        class: "btn sm",
-        onClick: () => navigate(`/work-board/${w.projectId}#${w.id}`),
-      }, [w.title || w.id]))),
-    ]) : null,
-  ]);
-}
