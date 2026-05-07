@@ -4,8 +4,10 @@
 // runs in pure JS without any external dependency. Provides the missing
 // "semantic stage" of spec §15 hybrid retrieval.
 
+/** @param {string} s */
 function trigrams(s) {
   const t = " " + (s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() + " ";
+  /** @type {Map<string, number>} */
   const out = new Map();
   for (let i = 0; i <= t.length - 3; i++) {
     const g = t.slice(i, i + 3);
@@ -14,12 +16,14 @@ function trigrams(s) {
   return out;
 }
 
+/** @param {Map<string, number>} map */
 function magnitude(map) {
   let s = 0;
   for (const v of map.values()) s += v * v;
   return Math.sqrt(s);
 }
 
+/** @param {string} a @param {string} b @returns {number} */
 export function similarity(a, b) {
   if (!a || !b) return 0;
   const ta = trigrams(a);
@@ -34,9 +38,19 @@ export function similarity(a, b) {
 }
 
 /**
+ * @typedef {{ doc?: { title?: string, text?: string }, score?: number }} RankableHit
+ */
+
+/**
  * Re-rank an array of {doc, score} entries by mixing the BM25 score with
  * the trigram similarity to the original query. The mix weight (default
  * 0.4) is tuned empirically; raising it favors the semantic signal.
+ *
+ * @template {RankableHit} H
+ * @param {string} query
+ * @param {H[]} hits
+ * @param {number} [mix]
+ * @returns {H[]}
  */
 export function semanticRerank(query, hits, mix = 0.4) {
   if (!query || !hits.length) return hits;

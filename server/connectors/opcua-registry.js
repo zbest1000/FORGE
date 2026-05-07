@@ -43,6 +43,7 @@
 //     bridge.
 
 import { db, jsonOrDefault } from "../db.js";
+import { withSpan } from "../tracing.js";
 
 export const KIND = "opcua";
 
@@ -262,14 +263,21 @@ async function createSubscriptionForBucket({ sysState, bucketMs, bucketBindings,
       // follow-up phase by carrying queue_size on the binding.
       queueSize: 1,
     };
+    // Span the per-chunk CreateMonitoredItems batch so operators with
+    // OTel can spot slow OPC UA servers + correlate timeouts to specific
+    // (system, publishing-interval, chunk-size) combinations.
     let group;
     try {
-      group = await m.ClientMonitoredItemGroup.create(
+      group = await withSpan("opcua.monitorItems", {
+        system_id: system.id,
+        bucket_ms: bucketMs,
+        chunk_size: chunk.length,
+      }, async () => m.ClientMonitoredItemGroup.create(
         subscription,
         itemsToMonitor,
         monitoringParameters,
-        m.TimestampsToReturn.Both
-      );
+        m.TimestampsToReturn.Both,
+      ));
     } catch (err) {
       _state.logger?.warn?.({ err: String(err?.message || err), systemId: system.id, bucketMs, chunkSize: chunk.length }, "[opcua-registry] monitored item group failed");
       continue;
