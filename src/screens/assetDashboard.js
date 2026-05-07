@@ -21,7 +21,10 @@ import {
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { api } from "../core/api.js";
-import { sparkline } from "../core/charts.js";
+// Card-level charts (sparklines on each card) are out of scope here —
+// the asset dashboard surfaces visuals + badges + drill-in buttons; live
+// data lives on the asset detail page. Removed the unused sparkline
+// import (was a leftover from an earlier plan iteration).
 import { renderAssetsIndex as legacyAssetsTable } from "./assetDetail.js";
 import { helpHint, helpLinkChip } from "../core/help.js";
 
@@ -631,7 +634,7 @@ function summaryPanel(selected, tree, unassigned) {
   if (!selected) {
     return card("Selection", el("div", { class: "stack" }, [
       el("p", { class: "muted tiny" }, ["Click an enterprise or location to filter the grid. Click an asset card to open its detail screen."]),
-      el("p", { class: "muted tiny" }, ["The grid scales with the asset count — IntersectionObserver-driven chart lazy-init lands in phase 6 once binding wiring is in place."]),
+      el("p", { class: "muted tiny" }, ["The grid scales with the asset count via IntersectionObserver-driven windowing — only the first ~60 cards mount on first paint; the rest render as you scroll."]),
     ]));
   }
   const [kind, id] = selected.split(":");

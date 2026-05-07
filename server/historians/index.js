@@ -53,6 +53,53 @@ function parseIso(value, fallback) {
   return d && !Number.isNaN(d.valueOf()) ? d.toISOString() : fallback;
 }
 
+// Buffered batch-write path (Phase 2 perf). Per-sample inserts at
+// 10 k tps stress the SQLite writer lock and starve every other write
+// (audit, outbox, webhooks). Buffer up to FORGE_HISTORIAN_BATCH_SIZE
+// samples or FORGE_HISTORIAN_BATCH_MS ms, whichever comes first, then
+// flush in a single transaction.
+//
+// Default is *sync* (preserves the read-after-write contract that
+// existing call sites and tests assume). Production runs hitting the
+// historian write hot path can opt in with FORGE_HISTORIAN_BATCH=1.
+// Future Phase 3 work: make batching the default once integration tests
+// gain explicit `flushHistorianBuffer()` calls between write+read.
+const BATCH_MS = Number(process.env.FORGE_HISTORIAN_BATCH_MS || 100);
+const BATCH_SIZE = Number(process.env.FORGE_HISTORIAN_BATCH_SIZE || 500);
+const BATCH_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.FORGE_HISTORIAN_BATCH || ""));
+const SYNC_WRITES = !BATCH_ENABLED;
+
+/** @type {Array<any>} */
+const _buffer = [];
+let _flushTimer = null;
+
+const insertStmt = db.prepare(`INSERT INTO historian_samples (id, point_id, ts, value, quality, source_type, raw_payload)
+            VALUES (@id, @pointId, @ts, @value, @quality, @sourceType, @rawPayload)`);
+const insertMany = db.transaction((rows) => {
+  for (const r of rows) insertStmt.run(r);
+});
+
+function flushNow() {
+  if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
+  if (_buffer.length === 0) return;
+  const drained = _buffer.splice(0, _buffer.length);
+  try {
+    insertMany(drained);
+  } catch (err) {
+    // Re-queue on transient failure so the next flush retries — safer
+    // than dropping samples silently. Log via the bound logger if
+    // available; the caller can also subscribe to historian status.
+    _buffer.unshift(...drained);
+    // eslint-disable-next-line no-console
+    console.error("[historian] batch flush failed", err?.message || err);
+  }
+}
+function scheduleFlush() {
+  if (_flushTimer || SYNC_WRITES) return;
+  _flushTimer = setTimeout(flushNow, BATCH_MS);
+  if (typeof _flushTimer.unref === "function") _flushTimer.unref();
+}
+
 function cacheSample({ point, ts = now(), value, quality = "Good", sourceType = "api", rawPayload = {} }) {
   const row = {
     id: uuid("HS"),
@@ -63,10 +110,21 @@ function cacheSample({ point, ts = now(), value, quality = "Good", sourceType = 
     sourceType,
     rawPayload: JSON.stringify(rawPayload || {}),
   };
-  db.prepare(`INSERT INTO historian_samples (id, point_id, ts, value, quality, source_type, raw_payload)
-              VALUES (@id, @pointId, @ts, @value, @quality, @sourceType, @rawPayload)`).run(row);
-  return sampleRow(db.prepare("SELECT * FROM historian_samples WHERE id = ?").get(row.id));
+  if (SYNC_WRITES) {
+    insertStmt.run(row);
+    return sampleRow(db.prepare("SELECT * FROM historian_samples WHERE id = ?").get(row.id));
+  }
+  _buffer.push(row);
+  if (_buffer.length >= BATCH_SIZE) flushNow();
+  else scheduleFlush();
+  // Return the in-memory shape so callers don't block on the disk flush.
+  // Matches sampleRow()'s contract — raw_payload comes back as JSON,
+  // not a parsed object, so we round-trip through sampleRow().
+  return sampleRow({ ...row, raw_payload: row.rawPayload });
 }
+
+/** Test/shutdown helper — drain the buffer synchronously. */
+export function flushHistorianBuffer() { flushNow(); }
 
 function queryCache(pointId, { since, until, limit }) {
   return db.prepare(`SELECT * FROM historian_samples

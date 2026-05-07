@@ -71,3 +71,34 @@ export function startRouter() {
   if (!location.hash) location.hash = "#/hub";
   else resolve();
 }
+
+/**
+ * Parsed query params from the current hash. `#/work?status=Open&due=overdue`
+ * returns `URLSearchParams` you can read via `.get("status")` or iterate.
+ *
+ * Why this exists: filter state was previously parked in sessionStorage,
+ * which meant URLs couldn't be shared, bookmarked, or used as undo
+ * history. Screens that opted into URL-driven filters call this on
+ * mount and keep the URL as the single source of truth.
+ */
+export function queryParams() {
+  const [, qs = ""] = currentPath().split("?");
+  return new URLSearchParams(qs);
+}
+
+/**
+ * Patch the current URL's query string with the given key/value pairs.
+ * `null` / `undefined` / "" values delete the key. Re-renders the screen
+ * by going through the standard hash-change path so listeners stay in
+ * lockstep.
+ */
+export function updateQueryParams(patch) {
+  const [path, qs = ""] = currentPath().split("?");
+  const params = new URLSearchParams(qs);
+  for (const [k, v] of Object.entries(patch)) {
+    if (v == null || v === "" || v === false) params.delete(k);
+    else params.set(k, String(v));
+  }
+  const next = params.toString();
+  navigate("#" + path + (next ? "?" + next : ""));
+}

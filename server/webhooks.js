@@ -54,7 +54,16 @@ export function createWebhook({ name, url, events = ["*"], secret = null, create
 }
 
 export function toggleWebhook(id, enabled, actor) {
-  db.prepare("UPDATE webhooks SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
+  // Re-enabling a webhook clears the breaker — the operator has manually
+  // signalled they believe the endpoint is healthy again. Disabling
+  // leaves the breaker state alone (it's harmless while disabled and
+  // preserves diagnostic context if the webhook is re-enabled later
+  // without intervention).
+  if (enabled) {
+    db.prepare("UPDATE webhooks SET enabled = 1, consecutive_failures = 0, circuit_open_until = NULL WHERE id = ?").run(id);
+  } else {
+    db.prepare("UPDATE webhooks SET enabled = 0 WHERE id = ?").run(id);
+  }
   audit({ actor, action: "webhook.toggle", subject: id, detail: { enabled } });
 }
 
@@ -79,6 +88,10 @@ export function dispatchEvent(eventType, payload) {
   const eventId = (payload && payload.event_id) || uuid("WHD");
   for (const row of rows) {
     if (!match(row.events)) continue;
+    // Don't even queue against an open circuit — the operator gets a
+    // single audit entry per breaker trip (above), not one per skipped
+    // event, otherwise a busy stream of events generates pages of noise.
+    if (circuitOpen(row)) continue;
     const id = uuid("delivery").toLowerCase();
     const ts = now();
     // Persist the delivery + payload in one transaction so the worker
@@ -101,7 +114,45 @@ export function dispatchEvent(eventType, payload) {
 
 const MAX_ATTEMPTS = 6;
 const BACKOFF_MS = [0, 5_000, 15_000, 60_000, 5*60_000, 30*60_000]; // 0s, 5s, 15s, 1m, 5m, 30m
+// Circuit breaker tunables. After this many consecutive delivery failures
+// the webhook's circuit opens for the configured cooldown — `dispatchEvent`
+// + `tick()` both skip while open. A successful delivery resets the
+// counter and clears the timestamp; toggling the webhook off+on via the
+// admin UI also forcibly clears the breaker.
+const BREAKER_THRESHOLD = Number(process.env.FORGE_WEBHOOK_BREAKER_THRESHOLD || 5);
+const BREAKER_OPEN_MS = Number(process.env.FORGE_WEBHOOK_BREAKER_OPEN_MS || 24 * 60 * 60 * 1000);
 let _workerHandle = null;
+
+/** Returns true when the webhook is in an open-circuit state right now. */
+function circuitOpen(wh) {
+  const until = wh.circuit_open_until;
+  if (!until) return false;
+  if (new Date(until).getTime() > Date.now()) return true;
+  // Cooldown elapsed — reset so the next attempt is allowed through.
+  db.prepare("UPDATE webhooks SET circuit_open_until = NULL WHERE id = ?").run(wh.id);
+  return false;
+}
+
+/** On successful delivery, reset the breaker bookkeeping. */
+function noteSuccess(webhookId) {
+  db.prepare("UPDATE webhooks SET consecutive_failures = 0, circuit_open_until = NULL, last_success_at = ?, last_error = NULL, last_error_at = NULL WHERE id = ?")
+    .run(now(), webhookId);
+}
+
+/** On failure, bump the counter and open the circuit if we've crossed the threshold. */
+function noteFailure(webhookId, errMsg) {
+  const row = db.prepare("SELECT consecutive_failures FROM webhooks WHERE id = ?").get(webhookId);
+  const next = (row?.consecutive_failures || 0) + 1;
+  if (next >= BREAKER_THRESHOLD) {
+    const openUntil = new Date(Date.now() + BREAKER_OPEN_MS).toISOString();
+    db.prepare("UPDATE webhooks SET consecutive_failures = ?, circuit_open_until = ?, last_error = ?, last_error_at = ? WHERE id = ?")
+      .run(next, openUntil, errMsg, now(), webhookId);
+    audit({ actor: "webhooks", action: "webhook.circuit.opened", subject: webhookId, detail: { consecutiveFailures: next, openUntil, threshold: BREAKER_THRESHOLD } });
+  } else {
+    db.prepare("UPDATE webhooks SET consecutive_failures = ?, last_error = ?, last_error_at = ? WHERE id = ?")
+      .run(next, errMsg, now(), webhookId);
+  }
+}
 
 function ensureWorker() {
   if (_workerHandle) return;
@@ -136,6 +187,10 @@ async function tick() {
       deletePayload.run(d.id);
       continue;
     }
+    // Skip while circuit is open — the delivery row stays `pending` so
+    // it'll be picked up automatically once the cooldown elapses (see
+    // circuitOpen()'s self-clearing branch).
+    if (circuitOpen(wh)) continue;
     // Recover the body from the dedicated payloads table. Falling back
     // to an empty object keeps the dispatcher robust if the row was
     // pruned out from underneath it (audit chain stays clean either
@@ -173,7 +228,9 @@ async function tick() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       db.prepare("UPDATE webhook_deliveries SET status = 'delivered', delivered_at = ?, attempt = ?, last_error = NULL WHERE id = ?")
         .run(now(), attempt, d.id);
-      db.prepare("UPDATE webhooks SET last_success_at = ?, last_error = NULL, last_error_at = NULL WHERE id = ?").run(now(), wh.id);
+      // Resets consecutive_failures + circuit_open_until in addition to
+      // last_success_at / last_error fields.
+      noteSuccess(wh.id);
       deletePayload.run(d.id);
       audit({ actor: "webhooks", action: "webhook.delivered", subject: wh.id, detail: { deliveryId: d.id, attempt, eventType: d.event_type } });
     } catch (err) {
@@ -185,12 +242,19 @@ async function tick() {
         db.prepare("INSERT INTO dead_letters (id, ts, envelope, error, resolved) VALUES (?, ?, ?, ?, 0)")
           .run(uuid("DLQ"), now(), JSON.stringify({ kind: "webhook", deliveryId: d.id, webhookId: wh.id, body: payload }), errMsg);
         deletePayload.run(d.id);
+        // A terminal failure also bumps the breaker counter — a webhook
+        // that exhausts all 6 attempts is exactly the kind of broken
+        // endpoint the breaker should react to.
+        noteFailure(wh.id, errMsg);
         audit({ actor: "webhooks", action: "webhook.failed", subject: wh.id, detail: { deliveryId: d.id, attempt, error: errMsg } });
       } else {
         const wait = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
         const next = new Date(Date.now() + wait).toISOString();
         db.prepare("UPDATE webhook_deliveries SET status = 'failed-retry', attempt = ?, last_error = ?, next_attempt_at = ? WHERE id = ?")
           .run(attempt, errMsg, next, d.id);
+        // Don't bump the breaker on intermediate retries — only on
+        // terminal failures and successes — otherwise a flaky endpoint
+        // would trip the breaker after one event cycle.
         db.prepare("UPDATE webhooks SET last_error = ?, last_error_at = ? WHERE id = ?").run(errMsg, now(), wh.id);
         audit({ actor: "webhooks", action: "webhook.retry", subject: wh.id, detail: { deliveryId: d.id, attempt, nextAttemptAt: next, error: errMsg } });
       }

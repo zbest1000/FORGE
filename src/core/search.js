@@ -94,9 +94,54 @@ export async function buildIndex() {
   }
 }
 
+// Debounce window. Bumped from 250 ms to 500 ms because the catch-all
+// rebuild path is the slow one (full re-add of every collection); when
+// callers know precisely what changed they should use addEntity /
+// removeEntity below for an O(1) update instead of waiting on the
+// debounced rebuild.
+const REBUILD_DEBOUNCE_MS = Number(globalThis.process?.env?.FORGE_SEARCH_DEBOUNCE_MS || 500);
+
 export function scheduleRebuild() {
   if (_rebuildTimer) return;
-  _rebuildTimer = setTimeout(() => { _rebuildTimer = null; buildIndex(); }, 250);
+  _rebuildTimer = setTimeout(() => { _rebuildTimer = null; buildIndex(); }, REBUILD_DEBOUNCE_MS);
+}
+
+/**
+ * Differential update — add (or replace) a single object in the index
+ * without rebuilding the rest. Callers that just mutated one entity
+ * should prefer this over scheduleRebuild() so a 200-asset workspace
+ * doesn't re-index 200 docs every time the user types in a filter.
+ *
+ * Falls through to scheduleRebuild() if the index hasn't been built
+ * yet — the first build still has to be a full pass.
+ */
+export function addEntity(collectionName, obj) {
+  if (!_miniSearch) { scheduleRebuild(); return; }
+  const c = COLLECTIONS.find(x => x.name === collectionName);
+  if (!c) return;
+  const id = `${collectionName}:${obj.id}`;
+  const text = extractText(c, obj);
+  const doc = {
+    id, collection: collectionName, kind: c.kind, route: c.route(obj),
+    title: obj.name || obj.title || obj.id, text, raw: obj,
+  };
+  // MiniSearch's `addOrReplace` is sync and O(log N) on the postings —
+  // a full rebuild over 10 collections × N docs is O(N) per collection
+  // PER REBUILD, so the differential path saves real cycles.
+  if (typeof _miniSearch.replace === "function") {
+    try { _miniSearch.discard(id); } catch { /* unknown id is fine */ }
+    _miniSearch.add(doc);
+  } else {
+    _miniSearch.add(doc);
+  }
+  _docsById.set(id, doc);
+}
+
+export function removeEntity(collectionName, id) {
+  if (!_miniSearch) { scheduleRebuild(); return; }
+  const fullId = `${collectionName}:${id}`;
+  try { _miniSearch.discard(fullId); } catch { /* not indexed yet */ }
+  _docsById.delete(fullId);
 }
 
 export function indexEngine() { return _lastEngine; }

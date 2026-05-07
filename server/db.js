@@ -1567,6 +1567,34 @@ function migrate() {
       `);
       setVersion(18);
     }
+
+    if (getVersion() < 19) {
+      // v19 (Phase 2 resilience): webhook circuit breaker.
+      //
+      // Today a dead webhook URL retries 6× per delivery with backoff
+      // up to 30 min. With many queued events that's a lot of outbound
+      // calls to a known-broken endpoint, plus the noise it generates
+      // (logs, audit entries) crowds out the diagnostics that would
+      // help fix it.
+      //
+      // The breaker tracks `consecutive_failures`. After
+      // FORGE_WEBHOOK_BREAKER_THRESHOLD (default 5) consecutive
+      // failures, `circuit_open_until` is set to now + 24 h. While
+      // open, dispatch + tick skip the webhook entirely (visible in
+      // admin as "circuit open"). A successful delivery resets the
+      // counter and clears the timestamp; the operator can also
+      // manually re-enable to clear the breaker via the existing
+      // toggle endpoint.
+      const addColumn = (table, columnSql) => {
+        try { db.prepare(`ALTER TABLE ${table} ADD COLUMN ${columnSql}`).run(); }
+        catch (err) {
+          if (!/duplicate column name/i.test(String(err?.message || err))) throw err;
+        }
+      };
+      addColumn("webhooks", "consecutive_failures INTEGER NOT NULL DEFAULT 0");
+      addColumn("webhooks", "circuit_open_until TEXT");
+      setVersion(19);
+    }
   })();
   db.pragma("foreign_keys = ON");
 }

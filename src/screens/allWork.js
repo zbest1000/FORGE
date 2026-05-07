@@ -16,7 +16,7 @@
 
 import { el, mount, tabs } from "../core/ui.js";
 import { state } from "../core/store.js";
-import { navigate } from "../core/router.js";
+import { navigate, queryParams, updateQueryParams } from "../core/router.js";
 import { helpHint, helpLinkChip } from "../core/help.js";
 import {
   kanbanView,
@@ -27,14 +27,14 @@ import {
   batchBar,
 } from "./workBoard.js";
 
-const SS_VIEW       = "allwork.view";
-const SS_FILTER     = "allwork.filter";
-const SS_STATUS     = "allwork.status";
-const SS_ASSIGNEE   = "allwork.assignee";
-const SS_PROJECT    = "allwork.project";
-const SS_DUE        = "allwork.due";
-const SS_COMPLETED  = "allwork.includeCompleted";
-const SS_BATCH      = "allwork.batch";
+// Filter state lives in the URL (`#/work?status=Open&due=overdue`) so it
+// can be bookmarked, shared, and walked through browser history. The
+// previous sessionStorage-only model made filtered views invisible to
+// anything outside the active tab. SS_BATCH stays session-local because
+// multi-select state is an interaction artifact, not navigation state.
+const SS_VIEW   = "allwork.view";    // local: which tab the user last had open
+const SS_BATCH  = "allwork.batch";   // local: per-tab multi-select scratch
+// URL params: q, status, assignee, project, due, completed
 
 const STATUS_OPTIONS = ["Backlog", "Open", "In Progress", "In Review", "Blocked", "Approved", "Done", "Closed"];
 
@@ -98,20 +98,37 @@ function headerRow(matchCount, total) {
 }
 
 function readFilters() {
+  // URL → current view's filter set. Defaults match the pre-URL behaviour
+  // (any due, hide done/closed) so a bare `/work` URL renders the same
+  // active-work view users were used to.
+  const q = queryParams();
   return {
-    text:    sessionStorage.getItem(SS_FILTER) || "",
-    status:  sessionStorage.getItem(SS_STATUS) || "",
-    assignee:sessionStorage.getItem(SS_ASSIGNEE) || "",
-    project: sessionStorage.getItem(SS_PROJECT) || "",
-    due:     sessionStorage.getItem(SS_DUE) || "any",
-    includeCompleted: sessionStorage.getItem(SS_COMPLETED) === "1",
+    text:    q.get("q") || "",
+    status:  q.get("status") || "",
+    assignee:q.get("assignee") || "",
+    project: q.get("project") || "",
+    due:     q.get("due") || "any",
+    includeCompleted: q.get("completed") === "1",
   };
 }
 
+// Mirror of readFilters() keys → URL param names. Single source of truth
+// so a typo in setFilter() can't drift out of sync from readFilters().
+const FILTER_PARAM = {
+  text: "q", status: "status", assignee: "assignee",
+  project: "project", due: "due", includeCompleted: "completed",
+};
+
 function setFilter(key, value) {
-  if (value) sessionStorage.setItem(key, value);
-  else sessionStorage.removeItem(key);
-  renderAllWork();
+  // The hashchange handler re-renders automatically, so we don't need to
+  // call renderAllWork() here. updateQueryParams treats "" / null / false
+  // as "delete this key" so the URL stays clean of empty params.
+  const param = FILTER_PARAM[key] || key;
+  // includeCompleted is a boolean — encode "1" / delete.
+  const v = key === "includeCompleted"
+    ? (value ? "1" : "")
+    : (value || "");
+  updateQueryParams({ [param]: v });
 }
 
 function filterBar(filters) {
@@ -128,7 +145,7 @@ function filterBar(filters) {
     clearTimeout(timer);
     const v = /** @type {HTMLInputElement} */ (search).value;
     timer = setTimeout(() => {
-      setFilter(SS_FILTER, v);
+      setFilter("text", v);
       // Restore focus after re-render so the user can keep typing.
       setTimeout(() => {
         const fresh = document.querySelector('input[aria-label="Search work items"]');
@@ -147,7 +164,7 @@ function filterBar(filters) {
     if (s === filters.status) opt.selected = true;
     statusSel.append(opt);
   });
-  statusSel.addEventListener("change", () => setFilter(SS_STATUS, /** @type {HTMLSelectElement} */ (statusSel).value));
+  statusSel.addEventListener("change", () => setFilter("status", /** @type {HTMLSelectElement} */ (statusSel).value));
 
   const assigneeSel = el("select", { class: "select sm", "aria-label": "Filter by assignee" });
   const assigneeOpts = [
@@ -162,7 +179,7 @@ function filterBar(filters) {
     if (o.value === filters.assignee) opt.selected = true;
     assigneeSel.append(opt);
   }
-  assigneeSel.addEventListener("change", () => setFilter(SS_ASSIGNEE, /** @type {HTMLSelectElement} */ (assigneeSel).value));
+  assigneeSel.addEventListener("change", () => setFilter("assignee", /** @type {HTMLSelectElement} */ (assigneeSel).value));
 
   const projectSel = el("select", { class: "select sm", "aria-label": "Filter by project" });
   const projectOpts = [
@@ -176,7 +193,7 @@ function filterBar(filters) {
     if (o.value === filters.project) opt.selected = true;
     projectSel.append(opt);
   }
-  projectSel.addEventListener("change", () => setFilter(SS_PROJECT, /** @type {HTMLSelectElement} */ (projectSel).value));
+  projectSel.addEventListener("change", () => setFilter("project", /** @type {HTMLSelectElement} */ (projectSel).value));
 
   const dueSel = el("select", { class: "select sm", "aria-label": "Filter by due date" });
   const dueOpts = [
@@ -193,13 +210,13 @@ function filterBar(filters) {
     if (o.value === filters.due) opt.selected = true;
     dueSel.append(opt);
   }
-  dueSel.addEventListener("change", () => setFilter(SS_DUE, /** @type {HTMLSelectElement} */ (dueSel).value));
+  dueSel.addEventListener("change", () => setFilter("due", /** @type {HTMLSelectElement} */ (dueSel).value));
 
   const completedToggle = el("label", { class: "row", style: { gap: "4px", alignItems: "center" } }, [
     el("input", {
       type: "checkbox",
       checked: filters.includeCompleted,
-      onChange: (e) => setFilter(SS_COMPLETED, /** @type {HTMLInputElement} */ (e.target).checked ? "1" : ""),
+      onChange: (e) => setFilter("includeCompleted", /** @type {HTMLInputElement} */ (e.target).checked),
     }),
     el("span", { class: "tiny" }, ["Include done / closed"]),
   ]);
@@ -207,8 +224,9 @@ function filterBar(filters) {
   const clearBtn = el("button", {
     class: "btn sm ghost",
     onClick: () => {
-      [SS_FILTER, SS_STATUS, SS_ASSIGNEE, SS_PROJECT, SS_DUE, SS_COMPLETED].forEach(k => sessionStorage.removeItem(k));
-      renderAllWork();
+      // One-shot wipe: drop every filter param at once. The hashchange
+      // handler triggers the re-render automatically.
+      updateQueryParams({ q: "", status: "", assignee: "", project: "", due: "", completed: "" });
     },
   }, ["Clear filters"]);
 
@@ -233,25 +251,25 @@ function filterBar(filters) {
 
 function activeFilterChips(filters, projects, users) {
   const chips = [];
-  if (filters.text) chips.push(filterChip(`"${filters.text}"`, () => setFilter(SS_FILTER, "")));
-  if (filters.status) chips.push(filterChip(`Status: ${filters.status}`, () => setFilter(SS_STATUS, "")));
+  if (filters.text) chips.push(filterChip(`"${filters.text}"`, () => setFilter("text", "")));
+  if (filters.status) chips.push(filterChip(`Status: ${filters.status}`, () => setFilter("status", "")));
   if (filters.assignee) {
     const label = filters.assignee === "me" ? "Assigned to me"
       : filters.assignee === "unassigned" ? "Unassigned"
       : (users.find(u => u.id === filters.assignee)?.name || filters.assignee);
-    chips.push(filterChip(`Assignee: ${label}`, () => setFilter(SS_ASSIGNEE, "")));
+    chips.push(filterChip(`Assignee: ${label}`, () => setFilter("assignee", "")));
   }
   if (filters.project) {
     const label = filters.project === "__none__" ? "No project"
       : (projects.find(p => p.id === filters.project)?.name || filters.project);
-    chips.push(filterChip(`Project: ${label}`, () => setFilter(SS_PROJECT, "")));
+    chips.push(filterChip(`Project: ${label}`, () => setFilter("project", "")));
   }
   if (filters.due && filters.due !== "any") {
     const label = ({ overdue: "Overdue", today: "Due today", week: "This week", month: "This month", "no-due": "No due date" })[filters.due] || filters.due;
-    chips.push(filterChip(`Due: ${label}`, () => setFilter(SS_DUE, "")));
+    chips.push(filterChip(`Due: ${label}`, () => setFilter("due", "")));
   }
   if (!filters.includeCompleted) {
-    chips.push(filterChip("Hiding done / closed", () => setFilter(SS_COMPLETED, "1"), "muted"));
+    chips.push(filterChip("Hiding done / closed", () => setFilter("includeCompleted", true), "muted"));
   }
   if (!chips.length) return el("div");
   return el("div", { class: "row wrap", style: { gap: "6px", alignItems: "center" } }, [

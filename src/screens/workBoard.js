@@ -416,10 +416,12 @@ function kanbanCard(w, scope, batch, batchKey) {
   const projectName = scope.showProjectColumn
     ? (state.data?.projects || []).find(p => p.id === w.projectId)?.name || w.projectId
     : null;
-  return el("div", {
+  const card = el("div", {
     class: `kanban-card ${isSelected ? "selected" : ""}`,
     style: isSelected ? { boxShadow: "0 0 0 2px var(--accent) inset" } : {},
     draggable: "true",
+    "data-item-id": w.id,
+    // HTML5 drag/drop — works great on mouse, doesn't fire on touch.
     onDragstart: (e) => { e.dataTransfer.setData("text/plain", w.id); e.currentTarget.classList.add("dragging"); },
     onDragend: (e) => e.currentTarget.classList.remove("dragging"),
     onClick: (e) => { if (e.shiftKey) { toggleBatch(w.id, batchKey); scope.rerender(); } else openItem(w.id); },
@@ -437,6 +439,74 @@ function kanbanCard(w, scope, batch, batchKey) {
       (w.labels || []).slice(0, 2).map(l => badge(l, "")),
     ]),
   ]);
+
+  // Touch / pen drag path: HTML5 drag/drop is mouse-only on every major
+  // mobile browser, so on touch we run our own pointerdown/move/up FSM
+  // and use elementsFromPoint() to hit-test drop columns. Mouse interactions
+  // get pointerType === "mouse" and we no-op here so the native HTML5 path
+  // owns them (avoids double-handling).
+  attachTouchDrag(card, w, scope);
+  return card;
+}
+
+// Touch-friendly drag-drop helper. Activates only when the pointer is a
+// touch or pen (mouse uses HTML5 drag/drop above). Tracks initial press,
+// shows a "dragging" class on the card after a small movement threshold,
+// and on release hit-tests against `.kanban-col` elements at the release
+// coordinate to find the destination status.
+function attachTouchDrag(card, item, scope) {
+  let dragging = false;
+  let startX = 0, startY = 0;
+  let activePointerId = null;
+  const THRESHOLD_PX = 6; // small to feel responsive but ignore taps
+  const HOVER_ATTR = "data-touch-hover";
+
+  card.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse") return; // mouse uses HTML5 drag/drop
+    activePointerId = e.pointerId;
+    startX = e.clientX; startY = e.clientY;
+    dragging = false;
+    // Don't preventDefault yet — let a tap propagate to onClick if no drag.
+  });
+
+  card.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== activePointerId) return;
+    const dx = Math.abs(e.clientX - startX);
+    const dy = Math.abs(e.clientY - startY);
+    if (!dragging && (dx > THRESHOLD_PX || dy > THRESHOLD_PX)) {
+      dragging = true;
+      card.classList.add("dragging");
+      try { card.setPointerCapture(e.pointerId); } catch {}
+    }
+    if (!dragging) return;
+    e.preventDefault();
+    // Highlight the column currently under the pointer.
+    const cols = document.querySelectorAll(".kanban-col");
+    cols.forEach(c => c.removeAttribute(HOVER_ATTR));
+    const els = document.elementsFromPoint(e.clientX, e.clientY);
+    const target = els.find(n => n.classList && n.classList.contains("kanban-col"));
+    if (target) target.setAttribute(HOVER_ATTR, "true");
+  });
+
+  const finish = (e, commit) => {
+    if (e.pointerId !== activePointerId) return;
+    activePointerId = null;
+    if (!dragging) return;
+    card.classList.remove("dragging");
+    document.querySelectorAll(".kanban-col").forEach(c => c.removeAttribute(HOVER_ATTR));
+    if (commit) {
+      const els = document.elementsFromPoint(e.clientX, e.clientY);
+      const target = els.find(n => n.classList && n.classList.contains("kanban-col"));
+      const newStatus = target?.dataset?.status;
+      if (newStatus && newStatus !== item.status) {
+        changeStatus(item.id, newStatus);
+        scope.rerender();
+      }
+    }
+    dragging = false;
+  };
+  card.addEventListener("pointerup",     (e) => finish(e, true));
+  card.addEventListener("pointercancel", (e) => finish(e, false));
 }
 
 // ---------- table ----------

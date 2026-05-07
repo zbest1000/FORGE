@@ -1023,10 +1023,17 @@ body.dock-hidden .screen-container,
   opacity: 0.5;
 }
 
-.kanban-col.drop-active {
+.kanban-col.drop-active,
+.kanban-col[data-touch-hover="true"] {
   border-color: var(--accent);
-  background: rgba(56,189,248,0.05);
+  background: rgba(56, 189, 248, 0.05);
 }
+/* Disable the browser's default touch behaviours on cards so a press-and-drag
+   doesn't start a text selection or scroll the column instead of moving the
+   card. `touch-action: none` is the cleanest way to opt into pointer-event
+   ownership while still allowing taps (the touch-drag helper only commits a
+   drag after a small movement threshold). */
+.kanban-card { touch-action: none; }
 
 .kanban-card .card-id {
   font-family: var(--font-mono);
