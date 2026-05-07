@@ -12,7 +12,7 @@
 
 import { el, mount } from "../core/ui.js";
 import { state } from "../core/store.js";
-import { HELP_TOPICS, listTopicsBySection, getTopic, helpLinkChip } from "../core/help.js";
+import { listTopicsBySection, getTopic, helpLinkChip } from "../core/help.js";
 
 export function renderHelpSite() {
   const root = document.getElementById("screenContainer");

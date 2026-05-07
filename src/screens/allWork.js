@@ -11,7 +11,7 @@
 // preset (overdue / this week / this month / any) + show-completed
 // toggle. Each filter persists in sessionStorage.
 
-import { el, mount, badge, toast, tabs } from "../core/ui.js";
+import { el, mount, badge, tabs } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { navigate } from "../core/router.js";
 import { helpHint, helpLinkChip } from "../core/help.js";
@@ -125,7 +125,6 @@ function filterBar(filters) {
   statusSel.addEventListener("change", () => setFilter(SS_STATUS, /** @type {HTMLSelectElement} */ (statusSel).value));
 
   const assigneeSel = el("select", { class: "select sm", "aria-label": "Filter by assignee" });
-  const meId = d.currentUserId;
   const assigneeOpts = [
     { value: "", label: "All assignees" },
     { value: "me", label: "Assigned to me" },
@@ -201,7 +200,6 @@ function collectWorkItems() {
 }
 
 function applyFilters(items, filters) {
-  const now = Date.now();
   const startOfDay = (() => { const x = new Date(); x.setHours(0,0,0,0); return x.getTime(); })();
   const startOfTomorrow = startOfDay + 24 * 60 * 60 * 1000;
   const startOfNextWeek = startOfDay + 7 * 24 * 60 * 60 * 1000;

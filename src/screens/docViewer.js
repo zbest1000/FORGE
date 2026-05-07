@@ -10,7 +10,7 @@
 //   * Revision timeline with supersede chain markers
 //   * Approval banner + request-approval flow (delegated to /approvals)
 
-import { el, mount, card, badge, toast, chip, modal, formRow, input, select, textarea, prompt, loadingState, inputWithSuggestions, confirm } from "../core/ui.js";
+import { el, mount, card, badge, toast, modal, formRow, input, select, textarea, prompt, loadingState, inputWithSuggestions, confirm } from "../core/ui.js";
 import { idle } from "../core/idle.js";
 import { state, update, getById } from "../core/store.js";
 import { audit } from "../core/audit.js";
