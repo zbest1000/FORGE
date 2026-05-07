@@ -32,6 +32,7 @@
 // (REST surface — historian samples).
 
 import { db, jsonOrDefault } from "../db.js";
+import { withSpan } from "../tracing.js";
 
 export const KIND = "sql";
 
@@ -134,24 +135,41 @@ async function pollSystem(system, bindings) {
   // mssql / postgresql / mysql / external-sqlite all flow through
   // the same wire-execution path. Per-binding dialect is read from
   // the binding row (v17) or fuzzy-matched from system metadata.
-  for (const binding of bindings) {
-    try {
-      const cursor = _state.cursors.get(binding.id) || new Date(0).toISOString();
-      const samples = await fetchSamplesForBinding({ system, binding, since: cursor });
-      for (const s of samples) {
-        await _state.dispatch({
-          binding,
-          value: s.value,
-          ts: s.ts,
-          quality: s.quality || "Good",
-          raw: s.raw || null,
-        });
-        _state.cursors.set(binding.id, s.ts);
+  //
+  // Each poll cycle is an OTel span carrying the system id + binding
+  // count so operators with tracing pipelines can spot stalled or
+  // slow polls without grepping logs. Per-binding errors don't bubble
+  // through the span — they're caught + logged inline so one bad
+  // binding doesn't poison the whole system's poll cycle.
+  await withSpan("sql.poll", {
+    system_id: system.id,
+    binding_count: bindings.length,
+  }, async (span) => {
+    let dispatched = 0;
+    let errors = 0;
+    for (const binding of bindings) {
+      try {
+        const cursor = _state.cursors.get(binding.id) || new Date(0).toISOString();
+        const samples = await fetchSamplesForBinding({ system, binding, since: cursor });
+        for (const s of samples) {
+          await _state.dispatch({
+            binding,
+            value: s.value,
+            ts: s.ts,
+            quality: s.quality || "Good",
+            raw: s.raw || null,
+          });
+          _state.cursors.set(binding.id, s.ts);
+          dispatched++;
+        }
+      } catch (err) {
+        errors++;
+        _state.logger?.warn?.({ err: String(err?.message || err), bindingId: binding.id, code: err?.code }, "[sql-registry] binding poll failed");
       }
-    } catch (err) {
-      _state.logger?.warn?.({ err: String(err?.message || err), bindingId: binding.id, code: err?.code }, "[sql-registry] binding poll failed");
     }
-  }
+    span.setAttribute("forge.samples_dispatched", dispatched);
+    span.setAttribute("forge.binding_errors", errors);
+  });
 }
 
 /**

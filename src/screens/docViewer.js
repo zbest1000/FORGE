@@ -24,6 +24,7 @@ import { detectCad, supportedExtensions } from "../core/cad.js";
 import { renderCad } from "../core/cad-viewer.js";
 import { currentUserId, currentUser, currentRole } from "../core/groups.js";
 import { buildAnnotationOverlay, listAnnotations } from "../core/pdfAnnotations.js";
+import { query as unifiedQuery } from "../core/search.js";
 import { helpHint, helpLinkChip } from "../core/help.js";
 // Toolbar + constants both live in dedicated modules now. This file
 // no longer references the viewer-config constants directly — they're
@@ -39,20 +40,54 @@ import {
   viewerFormBar,
 } from "./docViewerToolbar.js";
 
+/**
+ * Filter the document list using the unified search engine. Empty
+ * filter returns the input unchanged; non-empty queries hit the
+ * Document-collection facet of the engine and the result is sorted
+ * by BM25 score (engine ranking).
+ *
+ * Falls back to the previous substring-on-name behaviour when the
+ * engine isn't ready yet (very early boot before buildIndex()).
+ *
+ * @param {any[]} docs
+ * @param {string} filter
+ * @returns {any[]}
+ */
+function filterDocsViaUnifiedSearch(docs, filter) {
+  if (!filter) return docs;
+  try {
+    const r = unifiedQuery(filter, { facets: { kind: "Document" }, limit: 200 });
+    if (r && r.hits && r.hits.length) {
+      // Map back to the live document records so downstream rendering
+      // (which expects `doc.currentRevisionId`, `doc.uploaderId`, etc.)
+      // stays unchanged. The engine returns `raw` for each hit.
+      const order = new Map();
+      r.hits.forEach((h, i) => order.set(h.id, i));
+      return docs
+        .filter(d => order.has(d.id))
+        .sort((a, b) => order.get(a.id) - order.get(b.id));
+    }
+  } catch { /* engine not ready or error — fall through */ }
+  // Fallback: substring on name / id / discipline / area / line.
+  const f = filter.toLowerCase();
+  return docs.filter(d =>
+    (d.name || "").toLowerCase().includes(f)
+    || (d.id || "").toLowerCase().includes(f)
+    || (d.discipline || "").toLowerCase().includes(f)
+    || (d.area || "").toLowerCase().includes(f)
+    || (d.line || "").toLowerCase().includes(f)
+  );
+}
+
 export function renderDocsIndex() {
   const root = document.getElementById("screenContainer");
   const d = state.data;
-  // Toolbar persists its search query in sessionStorage so navigating away
-  // and back keeps the user's filter.
-  const filter = (sessionStorage.getItem("docs.index.filter") || "").toLowerCase();
-  const docs = (d.documents || []).filter(doc =>
-    !filter
-    || (doc.name || "").toLowerCase().includes(filter)
-    || (doc.id || "").toLowerCase().includes(filter)
-    || (doc.discipline || "").toLowerCase().includes(filter)
-    || (doc.area || "").toLowerCase().includes(filter)
-    || (doc.line || "").toLowerCase().includes(filter)
-  );
+  // Toolbar persists its search query in sessionStorage so navigating
+  // away and back keeps the user's filter. The filter now goes through
+  // the unified search engine (BM25 + prefix + fuzzy) faceted to the
+  // Document collection — same ranking as /search and the ⌘K palette.
+  const filter = (sessionStorage.getItem("docs.index.filter") || "");
+  const docs = filterDocsViaUnifiedSearch(d.documents || [], filter);
   const uid = currentUserId();
   mount(root, [
     docsToolbar(filter),
