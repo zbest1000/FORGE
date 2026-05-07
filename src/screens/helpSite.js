@@ -13,6 +13,7 @@
 import { el, mount } from "../core/ui.js";
 import { state } from "../core/store.js";
 import { listTopicsBySection, getTopic, helpLinkChip } from "../core/help.js";
+import { query as unifiedQuery } from "../core/search.js";
 
 export function renderHelpSite() {
   const root = document.getElementById("screenContainer");
@@ -27,16 +28,19 @@ export function renderHelpSite() {
   const searchState = { q: "" };
   const tocSections = el("div", { class: "doc-toc-sections" }, []);
   const renderTocSections = () => {
-    const q = searchState.q.toLowerCase();
+    const q = searchState.q;
+    // Compute the set of topic IDs that match the current query via the
+    // unified search engine (BM25 + prefix + fuzzy on title/summary/
+    // section/body). Empty query shows everything; non-empty narrows
+    // each section to the matched IDs while keeping the section-grouped
+    // tree intact.
+    const matchedIds = q
+      ? new Set(unifiedQuery(q, { facets: { kind: "Help" }, limit: 500 }).hits.map(h => h.id))
+      : null;
     tocSections.replaceChildren(...sections.map(({ section, topics }) => {
-      // Match against title / summary / section / body so a search for
-       // a specific term inside an article body still surfaces the topic.
-      const filtered = q ? topics.filter(t =>
-        t.title.toLowerCase().includes(q) ||
-        t.summary.toLowerCase().includes(q) ||
-        t.section.toLowerCase().includes(q) ||
-        (t.body || "").toLowerCase().includes(q)
-      ) : topics;
+      const filtered = matchedIds
+        ? topics.filter(t => matchedIds.has(t.id))
+        : topics;
       if (!filtered.length) return null;
       const isOpen = !q ? (sessionStorage.getItem(`help.open.${slug(section)}`) !== "0") : true;
       const toggle = () => {

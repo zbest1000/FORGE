@@ -32,7 +32,8 @@
     "src/core/idle.js",
     "src/core/screens-registry.js",
     "src/core/semantic.js",
-    "src/screens/docViewerConstants.js"
+    "src/screens/docViewerConstants.js",
+    "src/screens/docViewerKind.js"
   ],
   "exclude": [
     "node_modules",
