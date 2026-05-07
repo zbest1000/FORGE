@@ -42,6 +42,7 @@
 //     doesn't need a network broker.
 
 import { db, jsonOrDefault } from "../db.js";
+import { withSpan } from "../tracing.js";
 import {
   decodePayload as decodeSparkplugPayload,
   extractMetricSample as extractSparkplugMetric,
@@ -175,7 +176,15 @@ async function connectSystem(system, sysConfig) {
   const factory = _clientFactory || realMqttClientFactory;
   let client;
   try {
-    client = await factory(url, opts);
+    // Span around the connect() so operators with OTel pipelines see
+    // per-system connect latency + which factory (mock vs real). The
+    // url is intentionally NOT sent as an attribute — it can carry
+    // creds in the userinfo segment.
+    client = await withSpan("mqtt.connect", {
+      system_id: system.id,
+      protocol_version: protocolVersion,
+      factory: _clientFactory ? "test" : "real",
+    }, async () => factory(url, opts));
   } catch (err) {
     _state.logger?.warn?.({ err: String(err?.message || err), systemId: system.id }, "[mqtt-registry] connect failed");
     return null;
