@@ -39,6 +39,7 @@ const _undoStack = [];
 /** @type {HistoryEntry[]} */
 const _redoStack = [];
 
+/** @param {any} obj @param {string} path @returns {any} */
 function getPath(obj, path) {
   if (!path) return obj;
   let cur = obj;
@@ -49,6 +50,7 @@ function getPath(obj, path) {
   return cur;
 }
 
+/** @param {any} obj @param {string} path @param {any} value */
 function setPath(obj, path, value) {
   if (!path) return;
   const segs = path.split(".");
@@ -63,6 +65,7 @@ function setPath(obj, path, value) {
 // Deep clone via structuredClone — falls back to JSON for environments
 // without it (older test harnesses). Caller should keep transactions
 // scoped to JSON-safe slices (no Maps / Sets / functions).
+/** @template T @param {T} v @returns {T} */
 function clone(v) {
   try { return structuredClone(v); } catch { return JSON.parse(JSON.stringify(v)); }
 }
@@ -77,7 +80,7 @@ export function transaction(name, paths, mutator) {
   const pathArr = Array.isArray(paths) ? paths : [paths];
   const before = pathArr.map(p => clone(getPath(state, p)));
 
-  update(s => {
+  update(/** @param {any} s */ (s) => {
     mutator(s);
     // Multi-path transactions almost always touch arrays in-place;
     // mark each watched slice dirty so subscribers fire even when the
@@ -102,7 +105,7 @@ export function transaction(name, paths, mutator) {
 export function undo() {
   const entry = _undoStack.pop();
   if (!entry) return null;
-  update(s => {
+  update(/** @param {any} s */ (s) => {
     entry.paths.forEach((p, i) => setPath(s, p, clone(entry.before[i])));
     for (const p of entry.paths) markDirty(p);
   });
@@ -118,7 +121,7 @@ export function undo() {
 export function redo() {
   const entry = _redoStack.pop();
   if (!entry) return null;
-  update(s => {
+  update(/** @param {any} s */ (s) => {
     entry.paths.forEach((p, i) => setPath(s, p, clone(entry.after[i])));
     for (const p of entry.paths) markDirty(p);
   });

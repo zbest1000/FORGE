@@ -46,6 +46,8 @@ export const ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
 /**
  * Step zoom down one level. Returns the next-lower zoom (clamped to
  * the smallest level). Pure — safe to call repeatedly.
+ * @param {number} z
+ * @returns {number}
  */
 export function prevZoom(z) {
   const i = ZOOM_LEVELS.findIndex(l => l >= z);
@@ -55,6 +57,8 @@ export function prevZoom(z) {
 /**
  * Step zoom up one level. Returns the next-higher zoom (clamped to
  * the largest level). Pure — safe to call repeatedly.
+ * @param {number} z
+ * @returns {number}
  */
 export function nextZoom(z) {
   const i = ZOOM_LEVELS.findIndex(l => l > z);

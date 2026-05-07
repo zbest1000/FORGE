@@ -60,6 +60,12 @@ jobs:
       - name: Type-check JS (catches undefined identifiers, missing imports)
         run: npm run typecheck
 
+      - name: Strict type-check (modules promoted to strict null + noImplicitAny)
+        # Bounded set of modules in tsconfig.strict.json; failure here
+        # means a regression in a module that was previously clean. New
+        # modules join the strict set in dedicated PRs.
+        run: npm run typecheck:strict
+
   # ---------------------------------------------------------------------------
   # 2. Build + tests across supported Node versions and operating systems.
   #    FORGE ships as a self-hosted server on Linux, macOS, and Windows in

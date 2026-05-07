@@ -22,6 +22,7 @@
     "restore": "node server/backup.js restore",
     "test": "node --test --test-concurrency=1 test/*.test.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json",
     "sbom": "cyclonedx-npm --output-file bom.json",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "license:keygen": "node scripts/license/keygen.js",
