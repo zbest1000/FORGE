@@ -12,6 +12,10 @@ import { normalizeSeed } from "./src/core/normalize.js";
 // of static + dynamic imports hit Vite's `INEFFECTIVE_DYNAMIC_IMPORT`
 // warning and prevented chunk separation; now they're consistently
 // static and the self-test below uses the same in-scope references.
+// `auditMod` is the namespace import — the store wires the audit impl
+// at boot via registerAuditImpl(auditMod) so audit() can be called
+// from anywhere without circular store→audit→store imports.
+import * as auditMod from "./src/core/audit.js";
 import { initAuditLedger, audit, verifyLedger, exportAuditPack, verifyAuditPack } from "./src/core/audit.js";
 import { buildIndex, scheduleRebuild, query as searchQuery } from "./src/core/search.js";
 import { installHotkeys } from "./src/core/hotkeys.js";

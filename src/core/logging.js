@@ -38,9 +38,14 @@ const PROD_DEFAULT = "warn";
 function detectDefault() {
   // Vite injects `import.meta.env.MODE`; in source-mode dev it doesn't,
   // so fall back to a hostname check (localhost / 127.* / *.local).
+  // `import.meta.env` isn't part of the ImportMeta type definition that
+  // tsc's default lib ships with — cast through `any` so the type-check
+  // still passes (we already guard with typeof + truthy checks).
   try {
-    if (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.MODE) {
-      return import.meta.env.MODE === "production" ? PROD_DEFAULT : DEV_DEFAULT;
+    /** @type {any} */
+    const meta = (typeof import.meta !== "undefined") ? import.meta : null;
+    if (meta && meta.env && meta.env.MODE) {
+      return meta.env.MODE === "production" ? PROD_DEFAULT : DEV_DEFAULT;
     }
   } catch { /* import.meta unavailable in some build paths */ }
   try {

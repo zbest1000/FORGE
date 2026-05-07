@@ -495,8 +495,13 @@ function attachTouchDrag(card, item, scope) {
     card.classList.remove("dragging");
     document.querySelectorAll(".kanban-col").forEach(c => c.removeAttribute(HOVER_ATTR));
     if (commit) {
+      // `elementsFromPoint` is typed as `Element[]`; `.dataset` lives on
+      // HTMLElement, so we narrow before reading. The runtime check
+      // (.classList && .contains) already implies an element subclass.
       const els = document.elementsFromPoint(e.clientX, e.clientY);
-      const target = els.find(n => n.classList && n.classList.contains("kanban-col"));
+      const target = /** @type {HTMLElement | undefined} */ (
+        els.find(n => n instanceof HTMLElement && n.classList.contains("kanban-col"))
+      );
       const newStatus = target?.dataset?.status;
       if (newStatus && newStatus !== item.status) {
         changeStatus(item.id, newStatus);
