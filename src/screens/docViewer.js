@@ -25,6 +25,17 @@ import { renderCad } from "../core/cad-viewer.js";
 import { currentUserId, currentUser, currentRole } from "../core/groups.js";
 import { buildAnnotationOverlay, listAnnotations } from "../core/pdfAnnotations.js";
 import { helpHint, helpLinkChip } from "../core/help.js";
+// Constants + pure helpers live in their own module so a future PR can
+// pull more of the toolbar render code (viewerTopBar, viewerModeBar,
+// etc.) out of this file without circular imports.
+import {
+  VIEWER_MODES,
+  ANNOTATE_TOOLS,
+  SHAPE_TOOLS,
+  ZOOM_LEVELS,
+  prevZoom,
+  nextZoom,
+} from "./docViewerConstants.js";
 
 export function renderDocsIndex() {
   const root = document.getElementById("screenContainer");
@@ -428,31 +439,8 @@ function pickOther(doc, rev) {
 // State that survives a re-render lives in sessionStorage keyed by
 // doc id (same convention used for active page / active revision).
 
-const VIEWER_MODES = [
-  { id: "view",     label: "View" },
-  { id: "annotate", label: "Annotate" },
-  { id: "shapes",   label: "Shapes" },
-  { id: "insert",   label: "Insert" },
-  { id: "form",     label: "Form" },
-  { id: "redact",   label: "Redact" },
-];
-
-const ANNOTATE_TOOLS = [
-  { id: "comment",   label: "Sticky note", icon: "🗨", impl: true },
-  { id: "highlight", label: "Highlight",   icon: "🖍", impl: true },
-  { id: "underline", label: "Underline",   icon: "U̲", impl: true },
-  { id: "strike",    label: "Strikethrough", icon: "S̶", impl: true },
-  { id: "draw",      label: "Free draw",   icon: "✎", impl: true },
-];
-
-const SHAPE_TOOLS = [
-  { id: "rect",    label: "Rectangle", icon: "▭" },
-  { id: "ellipse", label: "Ellipse",   icon: "◯" },
-  { id: "line",    label: "Line",      icon: "—" },
-  { id: "arrow",   label: "Arrow",     icon: "→" },
-];
-
-const ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
+// VIEWER_MODES / ANNOTATE_TOOLS / SHAPE_TOOLS / ZOOM_LEVELS / prevZoom /
+// nextZoom now live in ./docViewerConstants.js — imported above.
 
 function getMode(docId)  { return sessionStorage.getItem(SK(docId, "mode")) || "view"; }
 function getZoom(docId)  { return parseFloat(sessionStorage.getItem(SK(docId, "zoom")) || "1.25"); }
@@ -623,14 +611,7 @@ function mountAnnotationOverlay(host, doc, rev, page, mode) {
   host.append(overlay);
 }
 
-function prevZoom(z) {
-  const i = ZOOM_LEVELS.findIndex(l => l >= z);
-  return i <= 0 ? ZOOM_LEVELS[0] : ZOOM_LEVELS[i - 1];
-}
-function nextZoom(z) {
-  const i = ZOOM_LEVELS.findIndex(l => l > z);
-  return i === -1 ? ZOOM_LEVELS[ZOOM_LEVELS.length - 1] : ZOOM_LEVELS[i];
-}
+// prevZoom / nextZoom moved to ./docViewerConstants.js.
 
 function paperPage(doc, rev, page, opts = {}) {
   const zoom = opts.zoom || 1.25;

@@ -66,3 +66,42 @@ export function traceContextCarrier({ traceId, spanId = "0000000000000000", flag
   const safeSpan = String(spanId || "").replace(/[^a-f0-9]/gi, "").padEnd(16, "0").slice(0, 16).toLowerCase();
   return { traceparent: `00-${safeTrace}-${safeSpan}-${flags}` };
 }
+
+/**
+ * Run `fn` inside a custom span. If OTel isn't initialised (or the
+ * @opentelemetry/api import fails), `fn` is invoked directly with no
+ * span — so the codepath stays cheap when tracing is disabled.
+ *
+ * Span attributes:
+ *   - `forge.<key>` — caller-supplied attrs from `attrs`
+ *   - on error: span.recordException + status=ERROR
+ *
+ * Usage:
+ *   const result = await withSpan("webhook.deliver", { webhookId }, async (span) => {
+ *     span.setAttribute("forge.attempt", attempt);
+ *     return await fetch(...);
+ *   });
+ */
+export async function withSpan(name, attrs, fn) {
+  let api;
+  try { api = await import("@opentelemetry/api"); }
+  catch { return fn({ setAttribute() {}, recordException() {}, setStatus() {} }); }
+
+  const tracer = api.trace.getTracer("forge");
+  return await tracer.startActiveSpan(name, async (span) => {
+    try {
+      for (const [k, v] of Object.entries(attrs || {})) {
+        span.setAttribute(`forge.${k}`, v == null ? "" : String(v));
+      }
+      const out = await fn(span);
+      span.setStatus({ code: api.SpanStatusCode.OK });
+      return out;
+    } catch (err) {
+      span.recordException(err);
+      span.setStatus({ code: api.SpanStatusCode.ERROR, message: String(err?.message || err) });
+      throw err;
+    } finally {
+      span.end();
+    }
+  });
+}
