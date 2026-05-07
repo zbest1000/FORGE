@@ -14,6 +14,7 @@ import { state, update } from "./store.js";
 import { audit } from "./audit.js";
 import { vendor } from "./vendor.js";
 import { semanticRerank } from "./semantic.js";
+import { HELP_TOPICS } from "./help.js";
 
 const COLLECTIONS = [
   { name: "documents",  kind: "Document",  route: o => `/doc/${o.id}`,               fields: ["name", "discipline", "sensitivity", "labels"] },
@@ -26,6 +27,10 @@ const COLLECTIONS = [
   { name: "channels",   kind: "Channel",   route: o => `/channel/${o.id}`,           fields: ["name", "kind"] },
   { name: "projects",   kind: "Project",   route: o => `/work-board/${o.id}`,        fields: ["name", "status"] },
   { name: "teamSpaces", kind: "TeamSpace", route: o => `/team-space/${o.id}`,        fields: ["name", "summary"] },
+  // Help topics are pulled from the help registry, not from state.data,
+  // so collectDocs() has a special case below to populate them. The
+  // route opens the help page anchored to the topic id.
+  { name: "helpTopics", kind: "Help",      route: o => `/help?topic=${encodeURIComponent(o.id)}`, fields: ["title", "summary", "section", "body"] },
 ];
 
 let _miniSearch = null;
@@ -45,11 +50,25 @@ function extractText(collection, obj) {
   return parts.join(" ");
 }
 
+/** Sources for each collection: most read from state.data, but help
+ *  topics come from the bundled registry (and any runtime overrides
+ *  applied via applyHelpOverrides()). Returns the list of objects
+ *  that the indexer will tokenise. */
+function sourceFor(collectionName) {
+  if (collectionName === "helpTopics") {
+    // Map id → object with `id` field included so extractText + the
+    // route closure can both reach it. Bundled HELP_TOPICS plus any
+    // operator-supplied overrides are visible to search the same way.
+    return Object.entries(HELP_TOPICS).map(([id, t]) => ({ id, ...t }));
+  }
+  return state.data?.[collectionName] || [];
+}
+
 function collectDocs() {
   const docs = [];
   _docsById = new Map();
   for (const c of COLLECTIONS) {
-    const list = state.data?.[c.name] || [];
+    const list = sourceFor(c.name);
     for (const obj of list) {
       const text = extractText(c, obj);
       const doc = {

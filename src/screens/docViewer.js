@@ -25,6 +25,19 @@ import { renderCad } from "../core/cad-viewer.js";
 import { currentUserId, currentUser, currentRole } from "../core/groups.js";
 import { buildAnnotationOverlay, listAnnotations } from "../core/pdfAnnotations.js";
 import { helpHint, helpLinkChip } from "../core/help.js";
+// Toolbar + constants both live in dedicated modules now. This file
+// no longer references the viewer-config constants directly — they're
+// consumed by docViewerToolbar.js — but the toolbar render functions
+// are still imported here so canvasArea() can lay them out.
+import {
+  viewerTopBar,
+  viewerModeBar,
+  viewerAnnotateBar,
+  viewerShapesBar,
+  viewerRedactBar,
+  viewerInsertBar,
+  viewerFormBar,
+} from "./docViewerToolbar.js";
 
 export function renderDocsIndex() {
   const root = document.getElementById("screenContainer");
@@ -428,31 +441,8 @@ function pickOther(doc, rev) {
 // State that survives a re-render lives in sessionStorage keyed by
 // doc id (same convention used for active page / active revision).
 
-const VIEWER_MODES = [
-  { id: "view",     label: "View" },
-  { id: "annotate", label: "Annotate" },
-  { id: "shapes",   label: "Shapes" },
-  { id: "insert",   label: "Insert" },
-  { id: "form",     label: "Form" },
-  { id: "redact",   label: "Redact" },
-];
-
-const ANNOTATE_TOOLS = [
-  { id: "comment",   label: "Sticky note", icon: "🗨", impl: true },
-  { id: "highlight", label: "Highlight",   icon: "🖍", impl: true },
-  { id: "underline", label: "Underline",   icon: "U̲", impl: true },
-  { id: "strike",    label: "Strikethrough", icon: "S̶", impl: true },
-  { id: "draw",      label: "Free draw",   icon: "✎", impl: true },
-];
-
-const SHAPE_TOOLS = [
-  { id: "rect",    label: "Rectangle", icon: "▭" },
-  { id: "ellipse", label: "Ellipse",   icon: "◯" },
-  { id: "line",    label: "Line",      icon: "—" },
-  { id: "arrow",   label: "Arrow",     icon: "→" },
-];
-
-const ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
+// VIEWER_MODES / ANNOTATE_TOOLS / SHAPE_TOOLS / ZOOM_LEVELS / prevZoom /
+// nextZoom now live in ./docViewerConstants.js — imported above.
 
 function getMode(docId)  { return sessionStorage.getItem(SK(docId, "mode")) || "view"; }
 function getZoom(docId)  { return parseFloat(sessionStorage.getItem(SK(docId, "zoom")) || "1.25"); }
@@ -464,14 +454,32 @@ function setTool(docId, t) { sessionStorage.setItem(SK(docId, "tool"), t); rende
 function canvasArea(doc, rev, activePage) {
   const mode = getMode(doc.id);
   const zoom = getZoom(doc.id);
+  // Toolbar context: bundles the read-only state + the callbacks the
+  // toolbar wants to fire. Each callback flows back into a setMode /
+  // setZoom / setTool / etc. that updates sessionStorage and triggers
+  // a re-render via renderDocViewer({ id }).
+  const tbCtx = {
+    doc, rev, activePage, zoom,
+    activeMode: mode,
+    pageCount: () => getPageCount(doc.id),
+    tool: () => getTool(doc.id),
+    shapeTool: () => getShapeTool(doc.id),
+    onPage: (n) => goPage(doc.id, n),
+    onZoom: (z) => setZoom(doc.id, z),
+    onMode: (m) => setMode(doc.id, m),
+    onTool: (t) => setTool(doc.id, t),
+    onShapeTool: (t) => setShapeTool(doc.id, t),
+    onAttach: attachPdf,
+    onTransmittal: draftTransmittal,
+  };
   return el("div", { class: "viewer-canvas" }, [
-    viewerTopBar(doc, rev, activePage, zoom),
-    viewerModeBar(doc, mode),
-    mode === "annotate" ? viewerAnnotateBar(doc) : null,
-    mode === "shapes"   ? viewerShapesBar(doc)   : null,
-    mode === "redact"   ? viewerRedactBar(doc)   : null,
-    mode === "insert"   ? viewerInsertBar(doc)   : null,
-    mode === "form"     ? viewerFormBar(doc)     : null,
+    viewerTopBar(tbCtx),
+    viewerModeBar(tbCtx),
+    mode === "annotate" ? viewerAnnotateBar(tbCtx) : null,
+    mode === "shapes"   ? viewerShapesBar(tbCtx)   : null,
+    mode === "redact"   ? viewerRedactBar() : null,
+    mode === "insert"   ? viewerInsertBar() : null,
+    mode === "form"     ? viewerFormBar()   : null,
     el("div", { class: `viewer-page mode-${mode}`, id: `paper-${doc.id}` }, [
       paperPage(doc, rev, activePage, { zoom, mode }),
     ]),
@@ -479,126 +487,8 @@ function canvasArea(doc, rev, activePage) {
   ]);
 }
 
-function viewerTopBar(doc, rev, activePage, zoom) {
-  const pct = Math.round(zoom * 100);
-  return el("div", { class: "viewer-toolbar" }, [
-    // Page navigation
-    el("button", {
-      class: "btn sm icon-btn",
-      title: "Previous page",
-      "aria-label": "Previous page",
-      disabled: activePage <= 1,
-      onClick: () => goPage(doc.id, activePage - 1),
-    }, ["◀"]),
-    el("span", { class: "tiny mono", style: { minWidth: "60px", textAlign: "center" } }, [`${activePage} / ${getPageCount(doc.id)}`]),
-    el("button", {
-      class: "btn sm icon-btn",
-      title: "Next page",
-      "aria-label": "Next page",
-      disabled: activePage >= getPageCount(doc.id),
-      onClick: () => goPage(doc.id, activePage + 1),
-    }, ["▶"]),
-    el("span", { class: "viewer-toolbar-divider", "aria-hidden": "true" }),
-    // Zoom
-    el("button", {
-      class: "btn sm icon-btn",
-      title: "Zoom out",
-      "aria-label": "Zoom out",
-      disabled: zoom <= ZOOM_LEVELS[0],
-      onClick: () => setZoom(doc.id, prevZoom(zoom)),
-    }, ["−"]),
-    el("span", { class: "tiny mono", style: { minWidth: "52px", textAlign: "center" } }, [`${pct}%`]),
-    el("button", {
-      class: "btn sm icon-btn",
-      title: "Zoom in",
-      "aria-label": "Zoom in",
-      disabled: zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1],
-      onClick: () => setZoom(doc.id, nextZoom(zoom)),
-    }, ["+"]),
-    el("button", {
-      class: "btn sm",
-      title: "Fit width",
-      onClick: () => setZoom(doc.id, 1.5),
-    }, ["Fit width"]),
-    el("button", {
-      class: "btn sm",
-      title: "Fit page",
-      onClick: () => setZoom(doc.id, 0.85),
-    }, ["Fit page"]),
-    el("span", { style: { flex: 1 } }),
-    // Persistent doc actions on the right
-    el("button", { class: "btn sm", onClick: () => draftTransmittal(doc, rev) }, ["Transmittal"]),
-    el("button", { class: "btn sm", onClick: () => attachPdf(doc, rev) }, [rev.pdfUrl ? "Change PDF" : "Attach PDF"]),
-  ]);
-}
-
-function viewerModeBar(doc, activeMode) {
-  return el("div", { class: "viewer-modebar", role: "tablist", "aria-label": "Viewer mode" },
-    VIEWER_MODES.map(m => el("button", {
-      class: `viewer-mode-btn ${activeMode === m.id ? "active" : ""}`,
-      role: "tab",
-      "aria-selected": activeMode === m.id ? "true" : "false",
-      onClick: () => setMode(doc.id, m.id),
-    }, [m.label]))
-  );
-}
-
-function viewerAnnotateBar(doc) {
-  const tool = getTool(doc.id);
-  return el("div", { class: "viewer-annotate-bar", role: "toolbar", "aria-label": "Annotation tools" }, [
-    ...ANNOTATE_TOOLS.map(t => el("button", {
-      class: `viewer-tool-btn ${tool === t.id ? "active" : ""}`,
-      title: t.label,
-      "aria-label": t.label,
-      onClick: () => setTool(doc.id, t.id),
-    }, [
-      el("span", { class: "viewer-tool-icon", "aria-hidden": "true" }, [t.icon]),
-      el("span", { class: "viewer-tool-label" }, [t.label]),
-    ])),
-    el("span", { class: "tiny muted ml-2" }, [
-      tool === "comment" ? "Click on the page to drop a sticky note."
-      : tool === "draw"  ? "Click + drag to draw freehand."
-      : "Click + drag across the text to mark.",
-    ]),
-  ]);
-}
-
-function viewerShapesBar(doc) {
-  const tool = getShapeTool(doc.id);
-  return el("div", { class: "viewer-annotate-bar", role: "toolbar", "aria-label": "Shape tools" }, [
-    ...SHAPE_TOOLS.map(t => el("button", {
-      class: `viewer-tool-btn ${tool === t.id ? "active" : ""}`,
-      title: t.label,
-      "aria-label": t.label,
-      onClick: () => setShapeTool(doc.id, t.id),
-    }, [
-      el("span", { class: "viewer-tool-icon", "aria-hidden": "true" }, [t.icon]),
-      el("span", { class: "viewer-tool-label" }, [t.label]),
-    ])),
-    el("span", { class: "tiny muted ml-2" }, ["Click + drag to draw the shape. Double-click any shape to delete."]),
-  ]);
-}
-
-function viewerRedactBar(doc) {
-  return el("div", { class: "viewer-annotate-bar", role: "toolbar", "aria-label": "Redaction" }, [
-    el("span", { class: "tiny" }, [
-      "Click + drag to mark a region for redaction. The reason you provide is recorded in the audit ledger. ",
-      "Visual redaction in the viewer; bake-into-PDF on export is a separate slice.",
-    ]),
-  ]);
-}
-
-function viewerInsertBar(doc) {
-  return el("div", { class: "viewer-annotate-bar", role: "toolbar", "aria-label": "Insert" }, [
-    el("span", { class: "tiny" }, ["Click anywhere on the page to drop a text annotation. Double-click any annotation to delete."]),
-  ]);
-}
-
-function viewerFormBar(doc) {
-  return el("div", { class: "viewer-annotate-bar", role: "toolbar", "aria-label": "Form fields" }, [
-    el("span", { class: "tiny" }, ["Click + drag to place a fillable field. You'll be prompted for a label and a default value."]),
-  ]);
-}
+// Toolbar render functions moved to ./docViewerToolbar.js (Phase 4
+// decomposition). Re-imported at the top of this file.
 
 function getShapeTool(docId) { return sessionStorage.getItem(SK(docId, "shapeTool")) || "rect"; }
 function setShapeTool(docId, t) { sessionStorage.setItem(SK(docId, "shapeTool"), t); renderDocViewer({ id: docId }); }
@@ -623,14 +513,7 @@ function mountAnnotationOverlay(host, doc, rev, page, mode) {
   host.append(overlay);
 }
 
-function prevZoom(z) {
-  const i = ZOOM_LEVELS.findIndex(l => l >= z);
-  return i <= 0 ? ZOOM_LEVELS[0] : ZOOM_LEVELS[i - 1];
-}
-function nextZoom(z) {
-  const i = ZOOM_LEVELS.findIndex(l => l > z);
-  return i === -1 ? ZOOM_LEVELS[ZOOM_LEVELS.length - 1] : ZOOM_LEVELS[i];
-}
+// prevZoom / nextZoom moved to ./docViewerConstants.js.
 
 function paperPage(doc, rev, page, opts = {}) {
   const zoom = opts.zoom || 1.25;

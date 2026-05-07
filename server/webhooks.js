@@ -11,7 +11,7 @@
 import crypto from "node:crypto";
 import { db, now, uuid } from "./db.js";
 import { audit } from "./audit.js";
-import { traceContextCarrier } from "./tracing.js";
+import { traceContextCarrier, withSpan } from "./tracing.js";
 import { validateOutboundUrl } from "./security/outbound.js";
 
 function sign(secret, body) {
@@ -209,22 +209,37 @@ async function tick() {
       continue;
     }
     try {
-      const ac = new AbortController();
-      const tmo = setTimeout(() => ac.abort(), 8000);
-      const res = await fetch(wh.url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "X-FORGE-Signature": signature,
-          "X-FORGE-Event": d.event_type,
-          "X-FORGE-Delivery": d.id,
-          "X-FORGE-Attempt": String(attempt),
-          ...traceContextCarrier({ traceId: payload?.trace_id }),
-        },
-        body: wireBody,
-        signal: ac.signal,
+      // Wrap the network leg in a custom span so operators can see
+      // per-webhook delivery latency + status in their tracing
+      // backend. No-ops cleanly when OTel isn't enabled.
+      const t0 = Date.now();
+      const res = await withSpan("webhook.deliver", {
+        webhook_id: wh.id,
+        event_type: d.event_type,
+        attempt,
+        delivery_id: d.id,
+      }, async (span) => {
+        const ac = new AbortController();
+        const tmo = setTimeout(() => ac.abort(), 8000);
+        try {
+          const r = await fetch(wh.url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "X-FORGE-Signature": signature,
+              "X-FORGE-Event": d.event_type,
+              "X-FORGE-Delivery": d.id,
+              "X-FORGE-Attempt": String(attempt),
+              ...traceContextCarrier({ traceId: payload?.trace_id }),
+            },
+            body: wireBody,
+            signal: ac.signal,
+          });
+          span.setAttribute("http.status_code", r.status);
+          span.setAttribute("forge.latency_ms", Date.now() - t0);
+          return r;
+        } finally { clearTimeout(tmo); }
       });
-      clearTimeout(tmo);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       db.prepare("UPDATE webhook_deliveries SET status = 'delivered', delivered_at = ?, attempt = ?, last_error = NULL WHERE id = ?")
         .run(now(), attempt, d.id);

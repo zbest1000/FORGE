@@ -28,6 +28,7 @@
 //   through — they're already sanctioned audit identifiers. Callers
 //   that need to log truly sensitive values should think twice.
 
+/** @type {{ [k: string]: number }} */
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40, silent: 100 };
 
 // Default level: debug in dev (Vite + source mode), warn in production
@@ -74,12 +75,19 @@ const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 // JWT-shape: three Base64URL segments separated by dots, last segment present.
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
 
+/** @param {string} s */
 function scrubString(s) {
   return s
     .replace(EMAIL_RE, "<email-redacted>")
     .replace(JWT_RE, "<token-redacted>");
 }
 
+/**
+ * Recursively scrub PII out of arbitrary log payloads.
+ * @param {unknown} value
+ * @param {number} [depth]
+ * @returns {unknown}
+ */
 function scrub(value, depth = 0) {
   if (depth > 4) return "<deep>"; // bail on recursion — diagnostic, not exhaustive
   if (value == null) return value;
@@ -89,8 +97,11 @@ function scrub(value, depth = 0) {
   if (value instanceof Error) {
     return { name: value.name, message: scrubString(value.message || ""), stack: scrubString(value.stack || "") };
   }
+  /** @type {{ [k: string]: unknown }} */
   const out = {};
-  for (const [k, v] of Object.entries(value)) {
+  // Object.entries narrows to [string, unknown][] when input is unknown
+  // — cast keeps tsc honest without sprinkling `any` through the body.
+  for (const [k, v] of Object.entries(/** @type {object} */ (value))) {
     if (REDACT_KEYS.has(k.toLowerCase())) {
       out[k] = "<redacted>";
     } else {
@@ -100,6 +111,11 @@ function scrub(value, depth = 0) {
   return out;
 }
 
+/**
+ * @param {"debug"|"info"|"warn"|"error"} level
+ * @param {string} event
+ * @param {...unknown} rest
+ */
 function emit(level, event, ...rest) {
   if (LEVELS[level] < currentLevel()) return;
   // Standard envelope: timestamp, level, event tag, scrubbed context.
@@ -113,11 +129,16 @@ function emit(level, event, ...rest) {
 }
 
 export const logger = {
+  /** @param {string} event @param {...unknown} rest */
   debug: (event, ...rest) => emit("debug", event, ...rest),
+  /** @param {string} event @param {...unknown} rest */
   info:  (event, ...rest) => emit("info",  event, ...rest),
+  /** @param {string} event @param {...unknown} rest */
   warn:  (event, ...rest) => emit("warn",  event, ...rest),
+  /** @param {string} event @param {...unknown} rest */
   error: (event, ...rest) => emit("error", event, ...rest),
-  /** Force a level for the rest of the session (no localStorage write). */
+  /** Force a level for the rest of the session.
+   *  @param {"debug"|"info"|"warn"|"error"|"silent"} level */
   setLevel(level) { try { globalThis.localStorage?.setItem("forge.logLevel", level); } catch {} },
   /** Used by tests — exported for scrub coverage. */
   _scrub: scrub,

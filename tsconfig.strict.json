@@ -1,0 +1,41 @@
+// Strict typecheck for a hand-picked set of high-value modules.
+// Run with: `npx tsc --noEmit -p tsconfig.strict.json`.
+//
+// The base tsconfig.json runs against the whole client (~85 files) in
+// loose mode (`noImplicitAny: false`, `strictNullChecks: false`). This
+// strict variant tightens the screws — but only on the modules listed
+// in `include` below, so a strict pass is achievable today without
+// rewriting every screen's JSDoc surface.
+//
+// Promotion ladder: when a module passes here cleanly, it stays here.
+// New modules are added one at a time, each with its own focused PR
+// to fix the resulting errors.
+//
+// CI runs `npm run typecheck:strict` so a regression in a tightened
+// module gets caught immediately rather than at quarterly cleanup time.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noImplicitThis": true,
+    "strictBindCallApply": true,
+    "strictFunctionTypes": true,
+    "alwaysStrict": true
+  },
+  // Modules with NO upstream imports of looser types — they pass strict
+  // cleanly without dragging in transitive any-laden deps. Adding more
+  // modules requires either typing their dependencies first OR adding
+  // them as separate strict-include sets in dedicated PRs.
+  "include": [
+    "src/core/logging.js",
+    "src/screens/docViewerConstants.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "server",
+    "scripts"
+  ]
+}
