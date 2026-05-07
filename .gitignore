@@ -12,3 +12,4 @@ terminals
 bom.json
 trivy-*.sarif
 results.sarif
+.claude

@@ -3,6 +3,7 @@
 
 import { db } from "./db.js";
 import { canonicalJSON, sha256Hex, signHMAC, verifyHMAC } from "./crypto.js";
+import { withSpan } from "./tracing.js";
 
 const GENESIS = "0".repeat(64);
 
@@ -98,28 +99,42 @@ export async function drain() { await _pending; }
 
 /**
  * Walk the ledger verifying each hash and `prev_hash` pointer.
+ *
+ * Wrapped in a custom OTel span so the periodic audit-tamper worker's
+ * end-to-end check is visible in tracing dashboards. Span attributes:
+ *   forge.row_count    — number of rows scanned
+ *   forge.ok           — true if the chain verified
+ *   forge.bad_seq      — sequence number of the first bad row (when ok=false)
  */
 export async function verifyLedger() {
-  await drain();
-  const rows = db.prepare("SELECT * FROM audit_log ORDER BY seq").all();
-  let prev = GENESIS;
-  for (let i = 0; i < rows.length; i++) {
-    const e = rows[i];
-    if (e.prev_hash !== prev) {
-      return { ok: false, firstBadIndex: i, reason: "prev_hash mismatch", entry: e };
+  return await withSpan("audit.verifyLedger", {}, async (span) => {
+    await drain();
+    const rows = db.prepare("SELECT * FROM audit_log ORDER BY seq").all();
+    span.setAttribute("forge.row_count", rows.length);
+    let prev = GENESIS;
+    for (let i = 0; i < rows.length; i++) {
+      const e = rows[i];
+      if (e.prev_hash !== prev) {
+        span.setAttribute("forge.ok", false);
+        span.setAttribute("forge.bad_seq", e.seq);
+        return { ok: false, firstBadIndex: i, reason: "prev_hash mismatch", entry: e };
+      }
+      const payload = {
+        id: e.id, ts: e.ts, actor: e.actor, action: e.action, subject: e.subject,
+        detail: JSON.parse(e.detail || "{}"),
+        trace_id: e.trace_id, prev_hash: e.prev_hash, seq: e.seq,
+      };
+      const recomputed = await sha256Hex(canonicalJSON(payload));
+      if (recomputed !== e.hash) {
+        span.setAttribute("forge.ok", false);
+        span.setAttribute("forge.bad_seq", e.seq);
+        return { ok: false, firstBadIndex: i, reason: "hash mismatch", entry: e };
+      }
+      prev = e.hash;
     }
-    const payload = {
-      id: e.id, ts: e.ts, actor: e.actor, action: e.action, subject: e.subject,
-      detail: JSON.parse(e.detail || "{}"),
-      trace_id: e.trace_id, prev_hash: e.prev_hash, seq: e.seq,
-    };
-    const recomputed = await sha256Hex(canonicalJSON(payload));
-    if (recomputed !== e.hash) {
-      return { ok: false, firstBadIndex: i, reason: "hash mismatch", entry: e };
-    }
-    prev = e.hash;
-  }
-  return { ok: true, count: rows.length };
+    span.setAttribute("forge.ok", true);
+    return { ok: true, count: rows.length };
+  });
 }
 
 /**

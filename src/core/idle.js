@@ -38,7 +38,13 @@ const _hasNative = typeof globalThis.requestIdleCallback === "function";
  */
 export function idle(fn, opts = {}) {
   if (typeof fn !== "function") return { cancel: () => {}, _native: false };
-  const timeout = Number.isFinite(opts.timeout) ? Math.max(0, opts.timeout) : 1000;
+  // The Number.isFinite type guard narrows opts.timeout to `number`
+  // for the Math.max call. The `?? 1000` belt-and-braces handles the
+  // case where Number.isFinite is true but tsc still sees `undefined`
+  // in the type union for the optional param.
+  const timeout = (typeof opts.timeout === "number" && Number.isFinite(opts.timeout))
+    ? Math.max(0, opts.timeout)
+    : 1000;
 
   if (_hasNative) {
     // The native `requestIdleCallback` types its callback as
@@ -69,6 +75,7 @@ export function idle(fn, opts = {}) {
 /**
  * Cancel a pending idle callback. Accepts the handle returned by
  * `idle()`. Safe to call multiple times; subsequent calls are no-ops.
+ * @param {{ cancel: () => void } | null | undefined} handle
  */
 export function idleCancel(handle) {
   if (handle && typeof handle.cancel === "function") {

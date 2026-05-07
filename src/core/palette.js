@@ -1,4 +1,18 @@
 // Command palette: quick navigation to objects and screens.
+//
+// Hybrid search strategy:
+//   - Curated entries (screens + UNS objects) flow through the local
+//     Fuse.js index — those collections aren't in the unified search
+//     engine and have a small enough cardinality that loading the
+//     full unified index is overkill.
+//   - For non-trivial queries we ALSO consult `query()` from
+//     src/core/search.js so entities (docs / drawings / assets / work
+//     items / incidents / projects / channels / messages / team-spaces)
+//     AND help topics show up in the palette via the same BM25 +
+//     prefix + fuzzy ranking the /search page uses.
+//   - Results from the two sources are merged in render(), with a
+//     simple de-dupe by route so the same item doesn't appear twice
+//     when an entity also lives in the curated list (e.g. a Channel).
 
 import { el, clear } from "./ui.js";
 import { state } from "./store.js";
@@ -7,6 +21,7 @@ import { SCREEN_ROUTES } from "./screens-registry.js";
 import { getServer } from "./i3x/client.js";
 import { vendor } from "./vendor.js";
 import { resolveGo } from "./go.js";
+import { query as unifiedQuery } from "./search.js";
 
 let _fuseInstance = null;
 let _fuseEntries = [];
@@ -51,11 +66,32 @@ export function openPalette() {
       matched = route
         ? [{ label: q, kind: "Go", meta: route, route }]
         : [{ label: `No match for "${q.slice(4)}"`, kind: "Go", route: null }];
-    } else if (_fuseInstance) {
-      matched = _fuseInstance.search(q).map(r => r.item);
     } else {
-      const lower = q.toLowerCase();
-      matched = allEntries.filter(e => (e.label + " " + (e.kind || "") + " " + (e.meta || "")).toLowerCase().includes(lower));
+      // Curated source (screens + UNS): Fuse.js if loaded, substring fallback.
+      const curated = _fuseInstance
+        ? _fuseInstance.search(q).map(r => r.item)
+        : allEntries.filter(e =>
+            (e.label + " " + (e.kind || "") + " " + (e.meta || "")).toLowerCase().includes(q.toLowerCase())
+          );
+      // Unified-engine source (entities + help topics): top 20 hits.
+      // The engine returns its own shape; map to the palette entry
+      // shape (label / kind / meta / route).
+      const unified = unifiedQuery(q, { limit: 20 }).hits.map(h => ({
+        label: h.title,
+        kind: h.kind,
+        meta: h.id,
+        route: h.route,
+      }));
+      // De-dupe by route — same record reachable from both sources
+      // shouldn't appear twice. Curated wins on ties (it carries the
+      // user-curated kind label like "Team Space").
+      const seen = new Set();
+      matched = [];
+      for (const e of [...curated, ...unified]) {
+        if (!e.route || seen.has(e.route)) continue;
+        seen.add(e.route);
+        matched.push(e);
+      }
     }
 
     clear(results);
